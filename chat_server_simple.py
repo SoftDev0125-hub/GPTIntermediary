@@ -47,6 +47,60 @@ FUNCTIONS = [
             },
             "required": ["app_name"]
         }
+    },
+    {
+        "name": "send_email",
+        "description": "Send an email to a recipient",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "to": {
+                    "type": "string",
+                    "description": "Recipient email address"
+                },
+                "subject": {
+                    "type": "string",
+                    "description": "Email subject line"
+                },
+                "body": {
+                    "type": "string",
+                    "description": "Email body content"
+                }
+            },
+            "required": ["to", "subject", "body"]
+        }
+    },
+    {
+        "name": "get_unread_emails",
+        "description": "Retrieve unread emails from Gmail inbox",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "max_results": {
+                    "type": "integer",
+                    "description": "Maximum number of emails to retrieve (default 10)",
+                    "default": 10
+                }
+            }
+        }
+    },
+    {
+        "name": "reply_to_email",
+        "description": "Reply to an email",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "thread_id": {
+                    "type": "string",
+                    "description": "Thread ID of the email to reply to"
+                },
+                "message": {
+                    "type": "string",
+                    "description": "Reply message content"
+                }
+            },
+            "required": ["thread_id", "message"]
+        }
     }
 ]
 
@@ -67,6 +121,32 @@ def parse_command(message):
         if match:
             app_name = match.group(1)
             return {'action': 'launch_app', 'app_name': app_name}
+    
+    # Email sending patterns
+    send_patterns = [
+        r"send\s+['\"](.+?)['\"]\s+to\s+([\w\.-]+@[\w\.-]+)",
+        r"email\s+['\"](.+?)['\"]\s+to\s+([\w\.-]+@[\w\.-]+)",
+        r"send\s+email\s+to\s+([\w\.-]+@[\w\.-]+).*?['\"](.+?)['\"]",
+    ]
+    
+    for pattern in send_patterns:
+        match = re.search(pattern, message)
+        if match:
+            groups = match.groups()
+            if len(groups) >= 2:
+                # Extract message and email (order depends on pattern)
+                if '@' in groups[0]:
+                    email = groups[0]
+                    msg = groups[1] if len(groups) > 1 else "Hi"
+                else:
+                    msg = groups[0]
+                    email = groups[1]
+                return {
+                    'action': 'send_email',
+                    'to': email,
+                    'subject': msg,
+                    'body': msg
+                }
     
     # Email patterns (placeholder - needs real OAuth)
     if 'unread' in message_lower and 'email' in message_lower:
@@ -108,16 +188,72 @@ def execute_action(action_data):
             }
     
     elif action == 'get_emails':
-        return {
-            'response': "📧 Email features require Gmail OAuth authentication. This feature needs real user credentials from ChatGPT integration.",
-            'function_called': None
-        }
+        try:
+            response = requests.post(
+                f"{BACKEND_URL}/api/email/unread",
+                json={"user_credentials": USER_CREDENTIALS, "max_results": 10}
+            )
+            result = response.json()
+            
+            if response.status_code == 200 and result.get('success'):
+                emails = result.get('emails', [])
+                if emails:
+                    email_list = "\n".join([f"• From: {e['from']} - {e['subject']}" for e in emails[:5]])
+                    return {
+                        'response': f"📧 You have {len(emails)} unread emails:\n{email_list}",
+                        'function_called': 'get_emails'
+                    }
+                else:
+                    return {
+                        'response': "📧 No unread emails found.",
+                        'function_called': 'get_emails'
+                    }
+            else:
+                return {
+                    'response': f"❌ {result.get('error', 'Failed to fetch emails. OAuth required.')}",
+                    'error': True
+                }
+        except Exception as e:
+            return {
+                'response': f"📧 Email features require Gmail OAuth authentication. Error: {str(e)}",
+                'error': True
+            }
     
     elif action == 'send_email':
-        return {
-            'response': "📧 Sending emails requires Gmail OAuth authentication. This feature needs real user credentials from ChatGPT integration.",
-            'function_called': None
-        }
+        if action_data.get('needs_oauth'):
+            return {
+                'response': "📧 Sending emails requires Gmail OAuth authentication. This feature needs real user credentials.",
+                'function_called': None
+            }
+        
+        try:
+            email_data = {
+                "user_credentials": USER_CREDENTIALS,
+                "to": action_data.get('to'),
+                "subject": action_data.get('subject'),
+                "body": action_data.get('body')
+            }
+            response = requests.post(
+                f"{BACKEND_URL}/api/email/send",
+                json=email_data
+            )
+            result = response.json()
+            
+            if response.status_code == 200 and result.get('success'):
+                return {
+                    'response': f"✅ Email sent to {action_data.get('to')}!",
+                    'function_called': 'send_email'
+                }
+            else:
+                return {
+                    'response': f"❌ {result.get('error', 'Failed to send email. OAuth required.')}",
+                    'error': True
+                }
+        except Exception as e:
+            return {
+                'response': f"❌ Error sending email: {str(e)}",
+                'error': True
+            }
     
     else:
         # Default chat response
@@ -161,10 +297,16 @@ def chat():
             messages = [
                 {
                     "role": "system",
-                    "content": """You are a helpful AI assistant that can launch applications on the user's computer.
-                    You can have natural conversations AND launch apps when asked.
-                    Be friendly, conversational, and helpful. Answer questions, chat naturally, and when the user wants to launch an app, use the launch_app function.
-                    You have full ChatGPT capabilities plus app launching."""
+                    "content": """You are a helpful AI assistant that can launch applications and manage emails on the user's computer.
+                    You can:
+                    1. Have natural conversations and answer questions
+                    2. Launch applications (notepad, calculator, chrome, etc.)
+                    3. Send emails via Gmail
+                    4. Check unread emails
+                    5. Reply to emails
+                    
+                    Be friendly, conversational, and helpful. When users ask you to send emails, use the send_email function with proper to/subject/body parameters.
+                    For casual messages like "Send 'hi' to xxx@yyy.com", use "hi" as both subject and body."""
                 }
             ]
             
@@ -200,7 +342,50 @@ def chat():
                     )
                     function_result = backend_response.json()
                     function_called = function_name
+                
+                elif function_name == 'send_email':
+                    email_data = {
+                        "user_credentials": USER_CREDENTIALS,
+                        "to": function_args.get('to'),
+                        "subject": function_args.get('subject'),
+                        "body": function_args.get('body')
+                    }
+                    backend_response = requests.post(
+                        f"{BACKEND_URL}/api/email/send",
+                        json=email_data
+                    )
+                    function_result = backend_response.json()
+                    function_called = function_name
+                
+                elif function_name == 'get_unread_emails':
+                    email_data = {
+                        "user_credentials": USER_CREDENTIALS,
+                        "max_results": function_args.get('max_results', 10)
+                    }
+                    backend_response = requests.post(
+                        f"{BACKEND_URL}/api/email/unread",
+                        json=email_data
+                    )
+                    function_result = backend_response.json()
+                    function_called = function_name
+                
+                elif function_name == 'reply_to_email':
+                    email_data = {
+                        "user_credentials": USER_CREDENTIALS,
+                        "thread_id": function_args.get('thread_id'),
+                        "message": function_args.get('message')
+                    }
+                    backend_response = requests.post(
+                        f"{BACKEND_URL}/api/email/reply",
+                        json=email_data
+                    )
+                    function_result = backend_response.json()
+                    function_called = function_name
+                
+                else:
+                    function_result = {"error": "Unknown function"}
                     
+                if function_result:
                     # Send function result back to OpenAI
                     messages.append({
                         "role": "assistant",
