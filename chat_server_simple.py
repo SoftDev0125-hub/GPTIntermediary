@@ -108,57 +108,70 @@ def parse_command(message):
     """Parse user message and determine action with enhanced NLP"""
     message_lower = message.lower()
     
-    # Enhanced app launch patterns - catches variations
-    launch_patterns = [
-        # Direct launch commands
-        (r'\b(?:open|launch|start|run|execute|begin|activate)\s+(?:the\s+)?(\w+(?:\s+\w+)?)', 'launch_app'),
-        # "Can you..." patterns
-        (r'(?:can\s+you|please|would\s+you|could\s+you)?\s*(?:open|launch|start|run)(?:\s+the)?\s+(\w+(?:\s+\w+)?)', 'launch_app'),
-        # "[app] please" or just app name
-        (r'^(\w+(?:\s+\w+)?)\s*(?:please)?$', 'launch_app'),
-    ]
-    
-    for pattern, action in launch_patterns:
-        match = re.search(pattern, message_lower)
-        if match:
-            app_name = match.group(1).strip()
-            # Normalize multi-word app names (e.g., "task manager" -> "task manager")
-            if action == 'launch_app':
-                return {'action': 'launch_app', 'app_name': app_name}
-            break
-    
-    # Email sending patterns
+    # CHECK EMAIL PATTERNS FIRST (before app launching)
+    # Email sending patterns - enhanced to handle various formats
     send_patterns = [
+        # "send "message" to email@example.com"
         r"send\s+['\"](.+?)['\"]\s+to\s+([\w\.-]+@[\w\.-]+)",
+        # "email "message" to email@example.com"
         r"email\s+['\"](.+?)['\"]\s+to\s+([\w\.-]+@[\w\.-]+)",
+        # "send email to email@example.com "message""
         r"send\s+email\s+to\s+([\w\.-]+@[\w\.-]+).*?['\"](.+?)['\"]",
+        # "send to email@example.com: message" or "send to email "message""
+        r"send\s+to\s+([\w\.-]+@[\w\.-]+)[:\s]+['\"]?(.+?)['\"]?$",
+        # Simple: message to email (without send keyword)
+        r"['\"](.+?)['\"]\s+to\s+([\w\.-]+@[\w\.-]+)\s*$",
     ]
     
     for pattern in send_patterns:
-        match = re.search(pattern, message)
+        match = re.search(pattern, message, re.IGNORECASE)
         if match:
             groups = match.groups()
             if len(groups) >= 2:
                 # Extract message and email (order depends on pattern)
                 if '@' in groups[0]:
                     email = groups[0]
-                    msg = groups[1] if len(groups) > 1 else "Hi"
+                    msg = groups[1] if len(groups) > 1 else "Message"
                 else:
                     msg = groups[0]
                     email = groups[1]
+                logger.info(f"Email detected: to={email}, msg={msg}")
                 return {
                     'action': 'send_email',
                     'to': email,
                     'subject': msg,
-                    'body': msg
+                    'body': msg,
+                    'needs_oauth': False
                 }
     
-    # Email patterns (placeholder - needs real OAuth)
+    # Check for generic email patterns
     if 'unread' in message_lower and 'email' in message_lower:
         return {'action': 'get_emails'}
     
-    if 'send email' in message_lower or 'email to' in message_lower:
+    if ('send email' in message_lower or 'email to' in message_lower) and '@' not in message_lower:
         return {'action': 'send_email', 'needs_oauth': True}
+    
+    # NOW CHECK APP LAUNCH PATTERNS
+    launch_patterns = [
+        # Direct launch commands
+        (r'\b(?:open|launch|start|run|execute|begin|activate)\s+(?:the\s+)?(\w+(?:\s+\w+)?)', 'launch_app'),
+        # "Can you..." patterns
+        (r'(?:can\s+you|please|would\s+you|could\s+you)?\s*(?:open|launch|start|run)(?:\s+the)?\s+(\w+(?:\s+\w+)?)', 'launch_app'),
+        # "[app] please" or just app name - BUT NOT IF CONTAINS EMAIL SYMBOLS
+        (r'^(\w+(?:\s+\w+)?)\s*(?:please)?$', 'launch_app') if '@' not in message else None,
+    ]
+    
+    for item in launch_patterns:
+        if item is None:
+            continue
+        pattern, action = item
+        match = re.search(pattern, message_lower)
+        if match:
+            app_name = match.group(1).strip()
+            if action == 'launch_app':
+                logger.info(f"App launch detected: {app_name}")
+                return {'action': 'launch_app', 'app_name': app_name}
+            break
     
     return {'action': 'chat', 'message': message}
 
@@ -225,9 +238,10 @@ def execute_action(action_data):
             }
     
     elif action == 'send_email':
-        if action_data.get('needs_oauth'):
+        # Skip OAuth requirement if parsed successfully with email
+        if action_data.get('needs_oauth') and not action_data.get('to'):
             return {
-                'response': "📧 Sending emails requires Gmail OAuth authentication. This feature needs real user credentials.",
+                'response': "📧 To send an email, please use format: send \"message\" to email@example.com",
                 'function_called': None
             }
         
@@ -235,8 +249,8 @@ def execute_action(action_data):
             email_data = {
                 "user_credentials": USER_CREDENTIALS,
                 "to": action_data.get('to'),
-                "subject": action_data.get('subject'),
-                "body": action_data.get('body')
+                "subject": action_data.get('subject', 'Message'),
+                "body": action_data.get('body', action_data.get('subject', 'Message'))
             }
             response = requests.post(
                 f"{BACKEND_URL}/api/email/send",
@@ -457,20 +471,20 @@ if __name__ == '__main__':
     print("ChatGPT Interface Server Starting (Hybrid Mode)")
     print("=" * 60)
     print(f"Backend URL: {BACKEND_URL}")
-    print(f"OpenAI API Key: {'✓ Configured - Full ChatGPT mode' if USE_OPENAI else '✗ Not configured - Keyword mode'}")
+    print(f"OpenAI API Key: {'[OK] Configured - Full ChatGPT mode' if USE_OPENAI else '[X] Not configured - Keyword mode'}")
     print(f"Mode: {'OpenAI + Fallback' if USE_OPENAI else 'Keyword-based only'}")
     print("=" * 60)
-    print("\n🚀 Server running on http://localhost:5000")
-    print("📱 Open chat_interface.html in your browser to start")
-    print("\n💡 Features:")
+    print("\nServer running on http://localhost:5000")
+    print("Open chat_interface.html in your browser to start")
+    print("\nFeatures:")
     if USE_OPENAI:
-        print("  ✓ Full ChatGPT conversational AI")
-        print("  ✓ Natural language understanding")
-        print("  ✓ App launching via AI")
-        print("  ✓ Automatic fallback if quota exceeded")
+        print("  [OK] Full ChatGPT conversational AI")
+        print("  [OK] Natural language understanding")
+        print("  [OK] App launching via AI")
+        print("  [OK] Automatic fallback if quota exceeded")
     else:
-        print("  • Keyword-based app launching")
-        print("  • Add OpenAI API key for full ChatGPT features")
+        print("  - Keyword-based app launching")
+        print("  - Add OpenAI API key for full ChatGPT features")
     print("\nMake sure the backend is running on port 8000!")
     print("=" * 60)
     

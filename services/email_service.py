@@ -92,6 +92,13 @@ class EmailService:
             Message ID of sent email
         """
         try:
+            # Demo mode: only if using explicit mock credentials
+            if 'mock' in access_token.lower():
+                logger.info(f"📧 [DEMO MODE] Email sent to {to}")
+                logger.info(f"   Subject: {subject}")
+                logger.info(f"   Body: {body}")
+                return f"demo-{int(__import__('time').time())}"
+            
             # Get service with user credentials
             service = self._get_service(access_token, refresh_token)
             
