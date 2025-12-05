@@ -11,9 +11,14 @@ import re
 import openai
 import os
 import json
+import logging
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 CORS(app)
@@ -308,6 +313,10 @@ def health():
 @app.route('/get_user_credentials', methods=['GET'])
 def get_user_credentials():
     """Return user credentials for email operations"""
+    logger.info(f"[*] Returning user credentials")
+    logger.info(f"    Access Token: {USER_CREDENTIALS.get('access_token', 'NONE')[:30]}...")
+    logger.info(f"    Refresh Token: {USER_CREDENTIALS.get('refresh_token', 'NONE')[:30]}...")
+    logger.info(f"    Email: {USER_CREDENTIALS.get('email', 'NONE')}")
     return jsonify({
         "access_token": USER_CREDENTIALS.get("access_token"),
         "refresh_token": USER_CREDENTIALS.get("refresh_token"),

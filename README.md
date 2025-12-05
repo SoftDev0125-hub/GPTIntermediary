@@ -71,7 +71,7 @@ pip install -r requirements.txt
 ### 3. Configure Environment
 
 ```powershell
-# Copy the example environment file
+# Copy the example environment file (if available)
 Copy-Item .env.example .env
 
 # Edit .env and add your Google OAuth credentials
@@ -79,14 +79,37 @@ Copy-Item .env.example .env
 # GOOGLE_CLIENT_SECRET=your_client_secret_here
 ```
 
-### 4. Run the Application
+### 4. **IMPORTANT: Authorize Gmail Account**
+
+Before running the app, you MUST authorize your Gmail account:
 
 ```powershell
-# Start the FastAPI server
-python main.py
+python get_gmail_token.py
 ```
 
-The server will start at `http://localhost:8000`
+This will:
+1. Open your browser automatically
+2. Ask you to sign into Gmail
+3. Grant permissions to the app
+4. Save your OAuth tokens to `.env`
+
+**⚠️ If you skip this step, email features will not work!**
+
+See [GMAIL_SETUP.md](GMAIL_SETUP.md) for detailed Gmail setup instructions.
+
+### 5. Run the Application
+
+```powershell
+# Start the application
+python app.py
+```
+
+For desktop app with UI, run:
+```powershell
+python app.py
+```
+
+This will launch the desktop application with a modern UI.
 
 ## API Endpoints
 

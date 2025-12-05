@@ -18,6 +18,8 @@ chat_process = None
 def refresh_gmail_tokens():
     """Refresh Gmail tokens by running get_gmail_token.py"""
     print("[*] Refreshing Gmail tokens...")
+    print("[*] Note: This requires browser interaction. If you see no browser window,")
+    print("[*]       run 'python get_gmail_token.py' manually to authorize Gmail access")
     try:
         result = subprocess.run(
             [sys.executable, "get_gmail_token.py"],
@@ -28,14 +30,17 @@ def refresh_gmail_tokens():
         )
         if result.returncode == 0:
             print("[OK] Gmail tokens refreshed successfully!")
+            return True
         else:
-            print("[!] Gmail token refresh had issues")
-            if result.stderr:
-                print(f"[!] Error: {result.stderr[:200]}")
+            print("[!] Gmail token refresh had issues (this is ok if you already have valid tokens)")
+            print("[!] If you need new tokens, run: python get_gmail_token.py")
+            return False
     except subprocess.TimeoutExpired:
-        print("[!] Gmail token refresh timed out (continuing anyway)")
+        print("[!] Gmail token refresh timed out (continuing with existing tokens)")
+        return False
     except Exception as e:
-        print(f"[!] Gmail token refresh error: {str(e)}")
+        print(f"[!] Gmail token refresh error (continuing anyway): {str(e)}")
+        return False
 
 def start_servers():
     """Start backend and chat servers"""

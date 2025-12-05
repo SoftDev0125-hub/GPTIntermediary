@@ -9,6 +9,7 @@ import uvicorn
 from pydantic import BaseModel
 from typing import Optional, List
 import logging
+import os
 
 from services.email_service import EmailService
 from services.app_launcher import AppLauncher
@@ -60,6 +61,23 @@ app_launcher = AppLauncher()
 async def startup_event():
     """Initialize services on startup"""
     logger.info("Starting ChatGPT Backend Broker...")
+    
+    # Check for Gmail credentials
+    access_token = os.getenv('USER_ACCESS_TOKEN', '').strip()
+    refresh_token = os.getenv('USER_REFRESH_TOKEN', '').strip()
+    
+    if not access_token or not refresh_token or access_token == 'your_token_here' or refresh_token == 'your_token_here':
+        logger.warning("=" * 70)
+        logger.warning("[!] GMAIL SETUP REQUIRED")
+        logger.warning("=" * 70)
+        logger.warning("No Gmail account is registered in this app!")
+        logger.warning("")
+        logger.warning("To use email features, run this command FIRST:")
+        logger.warning("  python get_gmail_token.py")
+        logger.warning("")
+        logger.warning("This will authorize your Gmail account and save tokens to .env")
+        logger.warning("=" * 70)
+    
     await email_service.initialize()
     logger.info("Services initialized successfully")
 
@@ -112,6 +130,57 @@ async def send_email(request: SendEmailRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/email/test")
+async def test_email():
+    """Test email service connectivity"""
+    try:
+        logger.info("Testing email service...")
+        from services.email_service import EmailService
+        service = EmailService()
+        
+        # Try to get service with test token
+        test_access = os.getenv('USER_ACCESS_TOKEN')
+        test_refresh = os.getenv('USER_REFRESH_TOKEN')
+        
+        logger.info(f"Access token present: {bool(test_access)}")
+        logger.info(f"Refresh token present: {bool(test_refresh)}")
+        
+        if not test_access or not test_refresh:
+            return {
+                "success": False,
+                "error": "Tokens missing from environment"
+            }
+        
+        # Try a simple API call
+        try:
+            test_service = service._get_service(test_access, test_refresh)
+            logger.info("Gmail service created successfully")
+            
+            # Try to list labels (simple test)
+            result = test_service.users().labels().list(userId='me').execute()
+            logger.info(f"Gmail API working - found {len(result.get('labels', []))} labels")
+            
+            return {
+                "success": True,
+                "message": "Email service working",
+                "labels_count": len(result.get('labels', []))
+            }
+        except Exception as api_error:
+            logger.error(f"Gmail API error: {str(api_error)}")
+            return {
+                "success": False,
+                "error": f"Gmail API error: {str(api_error)}"
+            }
+    except Exception as e:
+        logger.error(f"Test failed: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
 @app.post("/api/email/unread", response_model=EmailListResponse)
 async def get_unread_emails(request: GetUnreadEmailsRequest):
     """
@@ -130,14 +199,23 @@ async def get_unread_emails(request: GetUnreadEmailsRequest):
             refresh_token=request.user_credentials.refresh_token,
             limit=request.limit
         )
+        logger.info(f"Successfully retrieved {len(emails)} emails")
         return EmailListResponse(
             success=True,
             count=len(emails),
             emails=emails
         )
     except Exception as e:
-        logger.error(f"Error fetching unread emails: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        error_msg = str(e)
+        logger.error(f"Error fetching unread emails: {error_msg}")
+        import traceback
+        logger.error(traceback.format_exc())
+        
+        # Check for invalid_scope error and provide helpful message
+        if "invalid_scope" in error_msg.lower():
+            error_msg = "Gmail OAuth scopes mismatch. Please run: python get_gmail_token.py to reauthorize with correct scopes."
+        
+        raise HTTPException(status_code=500, detail=error_msg)
 
 
 @app.post("/api/email/reply", response_model=OperationResponse)

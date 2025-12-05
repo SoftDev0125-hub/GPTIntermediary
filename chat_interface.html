@@ -347,24 +347,55 @@
 
         .email-container {
             flex: 1;
-            overflow-y: auto;
-            padding: 24px 30px;
             display: flex;
             flex-direction: column;
-            gap: 20px;
+            gap: 0;
         }
 
         .email-header {
             display: flex;
-            justify-content: space-between;
+            justify-content: flex-start;
             align-items: center;
-            margin-bottom: 20px;
+            gap: 12px;
+            padding: 16px 30px;
+            border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+            background: linear-gradient(135deg, rgba(99, 102, 241, 0.05) 0%, rgba(168, 85, 247, 0.05) 100%);
+            flex-wrap: wrap;
         }
 
         .email-header h2 {
-            font-size: 20px;
-            color: #e2e8f0;
-            margin: 0;
+            display: none;
+        }
+
+        .email-scroll-area {
+            flex: 1;
+            overflow-y: auto;
+            padding: 12px 30px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            scrollbar-width: thin;
+            scrollbar-color: rgba(99, 102, 241, 0.5) transparent;
+        }
+
+        .email-scroll-area::-webkit-scrollbar {
+            width: 10px;
+        }
+
+        .email-scroll-area::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        .email-scroll-area::-webkit-scrollbar-thumb {
+            background: rgba(99, 102, 241, 0.6);
+            border-radius: 5px;
+            border: 2px solid transparent;
+            background-clip: content-box;
+        }
+
+        .email-scroll-area::-webkit-scrollbar-thumb:hover {
+            background: rgba(99, 102, 241, 0.8);
+            background-clip: content-box;
         }
 
         .button-group {
@@ -467,6 +498,38 @@
             opacity: 0.5;
         }
 
+        .show-more-container {
+            display: flex;
+            justify-content: center;
+            padding: 16px 0;
+            gap: 12px;
+            margin-top: 12px;
+        }
+
+        .btn-show-more {
+            background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+            color: white;
+            border: none;
+            padding: 10px 24px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-family: 'Inter', sans-serif;
+        }
+
+        .btn-show-more:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 16px rgba(99, 102, 241, 0.4);
+        }
+
+        .btn-show-more:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
         strong { color: #a5b4fc; }
         em { color: #c4b5fd; }
         code {
@@ -553,10 +616,12 @@
                     </div>
                 </div>
 
-                <div id="emailList" class="email-list">
-                    <div class="empty-state">
-                        <div class="empty-state-text">Mail</div>
-                        <p>Click "Unread Mail" to load your emails</p>
+                <div class="email-scroll-area">
+                    <div id="emailList" class="email-list">
+                        <div class="empty-state">
+                            <div class="empty-state-text">Mail</div>
+                            <p>Click "Unread Mail" to load your emails</p>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -643,6 +708,10 @@
         const refreshButton = document.getElementById('refreshButton');
         const emailList = document.getElementById('emailList');
 
+        let allEmails = [];
+        let displayedCount = 0;
+        const emailsPerPage = 10;
+
         // Get credentials from environment (exposed by backend)
         async function getUserCredentials() {
             try {
@@ -655,20 +724,61 @@
             }
         }
 
+        function renderEmails(emailsToRender) {
+            const emailItems = emailsToRender.map(email => `
+                <div class="email-item">
+                    <div class="email-from">From: ${email.from_email || 'Unknown'}</div>
+                    <div class="email-subject">${email.subject || '(No Subject)'}</div>
+                    <div class="email-date">${email.date || new Date().toLocaleDateString()}</div>
+                </div>
+            `).join('');
+
+            const hasMore = displayedCount < allEmails.length;
+            const showMoreButton = hasMore ? `
+                <div class="show-more-container">
+                    <button class="btn-show-more" id="showMoreBtn" onclick="showMoreEmails()">Show More (${allEmails.length - displayedCount} more)</button>
+                </div>
+            ` : '';
+
+            emailList.innerHTML = emailItems + showMoreButton;
+        }
+
+        function displayEmails() {
+            const endIndex = Math.min(displayedCount + emailsPerPage, allEmails.length);
+            const emailsToShow = allEmails.slice(0, endIndex);
+            displayedCount = endIndex;
+            renderEmails(emailsToShow);
+        }
+
+        function showMoreEmails() {
+            displayEmails();
+        }
+
         async function loadUnreadEmails() {
             unreadButton.disabled = true;
             unreadButton.textContent = 'Loading...';
+            allEmails = [];
+            displayedCount = 0;
 
             try {
                 // Get real credentials
+                console.log('[*] Fetching credentials...');
                 const creds = await getUserCredentials();
-                if (!creds) {
-                    emailList.innerHTML = '<div class="empty-state"><div class="empty-state-text">Error</div><p>Failed to get Gmail credentials. Please restart the app.</p></div>';
+                console.log('[*] Got credentials:', {
+                    access_token: creds?.access_token ? creds.access_token.substring(0, 20) + '...' : 'NONE',
+                    refresh_token: creds?.refresh_token ? creds.refresh_token.substring(0, 20) + '...' : 'NONE',
+                    email: creds?.email
+                });
+                
+                if (!creds || !creds.access_token) {
+                    console.error('[!] Credentials missing');
+                    emailList.innerHTML = '<div class="empty-state"><div class="empty-state-text">Error</div><p>Gmail credentials not found. Please restart the app.</p></div>';
                     unreadButton.disabled = false;
                     unreadButton.textContent = 'Unread Mail';
                     return;
                 }
 
+                console.log('[*] Requesting unread emails from backend...');
                 const response = await fetch('http://localhost:8000/api/email/unread', {
                     method: 'POST',
                     headers: {
@@ -676,30 +786,30 @@
                     },
                     body: JSON.stringify({
                         user_credentials: creds,
-                        max_results: 20
+                        max_results: 100
                     })
                 });
 
+                console.log('[*] Response status:', response.status);
                 const data = await response.json();
+                console.log('[*] Response data:', data);
 
                 if (response.ok && data.success) {
-                    const emails = data.emails || [];
-                    if (emails.length === 0) {
+                    allEmails = data.emails || [];
+                    console.log(`[OK] Got ${allEmails.length} emails`);
+                    if (allEmails.length === 0) {
                         emailList.innerHTML = '<div class="empty-state"><div class="empty-state-text">OK</div><p>No unread emails</p></div>';
                     } else {
-                        emailList.innerHTML = emails.map(email => `
-                            <div class="email-item">
-                                <div class="email-from">From: ${email.from_email || 'Unknown'}</div>
-                                <div class="email-subject">${email.subject || '(No Subject)'}</div>
-                                <div class="email-date">${email.date || new Date().toLocaleDateString()}</div>
-                            </div>
-                        `).join('');
+                        displayEmails();
                     }
                 } else {
-                    emailList.innerHTML = `<div class="empty-state"><div class="empty-state-text">Error</div><p>${data.error || 'Failed to load emails'}</p></div>`;
+                    const errorMsg = data.error || data.detail || JSON.stringify(data);
+                    console.error('[!] Backend error:', errorMsg);
+                    emailList.innerHTML = `<div class="empty-state"><div class="empty-state-text">Error</div><p>${errorMsg}</p></div>`;
                 }
             } catch (error) {
-                emailList.innerHTML = `<div class="empty-state"><div class="empty-state-text">Error</div><p>Connection Error: ${error.message}</p></div>`;
+                console.error('[!] Exception:', error);
+                emailList.innerHTML = `<div class="empty-state"><div class="empty-state-text">Error</div><p>Exception: ${error.message}</p></div>`;
             }
 
             unreadButton.disabled = false;

@@ -35,10 +35,14 @@ def get_gmail_credentials():
     
     # Run local server for OAuth
     print("\n🔐 Opening browser for Gmail authorization...")
-    print("📧 Please log in with the Gmail account you want to use\n")
+    print("📧 Please log in with the Gmail account you want to use")
+    print("⚠️  IMPORTANT: You may see a 'Grant access again' prompt - this is normal!")
+    print("    This ensures the app has ALL required permissions.\n")
     
     creds = flow.run_local_server(port=8085, 
                                    prompt='consent',
+                                   access_type='offline',
+                                   include_granted_scopes='false',
                                    success_message='✅ Authorization successful! You can close this window.')
     
     # Save tokens
