@@ -1,6 +1,7 @@
 """
 Desktop Application Launcher for ChatGPT Assistant
 Uses webview to create a standalone desktop app
+Includes automatic Gmail token refresh
 """
 
 import webview
@@ -14,6 +15,28 @@ import os
 backend_process = None
 chat_process = None
 
+def refresh_gmail_tokens():
+    """Refresh Gmail tokens by running get_gmail_token.py"""
+    print("[*] Refreshing Gmail tokens...")
+    try:
+        result = subprocess.run(
+            [sys.executable, "get_gmail_token.py"],
+            cwd=os.path.dirname(os.path.abspath(__file__)),
+            capture_output=True,
+            text=True,
+            timeout=120
+        )
+        if result.returncode == 0:
+            print("[OK] Gmail tokens refreshed successfully!")
+        else:
+            print("[!] Gmail token refresh had issues")
+            if result.stderr:
+                print(f"[!] Error: {result.stderr[:200]}")
+    except subprocess.TimeoutExpired:
+        print("[!] Gmail token refresh timed out (continuing anyway)")
+    except Exception as e:
+        print(f"[!] Gmail token refresh error: {str(e)}")
+
 def start_servers():
     """Start backend and chat servers"""
     global backend_process, chat_process
@@ -23,8 +46,8 @@ def start_servers():
     # Start backend server
     backend_process = subprocess.Popen(
         [sys.executable, "main.py"],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stdout=None,  # inherit stdout so errors are visible
+        stderr=None,
         cwd=os.path.dirname(os.path.abspath(__file__))
     )
     
@@ -33,8 +56,8 @@ def start_servers():
     # Start chat server
     chat_process = subprocess.Popen(
         [sys.executable, "chat_server_simple.py"],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stdout=None,
+        stderr=None,
         cwd=os.path.dirname(os.path.abspath(__file__))
     )
     
@@ -54,6 +77,12 @@ def stop_servers():
 
 def main():
     """Main application entry point"""
+    
+    # Refresh Gmail tokens first
+    refresh_gmail_tokens()
+    
+    print("[*] Waiting 2 seconds before starting servers...")
+    time.sleep(2)
     
     # Start servers in background thread
     server_thread = threading.Thread(target=start_servers, daemon=True)

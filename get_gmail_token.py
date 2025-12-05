@@ -9,9 +9,12 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Gmail API scopes
-SCOPES = ['https://www.googleapis.com/auth/gmail.send', 
-          'https://www.googleapis.com/auth/gmail.readonly']
+# Gmail API scopes (must match backend email_service.py)
+SCOPES = [
+    'https://www.googleapis.com/auth/gmail.send',
+    'https://www.googleapis.com/auth/gmail.readonly',
+    'https://www.googleapis.com/auth/gmail.modify'
+]
 
 def get_gmail_credentials():
     """Get Gmail OAuth credentials"""
