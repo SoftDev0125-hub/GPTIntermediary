@@ -275,17 +275,26 @@ def execute_action(action_data):
             }
     
     else:
-        # Default chat response
+        # Default chat response - provide helpful guidance
         return {
-            'response': """I can help you launch applications! Try saying:
-• "Open Notepad"
-• "Launch Calculator"
-• "Start Chrome"
-• "Run Paint"
+            'response': """Hello! I'm your AI assistant. I can help you with:
 
-Available apps: notepad, calc, calculator, chrome, firefox, edge, vscode, code, excel, word, powerpoint, outlook, paint, mspaint
+💬 **General Questions**
+• Answer questions on any topic
+• Explain concepts and ideas
+• Help with problem-solving
+• Write and debug code
 
-📧 Email features require OpenAI API credits or ChatGPT integration.""",
+🚀 **Computer Control**
+• Open apps: "Open Chrome", "Launch Calculator"
+• Available: notepad, calc, chrome, firefox, telegram, discord, sticky notes, task manager, etc.
+
+📧 **Email Management**
+• Send: send "message" to email@example.com
+• Check unread emails
+• Reply to emails
+
+What would you like to know or do?""",
             'function_called': None
         }
 
@@ -316,16 +325,25 @@ def chat():
             messages = [
                 {
                     "role": "system",
-                    "content": """You are a helpful AI assistant that can launch applications and manage emails on the user's computer.
-                    You can:
-                    1. Have natural conversations and answer questions
-                    2. Launch applications (notepad, calculator, chrome, etc.)
-                    3. Send emails via Gmail
-                    4. Check unread emails
-                    5. Reply to emails
-                    
-                    Be friendly, conversational, and helpful. When users ask you to send emails, use the send_email function with proper to/subject/body parameters.
-                    For casual messages like "Send 'hi' to xxx@yyy.com", use "hi" as both subject and body."""
+                    "content": """You are ChatGPT, a helpful AI assistant created by OpenAI. You can answer questions on any topic, provide explanations, help with problem-solving, write code, and have natural conversations.
+
+Additionally, you have special capabilities to interact with the user's computer:
+• Launch applications (notepad, calculator, chrome, telegram, discord, etc.)
+• Send emails via Gmail
+• Check unread emails
+• Reply to emails
+
+When answering questions:
+- Provide clear, accurate, and helpful responses
+- Explain complex topics in an understandable way
+- Format code with proper syntax
+- Use examples when helpful
+- Be conversational and friendly
+
+When users ask you to send emails, use the send_email function with proper to/subject/body parameters.
+For app launching, use the launch_app function with the app name.
+
+You can discuss any topic freely - science, math, programming, history, creative writing, or anything else the user asks about."""
                 }
             ]
             
