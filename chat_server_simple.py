@@ -105,22 +105,27 @@ FUNCTIONS = [
 ]
 
 def parse_command(message):
-    """Parse user message and determine action"""
+    """Parse user message and determine action with enhanced NLP"""
     message_lower = message.lower()
     
-    # App launch patterns
+    # Enhanced app launch patterns - catches variations
     launch_patterns = [
-        r'open\s+(\w+)',
-        r'launch\s+(\w+)',
-        r'start\s+(\w+)',
-        r'run\s+(\w+)',
+        # Direct launch commands
+        (r'\b(?:open|launch|start|run|execute|begin|activate)\s+(?:the\s+)?(\w+(?:\s+\w+)?)', 'launch_app'),
+        # "Can you..." patterns
+        (r'(?:can\s+you|please|would\s+you|could\s+you)?\s*(?:open|launch|start|run)(?:\s+the)?\s+(\w+(?:\s+\w+)?)', 'launch_app'),
+        # "[app] please" or just app name
+        (r'^(\w+(?:\s+\w+)?)\s*(?:please)?$', 'launch_app'),
     ]
     
-    for pattern in launch_patterns:
+    for pattern, action in launch_patterns:
         match = re.search(pattern, message_lower)
         if match:
-            app_name = match.group(1)
-            return {'action': 'launch_app', 'app_name': app_name}
+            app_name = match.group(1).strip()
+            # Normalize multi-word app names (e.g., "task manager" -> "task manager")
+            if action == 'launch_app':
+                return {'action': 'launch_app', 'app_name': app_name}
+            break
     
     # Email sending patterns
     send_patterns = [
