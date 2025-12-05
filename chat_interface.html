@@ -24,7 +24,6 @@
             overflow: hidden;
         }
         
-        /* Animated Background */
         body::before {
             content: '';
             position: fixed;
@@ -45,157 +44,157 @@
             66% { transform: translate(-20px, 20px) rotate(240deg); }
         }
         
-        /* Particles */
         .particle {
             position: fixed;
-            width: 3px;
-            height: 3px;
-            background: rgba(99, 102, 241, 0.5);
+            width: 4px;
+            height: 4px;
+            background: radial-gradient(circle, #a5b4fc, transparent);
             border-radius: 50%;
             pointer-events: none;
-            animation: rise 15s infinite;
+            z-index: 1;
+            animation: particle-float linear infinite;
         }
         
-        @keyframes rise {
-            0% { transform: translateY(100vh) scale(0); opacity: 0; }
-            50% { opacity: 1; }
-            100% { transform: translateY(-100vh) scale(1); opacity: 0; }
+        @keyframes particle-float {
+            to { transform: translateY(-100vh) translateX(100px); }
         }
 
         .container {
             width: 100%;
-            max-width: 1100px;
-            height: 85vh;
-            background: rgba(15, 23, 42, 0.6);
-            backdrop-filter: blur(40px) saturate(180%);
+            max-width: 1000px;
+            height: 100vh;
+            display: flex;
+            flex-direction: row;
+            background: rgba(15, 23, 42, 0.4);
+            backdrop-filter: blur(20px);
+            border-radius: 20px;
             border: 1px solid rgba(148, 163, 184, 0.1);
-            border-radius: 32px;
-            box-shadow: 
-                0 50px 100px -20px rgba(0, 0, 0, 0.5),
-                0 0 0 1px rgba(255, 255, 255, 0.05) inset,
-                0 0 50px rgba(99, 102, 241, 0.1);
+            box-shadow: 0 25px 50px rgba(0, 0, 0, 0.3);
+            position: relative;
+            z-index: 10;
+            overflow: hidden;
+        }
+
+        .tab-bar {
             display: flex;
             flex-direction: column;
-            overflow: hidden;
-            position: relative;
-            z-index: 1;
+            gap: 8px;
+            padding: 16px 8px;
+            width: auto;
+            min-width: 80px;
+            border-right: 1px solid rgba(148, 163, 184, 0.1);
+            background: rgba(15, 23, 42, 0.7);
+            order: 1;
         }
 
-        .header {
-            background: linear-gradient(135deg, rgba(99, 102, 241, 0.9) 0%, rgba(168, 85, 247, 0.9) 100%);
-            color: white;
-            padding: 32px 40px;
-            position: relative;
-            overflow: hidden;
-        }
-        
-        .header::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='0.05'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
-            opacity: 0.5;
-        }
-
-        .header-content {
-            position: relative;
-            z-index: 1;
-        }
-
-        .header h1 {
-            font-size: 32px;
-            font-weight: 800;
-            margin-bottom: 8px;
-            display: flex;
-            align-items: center;
-            gap: 14px;
-            letter-spacing: -0.5px;
-        }
-        
-        .ai-icon {
-            width: 42px;
-            height: 42px;
-            background: linear-gradient(135deg, #fff 0%, #f0f0f0 100%);
-            border-radius: 12px;
+        .tab-button {
+            padding: 12px 12px;
+            background: rgba(99, 102, 241, 0.1);
+            border: 1px solid rgba(99, 102, 241, 0.3);
+            color: #94a3b8;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            border-radius: 8px;
+            font-family: 'Inter', sans-serif;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+            text-align: center;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 24px;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-            animation: pulse 2s ease-in-out infinite;
-        }
-        
-        @keyframes pulse {
-            0%, 100% { transform: scale(1); }
-            50% { transform: scale(1.05); }
+            word-wrap: break-word;
+            line-height: 1.2;
         }
 
-        .header p {
-            font-size: 16px;
-            opacity: 0.95;
-            font-weight: 500;
-            letter-spacing: 0.2px;
+        .tab-button:hover {
+            color: #cbd5e1;
+            background: rgba(99, 102, 241, 0.2);
+            border-color: rgba(99, 102, 241, 0.5);
+            transform: translateY(-2px);
         }
-        
-        .status-badge {
-            display: inline-flex;
+
+        .tab-button.active {
+            color: white;
+            background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+            border-color: #6366f1;
+            box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+        }
+
+        .tab-content {
+            display: none;
+            flex: 1;
+            flex-direction: column;
+            height: 100vh;
+            order: 2;
+        }
+
+        .tab-content.active {
+            display: flex;
+        }
+
+        .header {
+            padding: 24px 30px;
+            background: linear-gradient(135deg, rgba(99, 102, 241, 0.1) 0%, rgba(168, 85, 247, 0.1) 100%);
+            border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+        }
+
+        .header-content {
+            display: flex;
+            justify-content: space-between;
             align-items: center;
-            gap: 6px;
-            padding: 6px 14px;
-            background: rgba(34, 197, 94, 0.2);
-            border: 1px solid rgba(34, 197, 94, 0.3);
+        }
+
+        .header h1 {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 24px;
+            color: #e2e8f0;
+            margin: 0;
+        }
+
+        .status-badge {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            color: white;
+            padding: 6px 16px;
             border-radius: 20px;
-            font-size: 13px;
-            font-weight: 600;
-            margin-top: 12px;
-        }
-        
-        .status-badge::before {
-            content: '';
-            width: 8px;
-            height: 8px;
-            background: #22c55e;
-            border-radius: 50%;
-            animation: blink 2s ease-in-out infinite;
-        }
-        
-        @keyframes blink {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.3; }
+            font-size: 12px;
+            font-weight: 700;
+            letter-spacing: 0.5px;
         }
 
         .chat-container {
             flex: 1;
             overflow-y: auto;
-            padding: 30px;
-            background: rgba(15, 23, 42, 0.4);
-            position: relative;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            padding: 24px 30px;
+            scrollbar-width: thin;
+            scrollbar-color: rgba(99, 102, 241, 0.3) transparent;
         }
-        
+
         .chat-container::-webkit-scrollbar {
-            width: 10px;
+            width: 8px;
         }
-        
+
         .chat-container::-webkit-scrollbar-track {
-            background: rgba(30, 41, 59, 0.4);
-            border-radius: 10px;
+            background: transparent;
         }
-        
+
         .chat-container::-webkit-scrollbar-thumb {
-            background: linear-gradient(to bottom, #6366f1, #a855f7);
-            border-radius: 10px;
+            background: rgba(99, 102, 241, 0.3);
+            border-radius: 4px;
         }
 
         .message {
-            margin-bottom: 24px;
             display: flex;
-            animation: slideUp 0.4s ease-out;
+            animation: slideIn 0.3s ease;
         }
-        
-        @keyframes slideUp {
+
+        @keyframes slideIn {
             from {
                 opacity: 0;
                 transform: translateY(20px);
@@ -233,7 +232,7 @@
         }
         
         .message.assistant::before {
-            content: '🤖';
+            content: 'AI';
             position: absolute;
             left: 0;
             top: 0;
@@ -244,7 +243,9 @@
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 20px;
+            font-size: 14px;
+            font-weight: 700;
+            color: white;
             box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
         }
 
@@ -344,51 +345,126 @@
             color: #64748b;
         }
 
-        #sendButton {
-            padding: 16px 36px;
+        .email-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 24px 30px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .email-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .email-header h2 {
+            font-size: 20px;
+            color: #e2e8f0;
+            margin: 0;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            padding: 12px 24px;
             background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
             color: white;
             border: none;
-            border-radius: 30px;
-            font-size: 15px;
-            font-weight: 700;
+            border-radius: 25px;
+            font-size: 14px;
+            font-weight: 600;
             cursor: pointer;
             transition: all 0.3s ease;
-            box-shadow: 0 8px 24px rgba(99, 102, 241, 0.4);
-            position: relative;
-            overflow: hidden;
+            box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
             font-family: 'Inter', sans-serif;
             letter-spacing: 0.3px;
         }
-        
-        #sendButton::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: -100%;
-            width: 100%;
-            height: 100%;
-            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
-            transition: left 0.5s;
-        }
-        
-        #sendButton:hover::before {
-            left: 100%;
-        }
 
-        #sendButton:hover:not(:disabled) {
+        .btn:hover {
             transform: translateY(-2px);
-            box-shadow: 0 12px 32px rgba(99, 102, 241, 0.5);
+            box-shadow: 0 8px 20px rgba(99, 102, 241, 0.4);
         }
 
-        #sendButton:active:not(:disabled) {
+        .btn:active {
             transform: translateY(0);
         }
 
-        #sendButton:disabled {
+        .btn:disabled {
             opacity: 0.5;
             cursor: not-allowed;
             transform: none;
+        }
+
+        .btn-secondary {
+            background: rgba(99, 102, 241, 0.1);
+            color: #a5b4fc;
+            border: 1px solid rgba(99, 102, 241, 0.3);
+            box-shadow: none;
+        }
+
+        .btn-secondary:hover {
+            background: rgba(99, 102, 241, 0.2);
+            box-shadow: 0 4px 12px rgba(99, 102, 241, 0.2);
+        }
+
+        .email-list {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .email-item {
+            background: rgba(30, 41, 59, 0.4);
+            border: 1px solid rgba(148, 163, 184, 0.1);
+            border-radius: 12px;
+            padding: 16px;
+            transition: all 0.3s ease;
+        }
+
+        .email-item:hover {
+            background: rgba(30, 41, 59, 0.6);
+            border-color: rgba(99, 102, 241, 0.3);
+        }
+
+        .email-from {
+            font-weight: 600;
+            color: #6366f1;
+            margin-bottom: 4px;
+        }
+
+        .email-subject {
+            color: #e2e8f0;
+            font-weight: 500;
+            margin-bottom: 8px;
+        }
+
+        .email-date {
+            font-size: 13px;
+            color: #94a3b8;
+        }
+
+        .empty-state {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 16px;
+            padding: 40px 20px;
+            text-align: center;
+            color: #94a3b8;
+        }
+
+        .empty-state-text {
+            font-size: 48px;
+            opacity: 0.5;
         }
 
         strong { color: #a5b4fc; }
@@ -404,7 +480,6 @@
     </style>
 </head>
 <body>
-    <!-- Generate particles -->
     <script>
         for(let i = 0; i < 30; i++) {
             let particle = document.createElement('div');
@@ -417,49 +492,94 @@
     </script>
 
     <div class="container">
-        <div class="header">
-            <div class="header-content">
-                <h1>
-                    <div class="ai-icon">✨</div>
-                    ChatGPT Assistant
-                </h1>
-                <p>🚀 AI-Powered Email Management & Application Control</p>
-                <div class="status-badge">System Online</div>
-            </div>
+        <div class="tab-bar">
+            <button class="tab-button active" data-tab="chat">Chat</button>
+            <button class="tab-button" data-tab="email">Email</button>
         </div>
 
-        <div class="chat-container" id="chatContainer">
-            <div class="message system">
-                <div class="message-content">
-                    💫 <strong>Welcome to ChatGPT Assistant!</strong><br>
-                    Your AI-powered automation system is ready. Try commands like:<br>
-                    • "Launch calculator" or "Open notepad"<br>
-                    • "Send email to user@example.com"<br>
-                    • "Show my unread emails"
+        <div id="chat" class="tab-content active">
+            <div class="header">
+                <div class="header-content">
+                    <h1>ChatGPT Assistant</h1>
+                    <div class="status-badge">Online</div>
+                </div>
+            </div>
+
+            <div class="chat-container" id="chatContainer">
+                <div class="message system">
+                    <div class="message-content">
+                        <strong>Welcome to ChatGPT Assistant!</strong><br>
+                        Your AI-powered automation system is ready. Try:<br>
+                        &bull; "Launch calculator" or "Open notepad"<br>
+                        &bull; "Send email to user@example.com"<br>
+                        &bull; Or ask any question!
+                    </div>
+                </div>
+            </div>
+
+            <div class="typing-indicator" id="typingIndicator">
+                <span></span>
+                <span></span>
+                <span></span>
+            </div>
+
+            <div class="input-container">
+                <div class="input-wrapper">
+                    <input 
+                        type="text" 
+                        id="messageInput" 
+                        placeholder="Type your message or command..."
+                        autocomplete="off"
+                    />
+                    <button id="sendButton" class="btn">Send</button>
                 </div>
             </div>
         </div>
 
-        <div class="typing-indicator" id="typingIndicator">
-            <span></span>
-            <span></span>
-            <span></span>
-        </div>
+        <div id="email" class="tab-content">
+            <div class="header">
+                <div class="header-content">
+                    <h1>Email Management</h1>
+                    <div class="status-badge">Ready</div>
+                </div>
+            </div>
 
-        <div class="input-container">
-            <div class="input-wrapper">
-                <input 
-                    type="text" 
-                    id="messageInput" 
-                    placeholder="Type your message or command..."
-                    autocomplete="off"
-                />
-                <button id="sendButton">Send ✈️</button>
+            <div class="email-container">
+                <div class="email-header">
+                    <h2>Inbox</h2>
+                    <div class="button-group">
+                        <button id="unreadButton" class="btn">Unread Mail</button>
+                        <button id="refreshButton" class="btn btn-secondary">Refresh</button>
+                    </div>
+                </div>
+
+                <div id="emailList" class="email-list">
+                    <div class="empty-state">
+                        <div class="empty-state-text">Mail</div>
+                        <p>Click "Unread Mail" to load your emails</p>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
 
     <script>
+        document.querySelectorAll('.tab-button').forEach(button => {
+            button.addEventListener('click', () => {
+                const tabName = button.dataset.tab;
+                
+                document.querySelectorAll('.tab-button').forEach(b => b.classList.remove('active'));
+                document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+                
+                button.classList.add('active');
+                document.getElementById(tabName).classList.add('active');
+                
+                if (tabName === 'chat') {
+                    document.getElementById('messageInput').focus();
+                }
+            });
+        });
+
         const chatContainer = document.getElementById('chatContainer');
         const messageInput = document.getElementById('messageInput');
         const sendButton = document.getElementById('sendButton');
@@ -482,12 +602,10 @@
             const message = messageInput.value.trim();
             if (!message) return;
 
-            // Add user message
             addMessage(message, 'user');
             messageInput.value = '';
             sendButton.disabled = true;
 
-            // Show typing indicator
             typingIndicator.classList.add('active');
 
             try {
@@ -500,18 +618,16 @@
                 });
 
                 const data = await response.json();
-
-                // Hide typing indicator
                 typingIndicator.classList.remove('active');
 
                 if (response.ok) {
                     addMessage(data.response, 'assistant');
                 } else {
-                    addMessage(`❌ Error: ${data.error || 'Unknown error occurred'}`, 'error');
+                    addMessage(`ERROR: ${data.error || 'Unknown error'}`, 'error');
                 }
             } catch (error) {
                 typingIndicator.classList.remove('active');
-                addMessage(`❌ Connection Error: ${error.message}<br>Make sure the chat server is running on port 5000`, 'error');
+                addMessage(`CONNECTION ERROR: ${error.message}`, 'error');
             }
 
             sendButton.disabled = false;
@@ -523,7 +639,59 @@
             if (e.key === 'Enter') sendMessage();
         });
 
-        // Focus input on load
+        const unreadButton = document.getElementById('unreadButton');
+        const refreshButton = document.getElementById('refreshButton');
+        const emailList = document.getElementById('emailList');
+
+        async function loadUnreadEmails() {
+            unreadButton.disabled = true;
+            unreadButton.textContent = 'Loading...';
+
+            try {
+                const response = await fetch('http://localhost:8000/api/email/unread', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        user_credentials: {
+                            access_token: 'token',
+                            refresh_token: 'refresh',
+                            email: 'user@gmail.com'
+                        },
+                        max_results: 20
+                    })
+                });
+
+                const data = await response.json();
+
+                if (response.ok && data.success) {
+                    const emails = data.emails || [];
+                    if (emails.length === 0) {
+                        emailList.innerHTML = '<div class="empty-state"><div class="empty-state-text">OK</div><p>No unread emails</p></div>';
+                    } else {
+                        emailList.innerHTML = emails.map(email => `
+                            <div class="email-item">
+                                <div class="email-from">From: ${email.from || 'Unknown'}</div>
+                                <div class="email-subject">${email.subject || '(No Subject)'}</div>
+                                <div class="email-date">${new Date().toLocaleDateString()}</div>
+                            </div>
+                        `).join('');
+                    }
+                } else {
+                    emailList.innerHTML = `<div class="empty-state"><div class="empty-state-text">Error</div><p>${data.error || 'Failed to load emails'}</p></div>`;
+                }
+            } catch (error) {
+                emailList.innerHTML = `<div class="empty-state"><div class="empty-state-text">Error</div><p>Connection Error: ${error.message}</p></div>`;
+            }
+
+            unreadButton.disabled = false;
+            unreadButton.textContent = 'Unread Mail';
+        }
+
+        unreadButton.addEventListener('click', loadUnreadEmails);
+        refreshButton.addEventListener('click', loadUnreadEmails);
+
         messageInput.focus();
     </script>
 </body>
