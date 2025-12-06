@@ -301,6 +301,41 @@
 
             // Show modal
             modal.style.display = 'flex';
+            
+            // Mark email as read in Gmail
+            markEmailAsRead(email);
+        }
+
+        async function markEmailAsRead(email) {
+            try {
+                // Get credentials
+                const creds = await getUserCredentials();
+                if (!creds || !creds.access_token) {
+                    console.warn('Cannot mark email as read: credentials missing');
+                    return;
+                }
+                
+                // Call API to mark email as read
+                const response = await fetch('http://localhost:8000/api/email/mark-read', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        user_credentials: creds,
+                        message_id: email.message_id
+                    })
+                });
+                
+                if (response.ok) {
+                    console.log(`[OK] Email marked as read: ${email.message_id}`);
+                } else {
+                    const error = await response.json();
+                    console.error('Error marking email as read:', error.detail);
+                }
+            } catch (error) {
+                console.error('Exception marking email as read:', error);
+            }
         }
 
         function sanitizeHtml(html) {

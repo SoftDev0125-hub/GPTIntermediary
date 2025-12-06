@@ -29,6 +29,12 @@ class GetUnreadEmailsRequest(BaseModel):
     user_credentials: UserCredentials
     limit: int = 1000
 
+
+class MarkEmailReadRequest(BaseModel):
+    """Request model for marking an email as read"""
+    user_credentials: UserCredentials
+    message_id: str
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -247,6 +253,34 @@ async def reply_to_email(request: EmailReplyRequest):
         )
     except Exception as e:
         logger.error(f"Error replying to email: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/email/mark-read", response_model=OperationResponse)
+async def mark_email_read(request: MarkEmailReadRequest):
+    """
+    Mark an email as read in Gmail
+    
+    Args:
+        request: User credentials and message ID to mark as read
+    
+    Returns:
+        Operation status
+    """
+    try:
+        logger.info(f"Marking email {request.message_id} as read")
+        await email_service.mark_email_as_read(
+            access_token=request.user_credentials.access_token,
+            refresh_token=request.user_credentials.refresh_token,
+            message_id=request.message_id
+        )
+        return OperationResponse(
+            success=True,
+            message="Email marked as read",
+            data={"message_id": request.message_id}
+        )
+    except Exception as e:
+        logger.error(f"Error marking email as read: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

@@ -267,6 +267,37 @@ class EmailService:
             logger.error(f"Gmail API error: {error}")
             raise Exception(f"Failed to send reply: {error}")
     
+    async def mark_email_as_read(
+        self,
+        access_token: str,
+        message_id: str,
+        refresh_token: Optional[str] = None
+    ) -> None:
+        """
+        Mark an email as read in Gmail
+        
+        Args:
+            access_token: User's Gmail access token
+            message_id: ID of the message to mark as read
+            refresh_token: Optional refresh token for token renewal
+        """
+        try:
+            # Get service with user credentials
+            service = self._get_service(access_token, refresh_token)
+            
+            # Remove UNREAD label to mark as read
+            service.users().messages().modify(
+                userId='me',
+                id=message_id,
+                body={'removeLabelIds': ['UNREAD']}
+            ).execute()
+            
+            logger.info(f"Email {message_id} marked as read")
+        
+        except HttpError as error:
+            logger.error(f"Gmail API error: {error}")
+            raise Exception(f"Failed to mark email as read: {error}")
+    
     def _parse_email(self, message: dict) -> EmailMessage:
         """Parse Gmail API message into EmailMessage model"""
         headers = message['payload']['headers']
