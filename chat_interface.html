@@ -127,6 +127,7 @@
             flex: 1;
             flex-direction: column;
             height: 100vh;
+            min-height: 0; /* allow inner flex children to shrink and scroll */
             order: 2;
         }
 
@@ -173,11 +174,11 @@
             gap: 16px;
             padding: 24px 30px;
             scrollbar-width: thin;
-            scrollbar-color: rgba(99, 102, 241, 0.3) transparent;
+            scrollbar-color: rgba(99, 102, 241, 0.5) transparent;
         }
 
         .chat-container::-webkit-scrollbar {
-            width: 8px;
+            width: 10px;
         }
 
         .chat-container::-webkit-scrollbar-track {
@@ -185,8 +186,14 @@
         }
 
         .chat-container::-webkit-scrollbar-thumb {
-            background: rgba(99, 102, 241, 0.3);
-            border-radius: 4px;
+            background: rgba(99, 102, 241, 0.6);
+            border-radius: 6px;
+            border: 2px solid transparent;
+            background-clip: content-box;
+        }
+
+        .chat-container::-webkit-scrollbar-thumb:hover {
+            background: rgba(99, 102, 241, 0.8);
         }
 
         .message {
@@ -347,6 +354,7 @@
 
         .email-container {
             flex: 1;
+            min-height: 0; /* enable scroll area to calculate height */
             display: flex;
             flex-direction: column;
             gap: 0;
@@ -365,6 +373,18 @@
 
         .email-header h2 {
             display: none;
+        }
+
+        .email-count {
+            background: rgba(99, 102, 241, 0.15);
+            color: #cbd5e1;
+            border: 1px solid rgba(99, 102, 241, 0.4);
+            padding: 6px 12px;
+            border-radius: 12px;
+            font-weight: 600;
+            font-size: 13px;
+            min-width: 90px;
+            text-align: center;
         }
 
         .email-scroll-area {
@@ -388,14 +408,13 @@
 
         .email-scroll-area::-webkit-scrollbar-thumb {
             background: rgba(99, 102, 241, 0.6);
-            border-radius: 5px;
+            border-radius: 6px;
             border: 2px solid transparent;
             background-clip: content-box;
         }
 
         .email-scroll-area::-webkit-scrollbar-thumb:hover {
             background: rgba(99, 102, 241, 0.8);
-            background-clip: content-box;
         }
 
         .button-group {
@@ -610,6 +629,7 @@
             <div class="email-container">
                 <div class="email-header">
                     <h2>Inbox</h2>
+                    <div class="email-count" id="emailCount">Unread: --</div>
                     <div class="button-group">
                         <button id="unreadButton" class="btn">Unread Mail</button>
                         <button id="refreshButton" class="btn btn-secondary">Refresh</button>
@@ -707,6 +727,7 @@
         const unreadButton = document.getElementById('unreadButton');
         const refreshButton = document.getElementById('refreshButton');
         const emailList = document.getElementById('emailList');
+        const emailCount = document.getElementById('emailCount');
 
         let allEmails = [];
         let displayedCount = 0;
@@ -733,10 +754,12 @@
                 </div>
             `).join('');
 
-            const hasMore = displayedCount < allEmails.length;
-            const showMoreButton = hasMore ? `
+            const remaining = Math.max(allEmails.length - displayedCount, 0);
+            const showMoreButton = allEmails.length > 0 ? `
                 <div class="show-more-container">
-                    <button class="btn-show-more" id="showMoreBtn" onclick="showMoreEmails()">Show More (${allEmails.length - displayedCount} more)</button>
+                    <button class="btn-show-more" id="showMoreBtn" onclick="showMoreEmails()" ${remaining === 0 ? 'disabled' : ''}>
+                        ${remaining === 0 ? 'No more emails' : `See More (${remaining} remaining)`}
+                    </button>
                 </div>
             ` : '';
 
@@ -773,6 +796,7 @@
                 if (!creds || !creds.access_token) {
                     console.error('[!] Credentials missing');
                     emailList.innerHTML = '<div class="empty-state"><div class="empty-state-text">Error</div><p>Gmail credentials not found. Please restart the app.</p></div>';
+                    if (emailCount) emailCount.textContent = 'Unread: --';
                     unreadButton.disabled = false;
                     unreadButton.textContent = 'Unread Mail';
                     return;
@@ -796,6 +820,7 @@
 
                 if (response.ok && data.success) {
                     allEmails = data.emails || [];
+                    if (emailCount) emailCount.textContent = `Unread: ${allEmails.length}`;
                     console.log(`[OK] Got ${allEmails.length} emails`);
                     if (allEmails.length === 0) {
                         emailList.innerHTML = '<div class="empty-state"><div class="empty-state-text">OK</div><p>No unread emails</p></div>';
@@ -806,10 +831,12 @@
                     const errorMsg = data.error || data.detail || JSON.stringify(data);
                     console.error('[!] Backend error:', errorMsg);
                     emailList.innerHTML = `<div class="empty-state"><div class="empty-state-text">Error</div><p>${errorMsg}</p></div>`;
+                    if (emailCount) emailCount.textContent = 'Unread: --';
                 }
             } catch (error) {
                 console.error('[!] Exception:', error);
                 emailList.innerHTML = `<div class="empty-state"><div class="empty-state-text">Error</div><p>Exception: ${error.message}</p></div>`;
+                if (emailCount) emailCount.textContent = 'Unread: --';
             }
 
             unreadButton.disabled = false;
