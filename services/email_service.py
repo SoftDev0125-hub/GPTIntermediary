@@ -301,16 +301,30 @@ class EmailService:
         )
     
     def _get_message_body(self, payload: dict) -> str:
-        """Extract body text from message payload"""
+        """Extract body from message payload, preferring HTML for better formatting"""
+        html_body = None
+        plain_body = None
+        
         if 'parts' in payload:
             for part in payload['parts']:
-                if part['mimeType'] == 'text/plain':
+                if part['mimeType'] == 'text/plain' and not plain_body:
                     data = part['body'].get('data', '')
                     if data:
-                        return base64.urlsafe_b64decode(data).decode('utf-8')
+                        plain_body = base64.urlsafe_b64decode(data).decode('utf-8')
+                elif part['mimeType'] == 'text/html' and not html_body:
+                    data = part['body'].get('data', '')
+                    if data:
+                        html_body = base64.urlsafe_b64decode(data).decode('utf-8')
         
-        if 'body' in payload and 'data' in payload['body']:
+        if not html_body and not plain_body and 'body' in payload and 'data' in payload['body']:
             data = payload['body']['data']
-            return base64.urlsafe_b64decode(data).decode('utf-8')
+            decoded = base64.urlsafe_b64decode(data).decode('utf-8')
+            # Check if it looks like HTML
+            if '<' in decoded and '>' in decoded:
+                html_body = decoded
+            else:
+                plain_body = decoded
         
-        return ""
+        # Return HTML if available (for Gmail-like rendering), otherwise plain text
+        body = html_body or plain_body or ""
+        return body.strip()

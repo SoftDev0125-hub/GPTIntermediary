@@ -101,6 +101,29 @@
                         <button id="nextButton" class="btn btn-pagination">Next →</button>
                     </div>
                 </div>
+
+                <!-- Email Detail Modal -->
+                <div class="email-detail-modal" id="emailDetailModal" style="display: none;">
+                    <div class="email-detail-container">
+                        <div class="email-detail-header">
+                            <button class="close-btn" id="closeEmailBtn">✕</button>
+                            <h2 id="detailSubject">Subject</h2>
+                        </div>
+                        <div class="email-detail-info">
+                            <div class="detail-row">
+                                <span class="detail-label">From:</span>
+                                <span id="detailFrom">sender@example.com</span>
+                            </div>
+                            <div class="detail-row">
+                                <span class="detail-label">Date:</span>
+                                <span id="detailDate">Date</span>
+                            </div>
+                        </div>
+                        <div class="email-detail-body" id="detailBody">
+                            <!-- Email body content here -->
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -227,8 +250,8 @@
             const endIdx = startIdx + emailsPerPage;
             const paginatedEmails = allEmails.slice(startIdx, endIdx);
 
-            const emailItems = paginatedEmails.map(email => `
-                <div class="email-item">
+            const emailItems = paginatedEmails.map((email, index) => `
+                <div class="email-item" data-email-index="${startIdx + index}">
                     <div class="email-from">From: ${email.from_email || 'Unknown'}</div>
                     <div class="email-subject">${email.subject || '(No Subject)'}</div>
                     <div class="email-date">${email.date || new Date().toLocaleDateString()}</div>
@@ -238,8 +261,80 @@
             emailList.innerHTML = emailItems;
             updateEmailCount();
 
+            // Add click handlers to email items
+            document.querySelectorAll('.email-item').forEach(item => {
+                item.addEventListener('click', () => {
+                    const emailIndex = parseInt(item.dataset.emailIndex);
+                    showEmailDetail(allEmails[emailIndex]);
+                });
+            });
+
             // Update pagination controls (both top and bottom)
             updatePaginationControls(totalPages);
+        }
+
+        function showEmailDetail(email) {
+            const modal = document.getElementById('emailDetailModal');
+            const detailSubject = document.getElementById('detailSubject');
+            const detailFrom = document.getElementById('detailFrom');
+            const detailDate = document.getElementById('detailDate');
+            const detailBody = document.getElementById('detailBody');
+
+            // Populate modal with email data
+            detailSubject.textContent = email.subject || '(No Subject)';
+            detailFrom.textContent = email.from_email || 'Unknown';
+            detailDate.textContent = email.date || new Date().toLocaleDateString();
+            
+            // Format body content
+            const bodyContent = email.body || 'No content available';
+            
+            // Check if body contains HTML
+            if (bodyContent.includes('<') && bodyContent.includes('>')) {
+                // Render as HTML (with sanitization) - like Gmail
+                detailBody.innerHTML = sanitizeHtml(bodyContent);
+                detailBody.style.whiteSpace = 'normal';
+            } else {
+                // Render as plain text
+                detailBody.textContent = bodyContent;
+                detailBody.style.whiteSpace = 'pre-wrap';
+            }
+
+            // Show modal
+            modal.style.display = 'flex';
+        }
+
+        function sanitizeHtml(html) {
+            // Create a temporary container to parse HTML
+            const temp = document.createElement('div');
+            temp.innerHTML = html;
+            
+            // Remove potentially dangerous scripts and style elements
+            const scripts = temp.querySelectorAll('script, style');
+            scripts.forEach(el => el.remove());
+            
+            // Remove event handlers from all elements
+            const allElements = temp.querySelectorAll('*');
+            allElements.forEach(el => {
+                // Remove all on* attributes (onclick, onload, etc.)
+                Array.from(el.attributes).forEach(attr => {
+                    if (attr.name.startsWith('on')) {
+                        el.removeAttribute(attr.name);
+                    }
+                });
+                
+                // Make links safe to open in browser
+                if (el.tagName === 'A') {
+                    el.target = '_blank';
+                    el.rel = 'noopener noreferrer';
+                }
+            });
+            
+            return temp.innerHTML;
+        }
+
+        function closeEmailDetail() {
+            const modal = document.getElementById('emailDetailModal');
+            modal.style.display = 'none';
         }
 
         function updatePaginationControls(totalPages) {
@@ -406,6 +501,16 @@
 
         document.getElementById('nextButtonTop').addEventListener('click', () => {
             goToPage(currentPage + 1);
+        });
+
+        // Close email detail modal
+        document.getElementById('closeEmailBtn').addEventListener('click', closeEmailDetail);
+        
+        // Close modal when clicking outside of it
+        document.getElementById('emailDetailModal').addEventListener('click', (e) => {
+            if (e.target.id === 'emailDetailModal') {
+                closeEmailDetail();
+            }
         });
 
         messageInput.focus();
