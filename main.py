@@ -194,7 +194,7 @@ async def get_unread_emails(request: GetUnreadEmailsRequest):
     """
     try:
         logger.info(f"Fetching {request.limit} unread emails")
-        emails = await email_service.get_unread_emails(
+        emails, total_unread = await email_service.get_unread_emails(
             access_token=request.user_credentials.access_token,
             refresh_token=request.user_credentials.refresh_token,
             limit=request.limit
@@ -203,6 +203,7 @@ async def get_unread_emails(request: GetUnreadEmailsRequest):
         return EmailListResponse(
             success=True,
             count=len(emails),
+            total_unread=total_unread,
             emails=emails
         )
     except Exception as e:

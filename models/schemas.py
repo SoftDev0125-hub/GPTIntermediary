@@ -54,6 +54,7 @@ class EmailListResponse(BaseModel):
     """Response model for email list operations"""
     success: bool
     count: int
+    total_unread: int
     emails: List[EmailMessage]
 
 

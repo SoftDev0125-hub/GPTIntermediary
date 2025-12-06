@@ -134,7 +134,7 @@ class EmailService:
         access_token: str,
         limit: int = 10,
         refresh_token: Optional[str] = None
-    ) -> List[EmailMessage]:
+    ) -> tuple[List[EmailMessage], int]:
         """
         Retrieve unread emails
         
@@ -148,13 +148,17 @@ class EmailService:
             # Get service with user credentials
             service = self._get_service(access_token, refresh_token)
             
-            # Query for unread messages
+            # Get total unread count from system label (more accurate than page-limited list)
+            label_info = service.users().labels().get(userId='me', id='UNREAD').execute()
+            total_unread = label_info.get('messagesUnread', 0)
+
+            # Query for unread messages (paged subset)
             results = service.users().messages().list(
                 userId='me',
                 q='is:unread',
                 maxResults=limit
             ).execute()
-            
+
             messages = results.get('messages', [])
             email_list = []
             
@@ -169,8 +173,8 @@ class EmailService:
                 email_data = self._parse_email(message)
                 email_list.append(email_data)
             
-            logger.info(f"Retrieved {len(email_list)} unread emails")
-            return email_list
+            logger.info(f"Retrieved {len(email_list)} unread emails (total unread: {total_unread})")
+            return email_list, total_unread
         
         except HttpError as error:
             logger.error(f"Gmail API error: {error}")
