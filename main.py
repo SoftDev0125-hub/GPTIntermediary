@@ -27,7 +27,7 @@ from pydantic import BaseModel
 class GetUnreadEmailsRequest(BaseModel):
     """Request model for getting unread emails"""
     user_credentials: UserCredentials
-    limit: int = 10
+    limit: int = 1000
 
 # Configure logging
 logging.basicConfig(
@@ -300,6 +300,6 @@ if __name__ == "__main__":
         "main:app",
         host="0.0.0.0",
         port=8000,
-        reload=True,
+        reload=False,
         log_level="info"
     )

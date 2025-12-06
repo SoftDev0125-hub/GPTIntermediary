@@ -74,10 +74,31 @@ def stop_servers():
     global backend_process, chat_process
     
     print("[*] Stopping servers...")
+    
+    # Stop backend server (port 8000)
     if backend_process:
-        backend_process.terminate()
+        try:
+            print("[*] Terminating backend server (port 8000)...")
+            backend_process.terminate()
+            backend_process.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            print("[*] Force killing backend server...")
+            backend_process.kill()
+            backend_process.wait()
+    
+    # Stop chat server (port 5000)
     if chat_process:
-        chat_process.terminate()
+        try:
+            print("[*] Terminating chat server (port 5000)...")
+            chat_process.terminate()
+            chat_process.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            print("[*] Force killing chat server...")
+            chat_process.kill()
+            chat_process.wait()
+    
+    # Give ports time to be released
+    time.sleep(1)
     print("[OK] Servers stopped!")
 
 def main():

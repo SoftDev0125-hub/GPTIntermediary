@@ -132,7 +132,7 @@ class EmailService:
     async def get_unread_emails(
         self,
         access_token: str,
-        limit: int = 10,
+        limit: int = 1000,
         refresh_token: Optional[str] = None
     ) -> tuple[List[EmailMessage], int]:
         """
