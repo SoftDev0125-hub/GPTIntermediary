@@ -156,7 +156,14 @@
             
             const contentDiv = document.createElement('div');
             contentDiv.className = 'message-content';
-            contentDiv.innerHTML = text;
+            
+            // Format the message to preserve line breaks and add proper paragraph spacing
+            let formattedText = text
+                .replace(/\n\n/g, '</p><p>') // Double newlines become new paragraphs
+                .replace(/\n/g, '<br>') // Single newlines become line breaks
+                .replace(/^(.+)$/, '<p>$1</p>'); // Wrap in paragraph tags
+            
+            contentDiv.innerHTML = formattedText;
             
             messageDiv.appendChild(contentDiv);
             chatContainer.appendChild(messageDiv);
