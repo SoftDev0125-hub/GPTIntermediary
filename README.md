@@ -111,6 +111,23 @@ python app.py
 
 This will launch the desktop application with a modern UI.
 
+### 6. Optional: Run the Django Service
+
+The project now includes a lightweight Django service (for future admin/pages). It runs independently from FastAPI/Flask.
+
+```powershell
+# From the repo root
+cd django_app
+
+# Apply migrations (creates SQLite db)
+python manage.py migrate
+
+# Run on a non-conflicting port (FastAPI uses 8000, Flask uses 5000)
+python manage.py runserver 8001
+```
+
+Then visit http://127.0.0.1:8001 to see the Django health endpoint.
+
 ## API Endpoints
 
 ### Email Operations
@@ -242,6 +259,10 @@ GPTIntermediary/
 ├── .gitignore            # Git ignore rules
 ├── credentials.json      # Gmail API credentials (not in git)
 ├── token.json           # Gmail API token (generated, not in git)
+├── django_app/            # Django service (optional)
+│   ├── manage.py
+│   ├── djproject/        # Django project settings/urls
+│   └── core/             # Core app with health endpoint
 ├── models/
 │   ├── __init__.py
 │   └── schemas.py       # Pydantic models for request/response

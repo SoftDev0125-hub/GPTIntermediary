@@ -14,6 +14,10 @@ import os
 # Servers
 backend_process = None
 chat_process = None
+django_process = None
+
+DJANGO_PORT = 8001
+DJANGO_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "django_app")
 
 def refresh_gmail_tokens():
     """Refresh Gmail tokens by running get_gmail_token.py"""
@@ -43,8 +47,8 @@ def refresh_gmail_tokens():
         return False
 
 def start_servers():
-    """Start backend and chat servers"""
-    global backend_process, chat_process
+    """Start backend, chat, and Django servers"""
+    global backend_process, chat_process, django_process
     
     print("[*] Starting servers...")
     
@@ -67,11 +71,43 @@ def start_servers():
     )
     
     time.sleep(2)  # Wait for chat server to start
+
+    # Start Django service (migrate + runserver)
+    try:
+        if os.path.isdir(DJANGO_DIR):
+            print(f"[*] Applying Django migrations in {DJANGO_DIR}...")
+            migrate_result = subprocess.run(
+                [sys.executable, "manage.py", "migrate", "--run-syncdb"],
+                cwd=DJANGO_DIR,
+                capture_output=True,
+                text=True,
+                timeout=90,
+            )
+            if migrate_result.returncode != 0:
+                print("[!] Django migrate failed (continuing):")
+                print(migrate_result.stdout)
+                print(migrate_result.stderr)
+            else:
+                print("[OK] Django migrate complete")
+
+            print(f"[*] Starting Django dev server on port {DJANGO_PORT}...")
+            django_process = subprocess.Popen(
+                [sys.executable, "manage.py", "runserver", str(DJANGO_PORT)],
+                stdout=None,
+                stderr=None,
+                cwd=DJANGO_DIR,
+            )
+            time.sleep(2)
+        else:
+            print(f"[!] Django directory not found: {DJANGO_DIR} (skipping)")
+    except Exception as e:
+        print(f"[!] Django start error (skipping): {e}")
+
     print("[OK] Servers started!")
 
 def stop_servers():
     """Stop all servers"""
-    global backend_process, chat_process
+    global backend_process, chat_process, django_process
     
     print("[*] Stopping servers...")
     
@@ -96,6 +132,17 @@ def stop_servers():
             print("[*] Force killing chat server...")
             chat_process.kill()
             chat_process.wait()
+
+    # Stop Django server (port 8001)
+    if django_process:
+        try:
+            print(f"[*] Terminating Django server (port {DJANGO_PORT})...")
+            django_process.terminate()
+            django_process.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            print("[*] Force killing Django server...")
+            django_process.kill()
+            django_process.wait()
     
     # Give ports time to be released
     time.sleep(1)

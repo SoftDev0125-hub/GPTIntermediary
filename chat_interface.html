@@ -163,11 +163,31 @@
                 .replace(/\n/g, '<br>') // Single newlines become line breaks
                 .replace(/^(.+)$/, '<p>$1</p>'); // Wrap in paragraph tags
             
+            // Enhance emoji and icon display
+            formattedText = enhanceIconsAndEmojis(formattedText);
+            
             contentDiv.innerHTML = formattedText;
             
             messageDiv.appendChild(contentDiv);
             chatContainer.appendChild(messageDiv);
             chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+
+        function enhanceIconsAndEmojis(text) {
+            // Wrap standalone emojis in a span for better styling
+            text = text.replace(/([\u{1F300}-\u{1F9FF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}])/gu, '<span class="emoji-icon">$1</span>');
+            
+            // Convert common text patterns to visual icons
+            text = text.replace(/\b(✓|✔️|✅)/g, '<span class="icon-success">$1</span>');
+            text = text.replace(/\b(✗|❌|⛔)/g, '<span class="icon-error">$1</span>');
+            text = text.replace(/\b(ℹ️|ℹ|💡)/g, '<span class="icon-info">$1</span>');
+            text = text.replace(/\b(⚠️|⚠|⚡)/g, '<span class="icon-warning">$1</span>');
+            
+            // Enhance bullet points with icons
+            text = text.replace(/•/g, '<span class="bullet-icon">•</span>');
+            text = text.replace(/→/g, '<span class="arrow-icon">→</span>');
+            
+            return text;
         }
 
         async function sendMessage() {
