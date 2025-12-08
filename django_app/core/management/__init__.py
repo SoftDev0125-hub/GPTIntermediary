@@ -1,0 +1,1 @@
+"""Initialize Django management module"""
