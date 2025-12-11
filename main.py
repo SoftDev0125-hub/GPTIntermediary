@@ -27,6 +27,8 @@ from models.schemas import (
     WhatsAppListResponse,
     GetTelegramMessagesRequest,
     TelegramListResponse,
+    SendTelegramMessageRequest,
+    SendTelegramMessageResponse,
     GetSlackMessagesRequest,
     SlackListResponse,
     SendSlackMessageRequest,
@@ -470,6 +472,105 @@ async def get_telegram_status():
         }
     except Exception as e:
         logger.error(f"Error checking Telegram status: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/telegram/authenticate")
+async def authenticate_telegram(request: dict):
+    """
+    Authenticate Telegram client
+    
+    Args:
+        request: May contain phone_number, code, and password
+    
+    Returns:
+        Authentication status
+    """
+    try:
+        phone_number = request.get('phone_number')
+        code = request.get('code')
+        password = request.get('password')
+        
+        is_complete, message = await telegram_service.authenticate(
+            phone_number=phone_number,
+            code=code,
+            password=password
+        )
+        
+        return {
+            "success": is_complete,
+            "message": message,
+            "requires_code": not phone_number and not is_complete,
+            "requires_password": "password" in message.lower() and not password
+        }
+    except Exception as e:
+        logger.error(f"Error authenticating Telegram: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/telegram/delete-session")
+async def delete_telegram_session():
+    """
+    Delete Telegram session file to force re-authentication
+    
+    Returns:
+        Success status
+    """
+    try:
+        import os
+        import shutil
+        
+        session_dir = os.path.join(os.path.dirname(__file__), 'telegram_session')
+        
+        if os.path.exists(session_dir):
+            # Disconnect client first if it exists and is connected
+            try:
+                if telegram_service.client and telegram_service.is_connected:
+                    await telegram_service.client.disconnect()
+                    logger.info("Disconnected Telegram client before deleting session")
+            except Exception as e:
+                logger.warning(f"Could not disconnect client (may already be disconnected): {str(e)}")
+            
+            # Delete all files in session directory
+            deleted_files = []
+            for filename in os.listdir(session_dir):
+                file_path = os.path.join(session_dir, filename)
+                try:
+                    if os.path.isfile(file_path):
+                        os.remove(file_path)
+                        deleted_files.append(filename)
+                    elif os.path.isdir(file_path):
+                        shutil.rmtree(file_path)
+                        deleted_files.append(filename)
+                except Exception as e:
+                    logger.warning(f"Could not delete {file_path}: {str(e)}")
+            
+            # Reset service state
+            telegram_service.is_connected = False
+            telegram_service.client = None  # Reset client reference
+            
+            # Recreate the client after deleting session (it will need authentication)
+            try:
+                telegram_service._create_client()
+                logger.info("Telegram client recreated after session deletion")
+            except Exception as e:
+                logger.warning(f"Could not recreate Telegram client: {str(e)}")
+            
+            if deleted_files:
+                logger.info(f"Deleted {len(deleted_files)} session file(s): {', '.join(deleted_files)}")
+            
+            return {
+                "success": True,
+                "message": f"Session file(s) deleted successfully ({len(deleted_files) if deleted_files else 0} file(s)). Please restart your backend server, then click 'Refresh' to authenticate.",
+                "deleted_files": deleted_files
+            }
+        else:
+            return {
+                "success": True,
+                "message": "No session file found."
+            }
+    except Exception as e:
+        logger.error(f"Error deleting Telegram session: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

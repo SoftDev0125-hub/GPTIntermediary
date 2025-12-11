@@ -99,6 +99,7 @@ class TelegramMessage(BaseModel):
     body: str
     timestamp: str
     is_read: bool = False
+    is_sent: bool = False  # True if sent by current user, False if received
     chat_id: Optional[str] = None
     chat_name: Optional[str] = None
 
@@ -114,6 +115,20 @@ class TelegramListResponse(BaseModel):
     count: int
     total_count: int
     messages: List[TelegramMessage]
+
+
+class SendTelegramMessageRequest(BaseModel):
+    """Request model for sending Telegram messages"""
+    chat_id: str = Field(..., description="Chat ID to send the message to")
+    text: str = Field(..., description="Message text to send")
+    reply_to_message_id: Optional[str] = Field(None, description="Optional message ID to reply to")
+
+
+class SendTelegramMessageResponse(BaseModel):
+    """Response model for sending Telegram messages"""
+    success: bool
+    message_id: str
+    message: str
 
 
 class SlackMessage(BaseModel):

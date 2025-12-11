@@ -1460,6 +1460,411 @@ code {
     animation: spin 0.6s linear infinite;
 }
 
+/* Telegram Input Area */
+.telegram-input-container {
+    padding: 12px 20px;
+    border-top: 1px solid #d1d9de;
+    background: #ffffff;
+}
+
+.telegram-input-wrapper {
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+    background: #ffffff;
+    max-width: 100%;
+}
+
+.telegram-message-input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    color: #000000;
+    font-size: 15px;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    resize: none;
+    min-height: 24px;
+    max-height: 150px;
+    line-height: 1.46668;
+    padding: 8px 12px;
+    outline: none;
+}
+
+.telegram-message-input::placeholder {
+    color: #999999;
+}
+
+.telegram-message-input:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.telegram-send-button {
+    width: 28px;
+    height: 28px;
+    background: #0088cc;
+    border: none;
+    border-radius: 4px;
+    color: white;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    padding: 0;
+}
+
+.telegram-send-button:hover:not(:disabled) {
+    background: #006ba3;
+}
+
+.telegram-send-button:disabled {
+    background: #d1d9de;
+    color: #999999;
+    cursor: not-allowed;
+}
+
+.telegram-send-spinner {
+    width: 14px;
+    height: 14px;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-top-color: white;
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+}
+
 @keyframes spin {
     to { transform: rotate(360deg); }
+}
+
+/* Telegram-like Interface Styles */
+.telegram-container {
+    display: flex;
+    flex-direction: row;
+    height: 100%;
+    width: 100%;
+    background: #ffffff;
+    color: #000000;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* Telegram Sidebar */
+.telegram-sidebar {
+    width: 320px;
+    background: #f0f0f0;
+    border-right: 1px solid #e0e0e0;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
+.telegram-sidebar-header {
+    padding: 12px 16px;
+    background: #ffffff;
+    border-bottom: 1px solid #e0e0e0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.telegram-sidebar-header h2 {
+    font-size: 18px;
+    font-weight: 600;
+    color: #000000;
+    margin: 0;
+}
+
+.telegram-refresh-btn {
+    padding: 6px 12px;
+    background: #3390ec;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.telegram-refresh-btn:hover {
+    background: #2d7fd1;
+}
+
+.telegram-refresh-btn:disabled {
+    background: #b0b0b0;
+    color: #ffffff;
+    cursor: not-allowed;
+}
+
+.telegram-sidebar-content {
+    flex: 1;
+    overflow-y: auto;
+    background: #ffffff;
+}
+
+.telegram-sidebar-empty {
+    padding: 20px;
+    text-align: center;
+    color: #999999;
+    font-size: 14px;
+}
+
+.telegram-chat-item {
+    padding: 10px 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    cursor: pointer;
+    transition: background 0.15s;
+    border-bottom: 1px solid #f0f0f0;
+}
+
+.telegram-chat-item:hover {
+    background: #f5f5f5;
+}
+
+.telegram-chat-item.active {
+    background: #e8f4fd;
+}
+
+.telegram-chat-avatar {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    font-weight: 600;
+    color: white;
+    flex-shrink: 0;
+}
+
+.telegram-chat-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.telegram-chat-name {
+    font-size: 16px;
+    font-weight: 500;
+    color: #000000;
+    margin-bottom: 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.telegram-chat-preview {
+    font-size: 14px;
+    color: #707579;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.telegram-chat-meta {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 4px;
+    flex-shrink: 0;
+}
+
+.telegram-chat-time {
+    font-size: 12px;
+    color: #707579;
+}
+
+.telegram-chat-unread {
+    background: #3390ec;
+    color: white;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 2px 6px;
+    border-radius: 10px;
+    min-width: 18px;
+    text-align: center;
+}
+
+/* Telegram Main Area */
+.telegram-main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    background: #ffffff;
+}
+
+.telegram-header {
+    padding: 12px 20px;
+    border-bottom: 1px solid #e0e0e0;
+    background: #ffffff;
+    display: flex;
+    align-items: center;
+    min-height: 60px;
+}
+
+.telegram-header-content {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+}
+
+.telegram-header h2 {
+    font-size: 18px;
+    font-weight: 600;
+    color: #000000;
+    margin: 0;
+}
+
+.telegram-header-info {
+    font-size: 13px;
+    color: #707579;
+}
+
+/* Telegram Messages Container */
+.telegram-messages-container {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px;
+    background: #e5ddd5;
+    background-image: 
+        radial-gradient(circle at 20% 50%, rgba(255,255,255,0.1) 0%, transparent 50%),
+        radial-gradient(circle at 80% 80%, rgba(255,255,255,0.1) 0%, transparent 50%);
+}
+
+.telegram-empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: #707579;
+    text-align: center;
+}
+
+.telegram-empty-icon {
+    font-size: 48px;
+    margin-bottom: 16px;
+}
+
+.telegram-empty-state h3 {
+    font-size: 18px;
+    font-weight: 600;
+    color: #000000;
+    margin-bottom: 8px;
+}
+
+.telegram-empty-state p {
+    font-size: 14px;
+    color: #707579;
+}
+
+/* Telegram Messages */
+.telegram-date-divider {
+    display: flex;
+    align-items: center;
+    margin: 16px 0;
+    text-align: center;
+}
+
+.telegram-date-divider::before,
+.telegram-date-divider::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: rgba(0, 0, 0, 0.1);
+}
+
+.telegram-date-divider span {
+    padding: 0 12px;
+    font-size: 13px;
+    font-weight: 500;
+    color: #707579;
+    background: rgba(255, 255, 255, 0.8);
+    border-radius: 12px;
+}
+
+.telegram-message-wrapper {
+    display: flex;
+    margin-bottom: 8px;
+    padding: 0 8px;
+}
+
+.telegram-message-wrapper.sent {
+    justify-content: flex-end;
+}
+
+.telegram-message-wrapper.received {
+    justify-content: flex-start;
+}
+
+.telegram-message-bubble {
+    max-width: 70%;
+    padding: 8px 12px;
+    border-radius: 12px;
+    position: relative;
+    word-wrap: break-word;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+
+.telegram-message-wrapper.sent .telegram-message-bubble {
+    background: #dcf8c6;
+    border-bottom-right-radius: 4px;
+}
+
+.telegram-message-wrapper.received .telegram-message-bubble {
+    background: #ffffff;
+    border-bottom-left-radius: 4px;
+}
+
+.telegram-message-text {
+    font-size: 15px;
+    line-height: 1.4;
+    color: #000000;
+    margin-bottom: 4px;
+    word-wrap: break-word;
+}
+
+.telegram-message-time {
+    font-size: 11px;
+    color: #707579;
+    text-align: right;
+    margin-top: 2px;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 4px;
+}
+
+.telegram-message-wrapper.received .telegram-message-time {
+    color: #999999;
+}
+
+.telegram-message-wrapper.sent .telegram-message-time {
+    color: #3390ec;
+}
+
+/* Scrollbar styling for Telegram */
+.telegram-sidebar-content::-webkit-scrollbar,
+.telegram-messages-container::-webkit-scrollbar {
+    width: 6px;
+}
+
+.telegram-sidebar-content::-webkit-scrollbar-track,
+.telegram-messages-container::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.telegram-sidebar-content::-webkit-scrollbar-thumb,
+.telegram-messages-container::-webkit-scrollbar-thumb {
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 3px;
+}
+
+.telegram-sidebar-content::-webkit-scrollbar-thumb:hover,
+.telegram-messages-container::-webkit-scrollbar-thumb:hover {
+    background: rgba(0, 0, 0, 0.3);
 }

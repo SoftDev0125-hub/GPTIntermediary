@@ -207,54 +207,46 @@
         </div>
 
         <div id="telegram" class="tab-content">
-            <div class="header">
-                <div class="header-content">
-                    <h1>Telegram Messages</h1>
-                    <div class="status-badge">Ready</div>
-                </div>
-            </div>
-
-            <div class="email-container">
-                <div class="email-header">
-                    <h2>Messages</h2>
-                    <div class="email-count" id="telegramCount">Messages: --</div>
-                    <div class="button-group">
-                        <button id="telegramShowButton" class="btn">SHOW</button>
+            <div class="telegram-container">
+                <!-- Telegram Sidebar -->
+                <div class="telegram-sidebar">
+                    <div class="telegram-sidebar-header">
+                        <h2>Chats</h2>
+                        <button id="telegramShowButton" class="telegram-refresh-btn">Refresh</button>
+                    </div>
+                    <div class="telegram-sidebar-content" id="telegramChatsList">
+                        <div class="telegram-sidebar-empty">Click "Refresh" to load chats</div>
                     </div>
                 </div>
 
-                <div class="email-scroll-area">
-                    <div id="telegramList" class="email-list">
-                        <div class="empty-state">
-                            <div class="empty-state-text">Telegram</div>
-                            <p>Click "SHOW" to display all messages from your Telegram account</p>
+                <!-- Telegram Main Area -->
+                <div class="telegram-main">
+                    <div class="telegram-header">
+                        <div class="telegram-header-content">
+                            <h2 id="telegramCurrentChat">Select a chat</h2>
+                            <div class="telegram-header-info" id="telegramCount">-- messages</div>
                         </div>
                     </div>
-                </div>
-
-                <!-- Telegram Message Detail Modal -->
-                <div class="email-detail-modal" id="telegramDetailModal" style="display: none;">
-                    <div class="email-detail-container">
-                        <div class="email-detail-header">
-                            <button class="close-btn" id="closeTelegramBtn">✕</button>
-                            <h2 id="telegramDetailFrom">From</h2>
+                    <div class="telegram-messages-container" id="telegramMessagesContainer">
+                        <div class="telegram-empty-state">
+                            <div class="telegram-empty-icon">✈️</div>
+                            <h3>Welcome to Telegram</h3>
+                            <p>Select a chat from the sidebar or click "Refresh" to load your messages</p>
                         </div>
-                        <div class="email-detail-info">
-                            <div class="detail-row">
-                                <span class="detail-label">ID:</span>
-                                <span id="telegramDetailId">ID</span>
-                            </div>
-                            <div class="detail-row">
-                                <span class="detail-label">Time:</span>
-                                <span id="telegramDetailTime">Time</span>
-                            </div>
-                            <div class="detail-row">
-                                <span class="detail-label">Chat:</span>
-                                <span id="telegramDetailChat">Chat Name</span>
-                            </div>
-                        </div>
-                        <div class="email-detail-body" id="telegramDetailBody">
-                            <!-- Telegram message body content here -->
+                    </div>
+                    <div class="telegram-input-container" id="telegramInputContainer" style="display: none;">
+                        <div class="telegram-input-wrapper">
+                            <textarea 
+                                id="telegramMessageInput" 
+                                class="telegram-message-input" 
+                                placeholder="Type a message..."
+                                rows="1"
+                            ></textarea>
+                            <button id="telegramSendButton" class="telegram-send-button" disabled>
+                                <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                                    <path d="M18 2L9 11M18 2L12 18L9 11M18 2L2 8L9 11" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                </svg>
+                            </button>
                         </div>
                     </div>
                 </div>
@@ -975,6 +967,100 @@
         // Close WhatsApp detail modal
         document.getElementById('closeWhatsAppBtn').addEventListener('click', closeWhatsAppDetail);
         
+        // Telegram message sending
+        let currentTelegramChatId = null;
+        const telegramMessageInput = document.getElementById('telegramMessageInput');
+        const telegramSendButton = document.getElementById('telegramSendButton');
+
+        // Auto-resize textarea
+        if (telegramMessageInput) {
+            telegramMessageInput.addEventListener('input', function() {
+                this.style.height = 'auto';
+                this.style.height = Math.min(this.scrollHeight, 150) + 'px';
+                if (telegramSendButton) {
+                    telegramSendButton.disabled = !this.value.trim() || !currentTelegramChatId;
+                }
+            });
+
+            telegramMessageInput.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    if (telegramSendButton && !telegramSendButton.disabled) {
+                        sendTelegramMessage();
+                    }
+                }
+            });
+        }
+
+        // Send button click handler
+        if (telegramSendButton) {
+            telegramSendButton.addEventListener('click', sendTelegramMessage);
+        }
+
+        async function sendTelegramMessage() {
+            if (!currentTelegramChatId || !telegramMessageInput) return;
+            
+            const text = telegramMessageInput.value.trim();
+            if (!text) return;
+
+            // Disable input while sending
+            telegramMessageInput.disabled = true;
+            if (telegramSendButton) {
+                telegramSendButton.disabled = true;
+                telegramSendButton.innerHTML = '<div class="telegram-send-spinner"></div>';
+            }
+
+            try {
+                console.log(`[*] Sending message to Telegram chat ${currentTelegramChatId}...`);
+                const response = await fetch('http://localhost:8000/api/telegram/send', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        chat_id: currentTelegramChatId,
+                        text: text
+                    })
+                });
+
+                console.log('[*] Response status:', response.status);
+                const data = await response.json();
+                console.log('[*] Response data:', data);
+
+                if (response.ok && data.success) {
+                    // Clear input
+                    telegramMessageInput.value = '';
+                    telegramMessageInput.style.height = 'auto';
+                    
+                    // Reload messages to show the new one
+                    await loadTelegramMessages();
+                    
+                    // Re-select the current chat
+                    if (currentTelegramChatId) {
+                        selectTelegramChat(currentTelegramChatId);
+                    }
+                } else {
+                    const errorMsg = data.error || data.detail || JSON.stringify(data);
+                    console.error('[!] Backend error:', errorMsg);
+                    alert(`Failed to send message: ${errorMsg}`);
+                }
+            } catch (error) {
+                console.error('[!] Exception:', error);
+                alert(`Failed to send message: ${error.message}`);
+            } finally {
+                // Re-enable input
+                telegramMessageInput.disabled = false;
+                if (telegramSendButton) {
+                    telegramSendButton.disabled = !telegramMessageInput.value.trim() || !currentTelegramChatId;
+                    telegramSendButton.innerHTML = `
+                        <svg width="20" height="20" viewBox="0 0 20 20" viewBox="0 0 20 20" fill="none">
+                            <path d="M18 2L9 11M18 2L12 18L9 11M18 2L2 8L9 11" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                    `;
+                }
+            }
+        }
+        
         // Close modal when clicking outside of it
         document.getElementById('whatsappDetailModal').addEventListener('click', (e) => {
             if (e.target.id === 'whatsappDetailModal') {
@@ -984,71 +1070,254 @@
 
         // Telegram functionality
         const telegramShowButton = document.getElementById('telegramShowButton');
-        const telegramList = document.getElementById('telegramList');
+        const telegramMessagesContainer = document.getElementById('telegramMessagesContainer');
+        const telegramChatsList = document.getElementById('telegramChatsList');
+        const telegramCurrentChat = document.getElementById('telegramCurrentChat');
         const telegramCount = document.getElementById('telegramCount');
         let allTelegramMessages = [];
+        let messagesByChat = {};
+        let currentChatId = null;
         let totalTelegramCount = 0;
 
-        function updateTelegramCount() {
-            if (!telegramCount) return;
-            const shown = allTelegramMessages.length;
-            const total = totalTelegramCount || 0;
-            telegramCount.textContent = `Showing ${shown} / ${total} messages`;
+        function getTelegramInitials(name) {
+            if (!name) return '?';
+            const parts = name.trim().split(' ');
+            if (parts.length >= 2) {
+                return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+            }
+            return name.substring(0, 2).toUpperCase();
         }
 
-        function renderTelegramMessages() {
-            const messageItems = allTelegramMessages.map((message, index) => `
-                <div class="email-item" data-message-index="${index}">
-                    <div class="email-from">From: ${message.from_name || message.from_id || 'Unknown'}</div>
-                    <div class="email-subject">${message.body ? (message.body.length > 50 ? message.body.substring(0, 50) + '...' : message.body) : '(No content)'}</div>
-                    <div class="email-date">${message.timestamp || new Date().toLocaleDateString()}</div>
-                </div>
-            `).join('');
+        function getTelegramAvatarColor(name) {
+            if (!name) return '#3390ec';
+            let hash = 0;
+            for (let i = 0; i < name.length; i++) {
+                hash = name.charCodeAt(i) + ((hash << 5) - hash);
+            }
+            const colors = [
+                '#3390ec', '#e17076', '#fdcb6e', '#6c5ce7', '#a29bfe',
+                '#fd79a8', '#00b894', '#00cec9', '#55efc4', '#74b9ff'
+            ];
+            return colors[Math.abs(hash) % colors.length];
+        }
 
-            telegramList.innerHTML = messageItems;
-            updateTelegramCount();
+        function formatTelegramTimestamp(timestamp) {
+            if (!timestamp) return '';
+            try {
+                const date = new Date(timestamp);
+                const now = new Date();
+                const diffMs = now - date;
+                const diffMins = Math.floor(diffMs / 60000);
+                const diffHours = Math.floor(diffMs / 3600000);
+                const diffDays = Math.floor(diffMs / 86400000);
 
-            // Add click handlers to message items
-            document.querySelectorAll('#telegramList .email-item').forEach(item => {
+                if (diffMins < 1) return 'now';
+                if (diffMins < 60) return `${diffMins}m`;
+                if (diffHours < 24) return `${diffHours}h`;
+                if (diffDays < 7) return `${diffDays}d`;
+                
+                const month = date.toLocaleString('default', { month: 'short' });
+                const day = date.getDate();
+                return `${month} ${day}`;
+            } catch (e) {
+                return timestamp;
+            }
+        }
+
+        function formatTelegramTime(timestamp) {
+            if (!timestamp) return '';
+            try {
+                const date = new Date(timestamp);
+                return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: false });
+            } catch (e) {
+                return timestamp;
+            }
+        }
+
+        function formatTelegramMessage(text) {
+            if (!text) return '';
+            let formatted = text
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/\n/g, '<br>')
+                .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+                .replace(/\*(.+?)\*/g, '<em>$1</em>')
+                .replace(/`(.+?)`/g, '<code>$1</code>');
+            return formatted;
+        }
+
+        function groupMessagesByChat(messages) {
+            const grouped = {};
+            messages.forEach(msg => {
+                const chatId = msg.chat_id || 'unknown';
+                if (!grouped[chatId]) {
+                    grouped[chatId] = {
+                        chatId: chatId,
+                        chatName: msg.chat_name || 'Unknown',
+                        messages: []
+                    };
+                }
+                grouped[chatId].messages.push(msg);
+            });
+            
+            // Sort messages within each chat by timestamp
+            Object.keys(grouped).forEach(chatId => {
+                grouped[chatId].messages.sort((a, b) => {
+                    const timeA = new Date(a.timestamp || 0).getTime();
+                    const timeB = new Date(b.timestamp || 0).getTime();
+                    return timeA - timeB; // Oldest first
+                });
+            });
+            
+            return grouped;
+        }
+
+        function renderTelegramChats() {
+            const chats = Object.values(messagesByChat);
+            chats.sort((a, b) => {
+                const lastMsgA = a.messages[a.messages.length - 1];
+                const lastMsgB = b.messages[b.messages.length - 1];
+                const timeA = new Date(lastMsgA?.timestamp || 0).getTime();
+                const timeB = new Date(lastMsgB?.timestamp || 0).getTime();
+                return timeB - timeA; // Most recent first
+            });
+
+            if (chats.length === 0) {
+                telegramChatsList.innerHTML = '<div class="telegram-sidebar-empty">No chats found</div>';
+                return;
+            }
+
+            const chatsHTML = chats.map(chat => {
+                const lastMsg = chat.messages[chat.messages.length - 1];
+                const preview = lastMsg?.body ? (lastMsg.body.length > 30 ? lastMsg.body.substring(0, 30) + '...' : lastMsg.body) : 'No messages';
+                const time = formatTelegramTimestamp(lastMsg?.timestamp);
+                const isActive = currentChatId === chat.chatId;
+                const initials = getTelegramInitials(chat.chatName);
+                const avatarColor = getTelegramAvatarColor(chat.chatName);
+                
+                return `
+                    <div class="telegram-chat-item ${isActive ? 'active' : ''}" data-chat-id="${chat.chatId}">
+                        <div class="telegram-chat-avatar" style="background-color: ${avatarColor}">
+                            ${initials}
+                        </div>
+                        <div class="telegram-chat-info">
+                            <div class="telegram-chat-name">${chat.chatName}</div>
+                            <div class="telegram-chat-preview">${preview}</div>
+                        </div>
+                        <div class="telegram-chat-meta">
+                            <span class="telegram-chat-time">${time}</span>
+                            ${chat.messages.filter(m => !m.is_read && !m.is_sent).length > 0 ? 
+                                `<span class="telegram-chat-unread">${chat.messages.filter(m => !m.is_read && !m.is_sent).length}</span>` : ''}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            telegramChatsList.innerHTML = chatsHTML;
+
+            // Add click handlers
+            document.querySelectorAll('.telegram-chat-item').forEach(item => {
                 item.addEventListener('click', () => {
-                    const messageIndex = parseInt(item.dataset.messageIndex);
-                    showTelegramDetail(allTelegramMessages[messageIndex]);
+                    const chatId = item.dataset.chatId;
+                    selectTelegramChat(chatId);
                 });
             });
         }
 
-        function showTelegramDetail(message) {
-            const modal = document.getElementById('telegramDetailModal');
-            const detailFrom = document.getElementById('telegramDetailFrom');
-            const detailId = document.getElementById('telegramDetailId');
-            const detailTime = document.getElementById('telegramDetailTime');
-            const detailChat = document.getElementById('telegramDetailChat');
-            const detailBody = document.getElementById('telegramDetailBody');
+        function selectTelegramChat(chatId) {
+            currentChatId = chatId;
+            currentTelegramChatId = chatId;  // Update for send function
+            const chat = messagesByChat[chatId];
+            if (!chat) return;
 
-            // Populate modal with message data
-            detailFrom.textContent = message.from_name || message.from_id || 'Unknown';
-            detailId.textContent = message.from_id || 'N/A';
-            detailTime.textContent = message.timestamp || new Date().toLocaleDateString();
-            detailChat.textContent = message.chat_name || 'Unknown';
-            
-            // Format body content
-            const bodyContent = message.body || 'No content available';
-            detailBody.textContent = bodyContent;
-            detailBody.style.whiteSpace = 'pre-wrap';
+            telegramCurrentChat.textContent = chat.chatName;
+            telegramCount.textContent = `${chat.messages.length} messages`;
 
-            // Show modal
-            modal.style.display = 'flex';
+            // Render messages for this chat
+            renderTelegramMessages(chat.messages);
+
+            // Show input area
+            const telegramInputContainer = document.getElementById('telegramInputContainer');
+            if (telegramInputContainer) {
+                telegramInputContainer.style.display = 'block';
+            }
+
+            // Update active state
+            document.querySelectorAll('.telegram-chat-item').forEach(item => {
+                item.classList.toggle('active', item.dataset.chatId === chatId);
+            });
+
+            // Focus input and update send button state
+            const messageInput = document.getElementById('telegramMessageInput');
+            if (messageInput) {
+                messageInput.focus();
+                // Update send button state
+                if (telegramSendButton) {
+                    telegramSendButton.disabled = !messageInput.value.trim() || !currentTelegramChatId;
+                }
+            }
         }
 
-        function closeTelegramDetail() {
-            const modal = document.getElementById('telegramDetailModal');
-            modal.style.display = 'none';
+        function renderTelegramMessages(messages) {
+            if (!messages || messages.length === 0) {
+                telegramMessagesContainer.innerHTML = '<div class="telegram-empty-state"><p>No messages in this chat</p></div>';
+                return;
+            }
+
+            let lastDate = null;
+            const messagesHTML = messages.map((msg, index) => {
+                const msgDate = new Date(msg.timestamp || Date.now());
+                const currentDate = msgDate.toDateString();
+                const showDateDivider = lastDate !== currentDate;
+                lastDate = currentDate;
+
+                const timeStr = formatTelegramTime(msg.timestamp);
+                const formattedBody = formatTelegramMessage(msg.body || '');
+                const isSent = msg.is_sent || false;
+
+                let html = '';
+                
+                // Date divider
+                if (showDateDivider) {
+                    const dateStr = msgDate.toLocaleDateString('en-US', { 
+                        weekday: 'long', 
+                        year: 'numeric', 
+                        month: 'long', 
+                        day: 'numeric' 
+                    });
+                    html += `<div class="telegram-date-divider"><span>${dateStr}</span></div>`;
+                }
+
+                // Message bubble
+                html += `
+                    <div class="telegram-message-wrapper ${isSent ? 'sent' : 'received'}">
+                        <div class="telegram-message-bubble">
+                            <div class="telegram-message-text">${formattedBody || '<em>No content</em>'}</div>
+                            <div class="telegram-message-time">${timeStr}</div>
+                        </div>
+                    </div>
+                `;
+
+                return html;
+            }).join('');
+
+            telegramMessagesContainer.innerHTML = messagesHTML;
+            telegramMessagesContainer.scrollTop = telegramMessagesContainer.scrollHeight;
+        }
+
+        function updateTelegramCount() {
+            if (!telegramCount) return;
+            const total = Object.values(messagesByChat).reduce((sum, ch) => sum + ch.messages.length, 0);
+            telegramCount.textContent = `${total} total messages`;
         }
 
         async function loadTelegramMessages() {
             telegramShowButton.disabled = true;
             telegramShowButton.textContent = 'Loading...';
             allTelegramMessages = [];
+            messagesByChat = {};
+            currentChatId = null;
             totalTelegramCount = 0;
 
             try {
@@ -1059,51 +1328,243 @@
                         'Content-Type': 'application/json',
                     },
                     body: JSON.stringify({
-                        limit: 100
+                        limit: 200
                     })
                 });
 
                 console.log('[*] Response status:', response.status);
+                
+                // Handle non-OK responses (like 500 errors)
+                if (!response.ok) {
+                    let errorData;
+                    try {
+                        errorData = await response.json();
+                    } catch (e) {
+                        // If response is not JSON, create error object
+                        const errorText = await response.text();
+                        errorData = { detail: errorText || `HTTP ${response.status}: ${response.statusText}` };
+                    }
+                    const errorMsg = errorData.detail || errorData.error || errorData.message || JSON.stringify(errorData);
+                    console.error('[!] Backend error (HTTP ' + response.status + '):', errorMsg);
+                    throw new Error(errorMsg);
+                }
+                
                 const data = await response.json();
                 console.log('[*] Response data:', data);
 
-                if (response.ok && data.success) {
+                if (data.success) {
                     allTelegramMessages = data.messages || [];
                     totalTelegramCount = typeof data.total_count === 'number' ? data.total_count : allTelegramMessages.length;
-                    updateTelegramCount();
-                    console.log(`[OK] Got ${allTelegramMessages.length} Telegram messages`);
-                    if (allTelegramMessages.length === 0) {
-                        telegramList.innerHTML = '<div class="empty-state"><div class="empty-state-text">OK</div><p>No Telegram messages found</p></div>';
+                    
+                    // Group messages by chat
+                    messagesByChat = groupMessagesByChat(allTelegramMessages);
+                    
+                    // Render chats sidebar
+                    renderTelegramChats();
+                    
+                    // Auto-select first chat if available
+                    const chats = Object.keys(messagesByChat);
+                    if (chats.length > 0) {
+                        selectTelegramChat(chats[0]);
                     } else {
-                        renderTelegramMessages();
+                        telegramMessagesContainer.innerHTML = '<div class="telegram-empty-state"><p>No messages found</p></div>';
                     }
+                    
+                    updateTelegramCount();
+                    console.log(`[OK] Got ${allTelegramMessages.length} Telegram messages in ${chats.length} chats`);
                 } else {
                     const errorMsg = data.error || data.detail || JSON.stringify(data);
                     console.error('[!] Backend error:', errorMsg);
-                    telegramList.innerHTML = `<div class="empty-state"><div class="empty-state-text">Error</div><p>${errorMsg}</p></div>`;
-                    if (telegramCount) telegramCount.textContent = 'Showing 0 / -- messages';
+                    
+                    // Check if it's an authentication error
+                    if (errorMsg.includes('not authorized') || errorMsg.includes('authenticate') || errorMsg.includes('AUTH_KEY_UNREGISTERED') || errorMsg.includes('invalid or expired') || errorMsg.includes('too many times') || errorMsg.includes('rate limit')) {
+                        const isInvalidSession = errorMsg.includes('AUTH_KEY_UNREGISTERED') || errorMsg.includes('invalid or expired');
+                        const needsVerificationCode = errorMsg.includes('Verification code') || errorMsg.includes('verification code required');
+                        const isRateLimited = errorMsg.includes('too many times') || errorMsg.includes('rate limit') || errorMsg.includes('tried logging in too many');
+                        
+                        // Format error message - replace newlines with <br> for HTML display
+                        const formattedErrorMsg = errorMsg.replace(/\n/g, '<br>');
+                        
+                        telegramMessagesContainer.innerHTML = `
+                            <div class="telegram-empty-state">
+                                <div class="telegram-empty-icon">🔐</div>
+                                <h3>${isRateLimited ? 'Rate Limited - Please Wait' : isInvalidSession ? 'Invalid Session File' : needsVerificationCode ? 'Verification Code Required' : 'Authentication Required'}</h3>
+                                <div style="margin-top: 12px; padding: 16px; background: rgba(0,0,0,0.05); border-radius: 8px; max-width: 600px; text-align: left; margin-left: auto; margin-right: auto;">
+                                    <p style="font-size: 13px; color: #2b2b2b; line-height: 1.8; white-space: pre-line; margin: 0; font-family: 'Segoe UI', sans-serif;">${formattedErrorMsg}</p>
+                                </div>
+                                <p style="margin-top: 20px; font-size: 13px; color: #707579; max-width: 500px; line-height: 1.6;">
+                                    ${needsVerificationCode ? 
+                                        'This app doesn\'t have a verification code input. ' : 
+                                        isInvalidSession ? 
+                                            'Your Telegram session file is invalid or expired. ' : 
+                                            'Your Telegram client is not authenticated. '
+                                    }
+                                    ${needsVerificationCode ? 
+                                        'Please run the authentication script in your terminal:' : 
+                                        'Please follow these steps:'
+                                    }
+                                </p>
+                                ${isRateLimited ? `
+                                    <div style="margin-top: 20px; text-align: left; max-width: 500px; background: rgba(255, 193, 7, 0.1); padding: 16px; border-radius: 8px; border-left: 4px solid #ffc107;">
+                                        <div style="color: #707579; font-size: 13px; line-height: 1.8;">
+                                            <p style="margin-bottom: 12px; font-weight: 600; color: #856404;">⚠️ Rate Limit Active</p>
+                                            <p>Telegram has temporarily blocked authentication attempts. This usually happens when:</p>
+                                            <ul style="margin: 8px 0; padding-left: 20px;">
+                                                <li>Too many verification code requests were made</li>
+                                                <li>Multiple failed authentication attempts occurred</li>
+                                            </ul>
+                                            <p style="margin-top: 12px; font-weight: 600;">What to do:</p>
+                                            <ol style="margin: 8px 0; padding-left: 20px;">
+                                                <li><strong>Wait 24 hours</strong> for the rate limit to reset</li>
+                                                <li>Then try authenticating again: <code style="background: rgba(0,0,0,0.1); padding: 2px 6px; border-radius: 4px;">python authenticate_telegram.py</code></li>
+                                                <li>Make sure to enter the verification code correctly on the first try</li>
+                                            </ol>
+                                        </div>
+                                    </div>
+                                ` : needsVerificationCode ? `
+                                    <div style="margin-top: 20px; text-align: left; max-width: 500px; background: rgba(0,0,0,0.05); padding: 16px; border-radius: 8px;">
+                                        <div style="color: #707579; font-size: 13px; line-height: 1.8;">
+                                            <p style="margin-bottom: 12px; font-weight: 600; color: #2b2b2b;">Run this command in your terminal:</p>
+                                            <code style="display: block; background: rgba(0,0,0,0.1); padding: 12px; border-radius: 6px; font-family: 'Courier New', monospace; font-size: 13px; color: #2b2b2b; margin-bottom: 12px;">
+                                                python authenticate_telegram.py
+                                            </code>
+                                            <p style="margin-top: 12px;">This will open a window where you can enter your verification code from the Telegram app.</p>
+                                        </div>
+                                    </div>
+                                ` : `
+                                    <div style="margin-top: 20px; text-align: left; max-width: 500px; background: rgba(0,0,0,0.05); padding: 16px; border-radius: 8px;">
+                                        <ol style="color: #707579; font-size: 13px; line-height: 1.8; margin-left: 20px;">
+                                            <li>Stop your backend server (Ctrl+C)</li>
+                                            <li>Run: <code style="background: rgba(0,0,0,0.1); padding: 2px 6px; border-radius: 4px;">python authenticate_telegram.py</code></li>
+                                            <li>Follow the prompts to enter your phone number and verification code</li>
+                                            <li>Restart your backend server</li>
+                                            <li>Click "Refresh" again</li>
+                                        </ol>
+                                    </div>
+                                    <button id="deleteTelegramSessionBtn" class="telegram-delete-session-btn" style="margin-top: 20px; padding: 10px 20px; background: #e17076; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500;">
+                                        Delete Session File (requires server restart)
+                                    </button>
+                                `}
+                            </div>
+                        `;
+                        
+                        // Add click handler for delete session button
+                        const deleteBtn = document.getElementById('deleteTelegramSessionBtn');
+                        if (deleteBtn) {
+                            deleteBtn.addEventListener('click', async () => {
+                                if (confirm('This will delete your Telegram session file. You will need to restart the server and authenticate again. Continue?')) {
+                                    try {
+                                        const response = await fetch('http://localhost:8000/api/telegram/delete-session', {
+                                            method: 'POST'
+                                        });
+                                        const data = await response.json();
+                                        if (response.ok && data.success) {
+                                            alert(data.message || 'Session file deleted. Please restart your backend server and click Refresh to authenticate.');
+                                        } else {
+                                            alert('Failed to delete session file: ' + (data.detail || data.message || 'Unknown error'));
+                                        }
+                                    } catch (error) {
+                                        alert('Error deleting session file: ' + error.message);
+                                    }
+                                }
+                            });
+                        }
+                    } else {
+                        telegramMessagesContainer.innerHTML = `<div class="telegram-empty-state"><div class="telegram-empty-icon">⚠️</div><h3>Error</h3><p>${errorMsg}</p></div>`;
+                    }
+                    telegramChatsList.innerHTML = '<div class="telegram-sidebar-empty">Error loading chats</div>';
+                    if (telegramCount) telegramCount.textContent = 'Error';
                 }
             } catch (error) {
                 console.error('[!] Exception:', error);
-                telegramList.innerHTML = `<div class="empty-state"><div class="empty-state-text">Error</div><p>Exception: ${error.message}</p></div>`;
-                if (telegramCount) telegramCount.textContent = 'Showing 0 / -- messages';
+                const errorMsg = error.message || 'Unknown error';
+                
+                // Check if it's an authentication error
+                if (errorMsg.includes('not authorized') || errorMsg.includes('authenticate') || errorMsg.includes('AUTH_KEY_UNREGISTERED') || errorMsg.includes('invalid or expired')) {
+                    const isInvalidSession = errorMsg.includes('AUTH_KEY_UNREGISTERED') || errorMsg.includes('invalid or expired');
+                    const needsVerificationCode = errorMsg.includes('Verification code') || errorMsg.includes('verification code required');
+                    
+                    telegramMessagesContainer.innerHTML = `
+                        <div class="telegram-empty-state">
+                            <div class="telegram-empty-icon">🔐</div>
+                            <h3>${isInvalidSession ? 'Invalid Session File' : needsVerificationCode ? 'Verification Code Required' : 'Authentication Required'}</h3>
+                            <p>Exception: ${errorMsg}</p>
+                                <p style="margin-top: 16px; font-size: 13px; color: #707579; max-width: 500px; line-height: 1.6;">
+                                    ${isRateLimited ? 
+                                        'Telegram has temporarily blocked authentication attempts due to too many login attempts. ' : 
+                                        needsVerificationCode ? 
+                                            'This app doesn\'t have a verification code input. ' : 
+                                            isInvalidSession ? 
+                                                'Your Telegram session file is invalid or expired. ' : 
+                                                'Your Telegram client is not authenticated. '
+                                    }
+                                    ${isRateLimited ? 
+                                        'Please wait 24 hours before trying to authenticate again. ' : 
+                                        needsVerificationCode ? 
+                                            'Please run the authentication script in your terminal:' : 
+                                            'Please follow these steps:'
+                                    }
+                                </p>
+                            ${needsVerificationCode ? `
+                                <div style="margin-top: 20px; text-align: left; max-width: 500px; background: rgba(0,0,0,0.05); padding: 16px; border-radius: 8px;">
+                                    <div style="color: #707579; font-size: 13px; line-height: 1.8;">
+                                        <p style="margin-bottom: 12px; font-weight: 600; color: #2b2b2b;">Run this command in your terminal:</p>
+                                        <code style="display: block; background: rgba(0,0,0,0.1); padding: 12px; border-radius: 6px; font-family: 'Courier New', monospace; font-size: 13px; color: #2b2b2b; margin-bottom: 12px;">
+                                            python authenticate_telegram.py
+                                        </code>
+                                        <p style="margin-top: 12px;">This will open a window where you can enter your verification code from the Telegram app.</p>
+                                    </div>
+                                </div>
+                            ` : `
+                                <div style="margin-top: 20px; text-align: left; max-width: 500px; background: rgba(0,0,0,0.05); padding: 16px; border-radius: 8px;">
+                                    <ol style="color: #707579; font-size: 13px; line-height: 1.8; margin-left: 20px;">
+                                        <li>Stop your backend server (Ctrl+C)</li>
+                                        <li>Run: <code style="background: rgba(0,0,0,0.1); padding: 2px 6px; border-radius: 4px;">python authenticate_telegram.py</code></li>
+                                        <li>Follow the prompts to enter your phone number and verification code</li>
+                                        <li>Restart your backend server</li>
+                                        <li>Click "Refresh" again</li>
+                                    </ol>
+                                </div>
+                                <button id="deleteTelegramSessionBtn2" class="telegram-delete-session-btn" style="margin-top: 20px; padding: 10px 20px; background: #e17076; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500;">
+                                    Delete Session File (requires server restart)
+                                </button>
+                            `}
+                        </div>
+                    `;
+                    
+                    // Add click handler for delete session button
+                    const deleteBtn = document.getElementById('deleteTelegramSessionBtn2');
+                    if (deleteBtn) {
+                        deleteBtn.addEventListener('click', async () => {
+                            if (confirm('This will delete your Telegram session file. You will need to restart the server and authenticate again. Continue?')) {
+                                try {
+                                    const response = await fetch('http://localhost:8000/api/telegram/delete-session', {
+                                        method: 'POST'
+                                    });
+                                    const data = await response.json();
+                                    if (response.ok && data.success) {
+                                        alert('Session file deleted. Please restart your backend server and click Refresh to authenticate.');
+                                    } else {
+                                        alert('Failed to delete session file: ' + (data.detail || data.message || 'Unknown error'));
+                                    }
+                                } catch (error) {
+                                    alert('Error deleting session file: ' + error.message);
+                                }
+                            }
+                        });
+                    }
+                } else {
+                    telegramMessagesContainer.innerHTML = `<div class="telegram-empty-state"><div class="telegram-empty-icon">⚠️</div><h3>Error</h3><p>Exception: ${errorMsg}</p></div>`;
+                }
+                telegramChatsList.innerHTML = '<div class="telegram-sidebar-empty">Error loading chats</div>';
+                if (telegramCount) telegramCount.textContent = 'Error';
             }
 
             telegramShowButton.disabled = false;
-            telegramShowButton.textContent = 'SHOW';
+            telegramShowButton.textContent = 'Refresh';
         }
 
         telegramShowButton.addEventListener('click', loadTelegramMessages);
-
-        // Close Telegram detail modal
-        document.getElementById('closeTelegramBtn').addEventListener('click', closeTelegramDetail);
-        
-        // Close modal when clicking outside of it
-        document.getElementById('telegramDetailModal').addEventListener('click', (e) => {
-            if (e.target.id === 'telegramDetailModal') {
-                closeTelegramDetail();
-            }
-        });
 
         // Slack functionality
         const slackViewButton = document.getElementById('slackViewButton');

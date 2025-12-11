@@ -69,21 +69,45 @@ python -m pip install -r requirements.txt
 
 ## Step 4: First-Time Authentication
 
-When you first run the application with Telegram integration:
+When you first run the application with Telegram integration, you need to authenticate:
+
+### Option 1: Use the Authentication Script (Recommended)
+
+1. **Run the authentication script:**
+   ```bash
+   python authenticate_telegram.py
+   ```
+
+2. **Follow the prompts:**
+   - Enter your phone number (with country code, e.g., +1234567890)
+   - Check your Telegram app for the verification code
+   - Enter the verification code
+   - If you have 2FA enabled, enter your password
+
+3. **Done!** The session file will be created and you can use Telegram in the app.
+
+### Option 2: Authenticate Through the App
 
 1. **Start the application:**
    ```bash
-   python app.py
+   python main.py
    ```
 
-2. **Authentication Process:**
-   - The first time you use Telegram, you'll need to authenticate
-   - The application will prompt you for:
+2. **Delete any existing invalid session file:**
+   ```bash
+   # On Windows PowerShell:
+   Remove-Item -Force telegram_session\telegram_session.session
+   ```
+
+3. **Authentication Process:**
+   - Open the app and go to the Telegram tab
+   - Click "Refresh"
+   - The app will prompt you for:
      - **Phone number:** Enter your Telegram phone number (with country code, e.g., +1234567890)
      - **Verification code:** Telegram will send you a code via Telegram (not SMS). Check your Telegram app for the code
      - **Password (if 2FA enabled):** If you have two-factor authentication enabled, enter your password
 
-3. **Session Storage:**
+4. **Session Storage:**
    - After successful authentication, a session file will be created in the `telegram_session/` directory
    - This session file allows the app to stay logged in without re-authenticating
    - **Keep this session file secure** - it contains your authentication credentials
