@@ -53,3 +53,11 @@ Thumbs.db
 htmlcov/
 .env
 credentials.json
+
+# Session files
+user_session.session
+telegram_session/
+whatsapp_session/
+
+# Node modules
+node_modules/

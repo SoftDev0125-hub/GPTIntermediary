@@ -145,6 +145,16 @@ def health():
     return jsonify({"status": "running", "service": "ChatGPT Interface Server"})
 
 
+@app.route('/get_user_credentials', methods=['GET'])
+def get_user_credentials():
+    """Get user credentials for frontend"""
+    return jsonify({
+        "access_token": USER_CREDENTIALS.get("access_token"),
+        "refresh_token": USER_CREDENTIALS.get("refresh_token"),
+        "email": USER_CREDENTIALS.get("email")
+    })
+
+
 @app.route('/chat', methods=['POST'])
 def chat():
     """Handle chat messages and function calling"""

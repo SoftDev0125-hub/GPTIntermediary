@@ -23,6 +23,9 @@
         <div class="tab-bar">
             <button class="tab-button active" data-tab="chat">Chat</button>
             <button class="tab-button" data-tab="email">Email</button>
+            <button class="tab-button" data-tab="whatsapp">WhatsApp</button>
+            <button class="tab-button" data-tab="telegram">Telegram</button>
+            <button class="tab-button" data-tab="slack">Slack</button>
         </div>
 
         <div id="chat" class="tab-content active">
@@ -121,6 +124,184 @@
                         </div>
                         <div class="email-detail-body" id="detailBody">
                             <!-- Email body content here -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="whatsapp" class="tab-content">
+            <div class="header">
+                <div class="header-content">
+                    <h1>WhatsApp Messages</h1>
+                    <div class="status-badge">Ready</div>
+                </div>
+            </div>
+
+            <div class="email-container">
+                <div class="email-header">
+                    <h2>Messages</h2>
+                    <div class="email-count" id="whatsappCount">Messages: --</div>
+                    <div class="button-group">
+                        <button id="whatsappRefreshButton" class="btn">Refresh</button>
+                    </div>
+                </div>
+
+                <div class="email-scroll-area">
+                    <!-- Setup Instructions Area -->
+                    <div id="whatsappQRCode" style="display: none; text-align: center; padding: 20px;">
+                        <h3 style="color: #e2e8f0; margin-bottom: 15px;">WhatsApp Cloud API Setup</h3>
+                        <div style="background: rgba(99, 102, 241, 0.1); padding: 20px; border-radius: 10px; margin-bottom: 15px; border: 1px solid rgba(99, 102, 241, 0.3);">
+                            <p style="color: #e2e8f0; margin-bottom: 15px;">
+                                This app uses <strong>WhatsApp Cloud API</strong> (Meta's official API).
+                            </p>
+                            <p style="color: #94a3b8; margin-bottom: 15px;">
+                                To connect, you need to configure API credentials in your <code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px;">.env</code> file:
+                            </p>
+                            <div style="text-align: left; background: rgba(0,0,0,0.3); padding: 15px; border-radius: 8px; margin: 15px 0; font-family: monospace; font-size: 12px; color: #cbd5e1;">
+                                WHATSAPP_ACCESS_TOKEN=your_token<br>
+                                WHATSAPP_PHONE_NUMBER_ID=your_phone_id
+                            </div>
+                            <p style="color: #94a3b8; margin-top: 15px; font-size: 14px;">
+                                See <strong>WHATSAPP_CLOUD_API_SETUP.md</strong> for detailed setup instructions.
+                            </p>
+                        </div>
+                        <div id="connectionStatus" style="margin-top: 15px; color: #94a3b8;"></div>
+                    </div>
+                    
+                    <div id="whatsappList" class="email-list">
+                        <div class="empty-state">
+                            <div class="empty-state-text">WhatsApp</div>
+                            <p>Click "Refresh" to load your WhatsApp messages</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- WhatsApp Message Detail Modal -->
+                <div class="email-detail-modal" id="whatsappDetailModal" style="display: none;">
+                    <div class="email-detail-container">
+                        <div class="email-detail-header">
+                            <button class="close-btn" id="closeWhatsAppBtn">✕</button>
+                            <h2 id="whatsappDetailFrom">From</h2>
+                        </div>
+                        <div class="email-detail-info">
+                            <div class="detail-row">
+                                <span class="detail-label">Number:</span>
+                                <span id="whatsappDetailNumber">+1234567890</span>
+                            </div>
+                            <div class="detail-row">
+                                <span class="detail-label">Time:</span>
+                                <span id="whatsappDetailTime">Time</span>
+                            </div>
+                            <div class="detail-row" id="whatsappDetailChatRow" style="display: none;">
+                                <span class="detail-label">Chat:</span>
+                                <span id="whatsappDetailChat">Chat Name</span>
+                            </div>
+                        </div>
+                        <div class="email-detail-body" id="whatsappDetailBody">
+                            <!-- WhatsApp message body content here -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="telegram" class="tab-content">
+            <div class="header">
+                <div class="header-content">
+                    <h1>Telegram Messages</h1>
+                    <div class="status-badge">Ready</div>
+                </div>
+            </div>
+
+            <div class="email-container">
+                <div class="email-header">
+                    <h2>Messages</h2>
+                    <div class="email-count" id="telegramCount">Messages: --</div>
+                    <div class="button-group">
+                        <button id="telegramShowButton" class="btn">SHOW</button>
+                    </div>
+                </div>
+
+                <div class="email-scroll-area">
+                    <div id="telegramList" class="email-list">
+                        <div class="empty-state">
+                            <div class="empty-state-text">Telegram</div>
+                            <p>Click "SHOW" to display all messages from your Telegram account</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Telegram Message Detail Modal -->
+                <div class="email-detail-modal" id="telegramDetailModal" style="display: none;">
+                    <div class="email-detail-container">
+                        <div class="email-detail-header">
+                            <button class="close-btn" id="closeTelegramBtn">✕</button>
+                            <h2 id="telegramDetailFrom">From</h2>
+                        </div>
+                        <div class="email-detail-info">
+                            <div class="detail-row">
+                                <span class="detail-label">ID:</span>
+                                <span id="telegramDetailId">ID</span>
+                            </div>
+                            <div class="detail-row">
+                                <span class="detail-label">Time:</span>
+                                <span id="telegramDetailTime">Time</span>
+                            </div>
+                            <div class="detail-row">
+                                <span class="detail-label">Chat:</span>
+                                <span id="telegramDetailChat">Chat Name</span>
+                            </div>
+                        </div>
+                        <div class="email-detail-body" id="telegramDetailBody">
+                            <!-- Telegram message body content here -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="slack" class="tab-content">
+            <div class="slack-container">
+                <!-- Slack Sidebar -->
+                <div class="slack-sidebar">
+                    <div class="slack-sidebar-header">
+                        <h2>Channels & Conversations</h2>
+                        <button id="slackViewButton" class="slack-refresh-btn">Refresh</button>
+                    </div>
+                    <div class="slack-sidebar-content" id="slackChannelsList">
+                        <div class="slack-sidebar-empty">Click "Refresh" to load channels</div>
+                    </div>
+                </div>
+
+                <!-- Slack Main Area -->
+                <div class="slack-main">
+                    <div class="slack-header">
+                        <div class="slack-header-content">
+                            <h2 id="slackCurrentChannel">Select a channel</h2>
+                            <div class="slack-header-info" id="slackCount">-- messages</div>
+                        </div>
+                    </div>
+                    <div class="slack-messages-container" id="slackMessagesContainer">
+                        <div class="slack-empty-state">
+                            <div class="slack-empty-icon">💬</div>
+                            <h3>Welcome to Slack</h3>
+                            <p>Select a channel from the sidebar or click "Refresh" to load your messages</p>
+                        </div>
+                    </div>
+                    <div class="slack-input-container" id="slackInputContainer" style="display: none;">
+                        <div class="slack-input-wrapper">
+                            <textarea 
+                                id="slackMessageInput" 
+                                class="slack-message-input" 
+                                placeholder="Message #channel"
+                                rows="1"
+                            ></textarea>
+                            <button id="slackSendButton" class="slack-send-button" disabled>
+                                <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                                    <path d="M18 2L9 11M18 2L12 18L9 11M18 2L2 8L9 11" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                </svg>
+                            </button>
                         </div>
                     </div>
                 </div>
@@ -576,6 +757,754 @@
         });
 
         messageInput.focus();
+
+        // WhatsApp functionality
+        const whatsappRefreshButton = document.getElementById('whatsappRefreshButton');
+        const whatsappList = document.getElementById('whatsappList');
+        const whatsappCount = document.getElementById('whatsappCount');
+        let allWhatsAppMessages = [];
+        let totalWhatsAppCount = 0;
+
+        function updateWhatsAppCount() {
+            if (!whatsappCount) return;
+            const shown = allWhatsAppMessages.length;
+            const total = totalWhatsAppCount || 0;
+            whatsappCount.textContent = `Showing ${shown} / ${total} messages`;
+        }
+
+        function renderWhatsAppMessages() {
+            const messageItems = allWhatsAppMessages.map((message, index) => `
+                <div class="email-item" data-message-index="${index}">
+                    <div class="email-from">From: ${message.from_name || message.from_number || 'Unknown'}</div>
+                    <div class="email-subject">${message.body ? (message.body.length > 50 ? message.body.substring(0, 50) + '...' : message.body) : '(No content)'}</div>
+                    <div class="email-date">${message.timestamp || new Date().toLocaleDateString()}</div>
+                </div>
+            `).join('');
+
+            whatsappList.innerHTML = messageItems;
+            updateWhatsAppCount();
+
+            // Add click handlers to message items
+            document.querySelectorAll('#whatsappList .email-item').forEach(item => {
+                item.addEventListener('click', () => {
+                    const messageIndex = parseInt(item.dataset.messageIndex);
+                    showWhatsAppDetail(allWhatsAppMessages[messageIndex]);
+                });
+            });
+        }
+
+        function showWhatsAppDetail(message) {
+            const modal = document.getElementById('whatsappDetailModal');
+            const detailFrom = document.getElementById('whatsappDetailFrom');
+            const detailNumber = document.getElementById('whatsappDetailNumber');
+            const detailTime = document.getElementById('whatsappDetailTime');
+            const detailChat = document.getElementById('whatsappDetailChat');
+            const detailChatRow = document.getElementById('whatsappDetailChatRow');
+            const detailBody = document.getElementById('whatsappDetailBody');
+
+            // Populate modal with message data
+            detailFrom.textContent = message.from_name || message.from_number || 'Unknown';
+            detailNumber.textContent = message.from_number || 'N/A';
+            detailTime.textContent = message.timestamp || new Date().toLocaleDateString();
+            
+            if (message.chat_name) {
+                detailChat.textContent = message.chat_name;
+                detailChatRow.style.display = 'flex';
+            } else {
+                detailChatRow.style.display = 'none';
+            }
+            
+            // Format body content
+            const bodyContent = message.body || 'No content available';
+            detailBody.textContent = bodyContent;
+            detailBody.style.whiteSpace = 'pre-wrap';
+
+            // Show modal
+            modal.style.display = 'flex';
+        }
+
+        function closeWhatsAppDetail() {
+            const modal = document.getElementById('whatsappDetailModal');
+            modal.style.display = 'none';
+        }
+
+        async function checkWhatsAppConnection() {
+            try {
+                const response = await fetch('http://localhost:8000/api/whatsapp/status');
+                const data = await response.json();
+                return data.connected || false;
+            } catch (error) {
+                console.error('Error checking connection:', error);
+                return false;
+            }
+        }
+
+        async function loadQRCode() {
+            try {
+                console.log('[*] Checking WhatsApp connection status...');
+                const response = await fetch('http://localhost:8000/api/whatsapp/qr-code');
+                const data = await response.json();
+                
+                console.log('[*] Status response:', data);
+                
+                const qrContainer = document.getElementById('whatsappQRCode');
+                
+                if (data.connected) {
+                    // Already connected, hide setup instructions and load messages
+                    if (qrContainer) qrContainer.style.display = 'none';
+                    whatsappList.style.display = 'block';
+                    await loadWhatsAppMessages();
+                    return true;
+                } else {
+                    // Not connected, show setup instructions
+                    if (qrContainer) {
+                        qrContainer.style.display = 'block';
+                        whatsappList.style.display = 'none';
+                        
+                        const statusDiv = document.getElementById('connectionStatus');
+                        if (statusDiv) {
+                            statusDiv.innerHTML = `<span style="color: #f59e0b;">⚠️ ${data.message || 'Setup required'}</span>`;
+                        }
+                    } else {
+                        whatsappList.innerHTML = `<div class="empty-state"><div class="empty-state-text">Setup Required</div><p>${data.message || 'WhatsApp Cloud API not configured'}</p></div>`;
+                    }
+                    return false;
+                }
+            } catch (error) {
+                console.error('[!] Error checking status:', error);
+                whatsappList.innerHTML = `<div class="empty-state"><div class="empty-state-text">Error</div><p>Failed to check status: ${error.message}</p></div>`;
+                return false;
+            }
+        }
+
+        let connectionPollInterval = null;
+
+        function startConnectionPolling() {
+            if (connectionPollInterval) {
+                clearInterval(connectionPollInterval);
+            }
+            
+            const statusDiv = document.getElementById('connectionStatus');
+            connectionPollInterval = setInterval(async () => {
+                const isConnected = await checkWhatsAppConnection();
+                if (isConnected) {
+                    if (statusDiv) statusDiv.innerHTML = '<span style="color: #10b981;">✓ Connected! Loading messages...</span>';
+                    clearInterval(connectionPollInterval);
+                    // Hide setup instructions and load messages
+                    const qrContainer = document.getElementById('whatsappQRCode');
+                    if (qrContainer) qrContainer.style.display = 'none';
+                    whatsappList.style.display = 'block';
+                    await loadWhatsAppMessages();
+                } else {
+                    if (statusDiv) statusDiv.innerHTML = '<span style="color: #f59e0b;">Waiting for configuration...</span>';
+                }
+            }, 5000); // Check every 5 seconds (Cloud API doesn't need frequent polling)
+        }
+
+        async function loadWhatsAppMessages() {
+            whatsappRefreshButton.disabled = true;
+            whatsappRefreshButton.textContent = 'Loading...';
+            allWhatsAppMessages = [];
+            totalWhatsAppCount = 0;
+
+            try {
+                // First check connection status
+                const isConnected = await checkWhatsAppConnection();
+                
+                if (!isConnected) {
+                    // Not connected, show QR code
+                    const qrLoaded = await loadQRCode();
+                    if (!qrLoaded) {
+                        whatsappList.innerHTML = '<div class="empty-state"><div class="empty-state-text">Setup Required</div><p>Please wait while we prepare the QR code...</p></div>';
+                        // Retry loading QR code
+                        setTimeout(loadQRCode, 2000);
+                    }
+                    whatsappRefreshButton.disabled = false;
+                    whatsappRefreshButton.textContent = 'Refresh';
+                    return;
+                }
+
+                console.log('[*] Requesting WhatsApp messages from backend...');
+                const response = await fetch('http://localhost:8000/api/whatsapp/messages', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        limit: 100
+                    })
+                });
+
+                console.log('[*] Response status:', response.status);
+                const data = await response.json();
+                console.log('[*] Response data:', data);
+
+                // Hide QR code if showing
+                const qrContainer = document.getElementById('whatsappQRCode');
+                if (qrContainer) qrContainer.style.display = 'none';
+                whatsappList.style.display = 'block';
+
+                if (response.ok && data.success) {
+                    allWhatsAppMessages = data.messages || [];
+                    totalWhatsAppCount = typeof data.total_count === 'number' ? data.total_count : allWhatsAppMessages.length;
+                    updateWhatsAppCount();
+                    console.log(`[OK] Got ${allWhatsAppMessages.length} WhatsApp messages`);
+                    if (allWhatsAppMessages.length === 0) {
+                        whatsappList.innerHTML = '<div class="empty-state"><div class="empty-state-text">OK</div><p>No WhatsApp messages found</p></div>';
+                    } else {
+                        renderWhatsAppMessages();
+                    }
+                } else {
+                    const errorMsg = data.error || data.detail || JSON.stringify(data);
+                    console.error('[!] Backend error:', errorMsg);
+                    whatsappList.innerHTML = `<div class="empty-state"><div class="empty-state-text">Error</div><p>${errorMsg}</p></div>`;
+                    if (whatsappCount) whatsappCount.textContent = 'Showing 0 / -- messages';
+                }
+            } catch (error) {
+                console.error('[!] Exception:', error);
+                whatsappList.innerHTML = `<div class="empty-state"><div class="empty-state-text">Error</div><p>Exception: ${error.message}</p></div>`;
+                if (whatsappCount) whatsappCount.textContent = 'Showing 0 / -- messages';
+            }
+
+            whatsappRefreshButton.disabled = false;
+            whatsappRefreshButton.textContent = 'Refresh';
+        }
+
+        whatsappRefreshButton.addEventListener('click', loadWhatsAppMessages);
+
+        // Close WhatsApp detail modal
+        document.getElementById('closeWhatsAppBtn').addEventListener('click', closeWhatsAppDetail);
+        
+        // Close modal when clicking outside of it
+        document.getElementById('whatsappDetailModal').addEventListener('click', (e) => {
+            if (e.target.id === 'whatsappDetailModal') {
+                closeWhatsAppDetail();
+            }
+        });
+
+        // Telegram functionality
+        const telegramShowButton = document.getElementById('telegramShowButton');
+        const telegramList = document.getElementById('telegramList');
+        const telegramCount = document.getElementById('telegramCount');
+        let allTelegramMessages = [];
+        let totalTelegramCount = 0;
+
+        function updateTelegramCount() {
+            if (!telegramCount) return;
+            const shown = allTelegramMessages.length;
+            const total = totalTelegramCount || 0;
+            telegramCount.textContent = `Showing ${shown} / ${total} messages`;
+        }
+
+        function renderTelegramMessages() {
+            const messageItems = allTelegramMessages.map((message, index) => `
+                <div class="email-item" data-message-index="${index}">
+                    <div class="email-from">From: ${message.from_name || message.from_id || 'Unknown'}</div>
+                    <div class="email-subject">${message.body ? (message.body.length > 50 ? message.body.substring(0, 50) + '...' : message.body) : '(No content)'}</div>
+                    <div class="email-date">${message.timestamp || new Date().toLocaleDateString()}</div>
+                </div>
+            `).join('');
+
+            telegramList.innerHTML = messageItems;
+            updateTelegramCount();
+
+            // Add click handlers to message items
+            document.querySelectorAll('#telegramList .email-item').forEach(item => {
+                item.addEventListener('click', () => {
+                    const messageIndex = parseInt(item.dataset.messageIndex);
+                    showTelegramDetail(allTelegramMessages[messageIndex]);
+                });
+            });
+        }
+
+        function showTelegramDetail(message) {
+            const modal = document.getElementById('telegramDetailModal');
+            const detailFrom = document.getElementById('telegramDetailFrom');
+            const detailId = document.getElementById('telegramDetailId');
+            const detailTime = document.getElementById('telegramDetailTime');
+            const detailChat = document.getElementById('telegramDetailChat');
+            const detailBody = document.getElementById('telegramDetailBody');
+
+            // Populate modal with message data
+            detailFrom.textContent = message.from_name || message.from_id || 'Unknown';
+            detailId.textContent = message.from_id || 'N/A';
+            detailTime.textContent = message.timestamp || new Date().toLocaleDateString();
+            detailChat.textContent = message.chat_name || 'Unknown';
+            
+            // Format body content
+            const bodyContent = message.body || 'No content available';
+            detailBody.textContent = bodyContent;
+            detailBody.style.whiteSpace = 'pre-wrap';
+
+            // Show modal
+            modal.style.display = 'flex';
+        }
+
+        function closeTelegramDetail() {
+            const modal = document.getElementById('telegramDetailModal');
+            modal.style.display = 'none';
+        }
+
+        async function loadTelegramMessages() {
+            telegramShowButton.disabled = true;
+            telegramShowButton.textContent = 'Loading...';
+            allTelegramMessages = [];
+            totalTelegramCount = 0;
+
+            try {
+                console.log('[*] Requesting Telegram messages from backend...');
+                const response = await fetch('http://localhost:8000/api/telegram/messages', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        limit: 100
+                    })
+                });
+
+                console.log('[*] Response status:', response.status);
+                const data = await response.json();
+                console.log('[*] Response data:', data);
+
+                if (response.ok && data.success) {
+                    allTelegramMessages = data.messages || [];
+                    totalTelegramCount = typeof data.total_count === 'number' ? data.total_count : allTelegramMessages.length;
+                    updateTelegramCount();
+                    console.log(`[OK] Got ${allTelegramMessages.length} Telegram messages`);
+                    if (allTelegramMessages.length === 0) {
+                        telegramList.innerHTML = '<div class="empty-state"><div class="empty-state-text">OK</div><p>No Telegram messages found</p></div>';
+                    } else {
+                        renderTelegramMessages();
+                    }
+                } else {
+                    const errorMsg = data.error || data.detail || JSON.stringify(data);
+                    console.error('[!] Backend error:', errorMsg);
+                    telegramList.innerHTML = `<div class="empty-state"><div class="empty-state-text">Error</div><p>${errorMsg}</p></div>`;
+                    if (telegramCount) telegramCount.textContent = 'Showing 0 / -- messages';
+                }
+            } catch (error) {
+                console.error('[!] Exception:', error);
+                telegramList.innerHTML = `<div class="empty-state"><div class="empty-state-text">Error</div><p>Exception: ${error.message}</p></div>`;
+                if (telegramCount) telegramCount.textContent = 'Showing 0 / -- messages';
+            }
+
+            telegramShowButton.disabled = false;
+            telegramShowButton.textContent = 'SHOW';
+        }
+
+        telegramShowButton.addEventListener('click', loadTelegramMessages);
+
+        // Close Telegram detail modal
+        document.getElementById('closeTelegramBtn').addEventListener('click', closeTelegramDetail);
+        
+        // Close modal when clicking outside of it
+        document.getElementById('telegramDetailModal').addEventListener('click', (e) => {
+            if (e.target.id === 'telegramDetailModal') {
+                closeTelegramDetail();
+            }
+        });
+
+        // Slack functionality
+        const slackViewButton = document.getElementById('slackViewButton');
+        const slackMessagesContainer = document.getElementById('slackMessagesContainer');
+        const slackChannelsList = document.getElementById('slackChannelsList');
+        const slackCurrentChannel = document.getElementById('slackCurrentChannel');
+        const slackCount = document.getElementById('slackCount');
+        let allSlackMessages = [];
+        let messagesByChannel = {};
+        let currentChannelId = null;
+        let totalSlackCount = 0;
+
+        function getInitials(name) {
+            if (!name) return '?';
+            const parts = name.trim().split(' ');
+            if (parts.length >= 2) {
+                return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+            }
+            return name.substring(0, 2).toUpperCase();
+        }
+
+        function getAvatarColor(name) {
+            if (!name) return '#4a154b';
+            let hash = 0;
+            for (let i = 0; i < name.length; i++) {
+                hash = name.charCodeAt(i) + ((hash << 5) - hash);
+            }
+            const colors = [
+                '#4a154b', '#350d36', '#1264a3', '#0f5132', '#856404',
+                '#721c24', '#155724', '#004085', '#383f45', '#1d1c1d'
+            ];
+            return colors[Math.abs(hash) % colors.length];
+        }
+
+        function formatSlackTimestamp(timestamp) {
+            if (!timestamp) return '';
+            try {
+                const date = new Date(timestamp);
+                const now = new Date();
+                const diffMs = now - date;
+                const diffMins = Math.floor(diffMs / 60000);
+                const diffHours = Math.floor(diffMs / 3600000);
+                const diffDays = Math.floor(diffMs / 86400000);
+
+                if (diffMins < 1) return 'now';
+                if (diffMins < 60) return `${diffMins}m ago`;
+                if (diffHours < 24) return `${diffHours}h ago`;
+                if (diffDays < 7) return `${diffDays}d ago`;
+                
+                // Format as date
+                const month = date.toLocaleString('default', { month: 'short' });
+                const day = date.getDate();
+                const year = date.getFullYear();
+                const isThisYear = year === now.getFullYear();
+                return isThisYear ? `${month} ${day}` : `${month} ${day}, ${year}`;
+            } catch (e) {
+                return timestamp;
+            }
+        }
+
+        function formatSlackTime(timestamp) {
+            if (!timestamp) return '';
+            try {
+                const date = new Date(timestamp);
+                return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+            } catch (e) {
+                return timestamp;
+            }
+        }
+
+        function formatSlackMessage(text) {
+            if (!text) return '';
+            // Convert Slack markdown-like formatting
+            let formatted = text
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/\n/g, '<br>')
+                .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+                .replace(/\*(.+?)\*/g, '<em>$1</em>')
+                .replace(/`(.+?)`/g, '<code>$1</code>');
+            return formatted;
+        }
+
+        function groupMessagesByChannel(messages) {
+            const grouped = {};
+            messages.forEach(msg => {
+                const channelId = msg.channel_id || 'unknown';
+                if (!grouped[channelId]) {
+                    grouped[channelId] = {
+                        channelId: channelId,
+                        channelName: msg.channel_name || 'Unknown',
+                        messages: []
+                    };
+                }
+                grouped[channelId].messages.push(msg);
+            });
+            
+            // Sort messages within each channel by timestamp
+            Object.keys(grouped).forEach(channelId => {
+                grouped[channelId].messages.sort((a, b) => {
+                    const timeA = new Date(a.timestamp || 0).getTime();
+                    const timeB = new Date(b.timestamp || 0).getTime();
+                    return timeA - timeB; // Oldest first
+                });
+            });
+            
+            return grouped;
+        }
+
+        function renderSlackChannels() {
+            const channels = Object.values(messagesByChannel);
+            channels.sort((a, b) => {
+                const lastMsgA = a.messages[a.messages.length - 1];
+                const lastMsgB = b.messages[b.messages.length - 1];
+                const timeA = new Date(lastMsgA?.timestamp || 0).getTime();
+                const timeB = new Date(lastMsgB?.timestamp || 0).getTime();
+                return timeB - timeA; // Most recent first
+            });
+
+            if (channels.length === 0) {
+                slackChannelsList.innerHTML = '<div class="slack-sidebar-empty">No channels found</div>';
+                return;
+            }
+
+            const channelsHTML = channels.map(channel => {
+                const lastMsg = channel.messages[channel.messages.length - 1];
+                const preview = lastMsg?.body ? (lastMsg.body.length > 30 ? lastMsg.body.substring(0, 30) + '...' : lastMsg.body) : 'No messages';
+                const time = formatSlackTimestamp(lastMsg?.timestamp);
+                const isActive = currentChannelId === channel.channelId;
+                
+                return `
+                    <div class="slack-channel-item ${isActive ? 'active' : ''}" data-channel-id="${channel.channelId}">
+                        <div class="slack-channel-name">${channel.channelName}</div>
+                        <div class="slack-channel-preview">${preview}</div>
+                        <div class="slack-channel-meta">
+                            <span class="slack-channel-count">${channel.messages.length} msgs</span>
+                            <span class="slack-channel-time">${time}</span>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            slackChannelsList.innerHTML = channelsHTML;
+
+            // Add click handlers
+            document.querySelectorAll('.slack-channel-item').forEach(item => {
+                item.addEventListener('click', () => {
+                    const channelId = item.dataset.channelId;
+                    selectChannel(channelId);
+                });
+            });
+        }
+
+        function selectChannel(channelId) {
+            currentChannelId = channelId;
+            const channel = messagesByChannel[channelId];
+            if (!channel) return;
+
+            slackCurrentChannel.textContent = channel.channelName;
+            slackCount.textContent = `${channel.messages.length} messages`;
+
+            // Render messages for this channel
+            renderSlackMessages(channel.messages);
+
+            // Show input area
+            const inputContainer = document.getElementById('slackInputContainer');
+            if (inputContainer) {
+                inputContainer.style.display = 'block';
+            }
+
+            // Update active state
+            document.querySelectorAll('.slack-channel-item').forEach(item => {
+                item.classList.toggle('active', item.dataset.channelId === channelId);
+            });
+
+            // Focus input
+            const messageInput = document.getElementById('slackMessageInput');
+            if (messageInput) {
+                messageInput.focus();
+            }
+        }
+
+        function renderSlackMessages(messages) {
+            if (!messages || messages.length === 0) {
+                slackMessagesContainer.innerHTML = '<div class="slack-empty-state"><p>No messages in this channel</p></div>';
+                return;
+            }
+
+            let lastUserId = null;
+            let lastDate = null;
+            const messagesHTML = messages.map((msg, index) => {
+                const msgDate = new Date(msg.timestamp || Date.now());
+                const currentDate = msgDate.toDateString();
+                const showDateDivider = lastDate !== currentDate;
+                lastDate = currentDate;
+
+                const showAvatar = lastUserId !== msg.from_id;
+                lastUserId = msg.from_id;
+
+                const initials = getInitials(msg.from_name || msg.from_id);
+                const avatarColor = getAvatarColor(msg.from_name || msg.from_id);
+                const timeStr = formatSlackTime(msg.timestamp);
+                const formattedBody = formatSlackMessage(msg.body || '');
+
+                let html = '';
+                
+                // Date divider
+                if (showDateDivider) {
+                    const dateStr = msgDate.toLocaleDateString('en-US', { 
+                        weekday: 'long', 
+                        year: 'numeric', 
+                        month: 'long', 
+                        day: 'numeric' 
+                    });
+                    html += `<div class="slack-date-divider"><span>${dateStr}</span></div>`;
+                }
+
+                // Message
+                html += `
+                    <div class="slack-message ${showAvatar ? 'show-avatar' : ''}" data-message-id="${msg.message_id}">
+                        ${showAvatar ? `
+                            <div class="slack-avatar" style="background-color: ${avatarColor}">
+                                ${initials}
+                            </div>
+                        ` : '<div class="slack-avatar-spacer"></div>'}
+                        <div class="slack-message-content">
+                            ${showAvatar ? `
+                                <div class="slack-message-header">
+                                    <span class="slack-username">${msg.from_name || msg.from_id || 'Unknown'}</span>
+                                    <span class="slack-timestamp">${timeStr}</span>
+                                </div>
+                            ` : ''}
+                            <div class="slack-message-body">${formattedBody || '<em>No content</em>'}</div>
+                        </div>
+                    </div>
+                `;
+
+                return html;
+            }).join('');
+
+            slackMessagesContainer.innerHTML = messagesHTML;
+            slackMessagesContainer.scrollTop = slackMessagesContainer.scrollHeight;
+        }
+
+        function updateSlackCount() {
+            if (!slackCount) return;
+            const total = Object.values(messagesByChannel).reduce((sum, ch) => sum + ch.messages.length, 0);
+            slackCount.textContent = `${total} total messages`;
+        }
+
+        async function loadSlackMessages() {
+            slackViewButton.disabled = true;
+            slackViewButton.textContent = 'Loading...';
+            allSlackMessages = [];
+            messagesByChannel = {};
+            currentChannelId = null;
+            totalSlackCount = 0;
+
+            try {
+                console.log('[*] Requesting Slack messages from backend...');
+                const response = await fetch('http://localhost:8000/api/slack/messages', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        limit: 200
+                    })
+                });
+
+                console.log('[*] Response status:', response.status);
+                const data = await response.json();
+                console.log('[*] Response data:', data);
+
+                if (response.ok && data.success) {
+                    allSlackMessages = data.messages || [];
+                    totalSlackCount = typeof data.total_count === 'number' ? data.total_count : allSlackMessages.length;
+                    
+                    // Group messages by channel
+                    messagesByChannel = groupMessagesByChannel(allSlackMessages);
+                    
+                    // Render channels sidebar
+                    renderSlackChannels();
+                    
+                    // Auto-select first channel if available
+                    const channels = Object.keys(messagesByChannel);
+                    if (channels.length > 0) {
+                        selectChannel(channels[0]);
+                    } else {
+                        slackMessagesContainer.innerHTML = '<div class="slack-empty-state"><p>No messages found</p></div>';
+                    }
+                    
+                    updateSlackCount();
+                    console.log(`[OK] Got ${allSlackMessages.length} Slack messages in ${channels.length} channels`);
+                } else {
+                    const errorMsg = data.error || data.detail || JSON.stringify(data);
+                    console.error('[!] Backend error:', errorMsg);
+                    slackMessagesContainer.innerHTML = `<div class="slack-empty-state"><div class="slack-empty-icon">⚠️</div><h3>Error</h3><p>${errorMsg}</p></div>`;
+                    slackChannelsList.innerHTML = '<div class="slack-sidebar-empty">Error loading channels</div>';
+                    if (slackCount) slackCount.textContent = 'Error';
+                }
+            } catch (error) {
+                console.error('[!] Exception:', error);
+                slackMessagesContainer.innerHTML = `<div class="slack-empty-state"><div class="slack-empty-icon">⚠️</div><h3>Error</h3><p>Exception: ${error.message}</p></div>`;
+                slackChannelsList.innerHTML = '<div class="slack-sidebar-empty">Error loading channels</div>';
+                if (slackCount) slackCount.textContent = 'Error';
+            }
+
+            slackViewButton.disabled = false;
+            slackViewButton.textContent = 'Refresh';
+        }
+
+        slackViewButton.addEventListener('click', loadSlackMessages);
+
+        // Slack send message functionality
+        const slackMessageInput = document.getElementById('slackMessageInput');
+        const slackSendButton = document.getElementById('slackSendButton');
+
+        // Auto-resize textarea
+        if (slackMessageInput) {
+            slackMessageInput.addEventListener('input', function() {
+                this.style.height = 'auto';
+                this.style.height = Math.min(this.scrollHeight, 150) + 'px';
+                slackSendButton.disabled = !this.value.trim() || !currentChannelId;
+            });
+
+            slackMessageInput.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    if (!slackSendButton.disabled) {
+                        sendSlackMessage();
+                    }
+                }
+            });
+        }
+
+        async function sendSlackMessage() {
+            if (!currentChannelId || !slackMessageInput) return;
+            
+            const text = slackMessageInput.value.trim();
+            if (!text) return;
+
+            // Disable input while sending
+            slackMessageInput.disabled = true;
+            slackSendButton.disabled = true;
+            slackSendButton.innerHTML = '<div class="slack-send-spinner"></div>';
+
+            try {
+                console.log(`[*] Sending message to channel ${currentChannelId}...`);
+                const response = await fetch('http://localhost:8000/api/slack/send', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        channel_id: currentChannelId,
+                        text: text
+                    })
+                });
+
+                console.log('[*] Response status:', response.status);
+                const data = await response.json();
+                console.log('[*] Response data:', data);
+
+                if (response.ok && data.success) {
+                    // Clear input
+                    slackMessageInput.value = '';
+                    slackMessageInput.style.height = 'auto';
+                    
+                    // Reload messages to show the new one
+                    await loadSlackMessages();
+                    
+                    // Re-select the current channel
+                    if (currentChannelId) {
+                        selectChannel(currentChannelId);
+                    }
+                } else {
+                    const errorMsg = data.error || data.detail || JSON.stringify(data);
+                    console.error('[!] Backend error:', errorMsg);
+                    alert(`Failed to send message: ${errorMsg}`);
+                }
+            } catch (error) {
+                console.error('[!] Exception:', error);
+                alert(`Failed to send message: ${error.message}`);
+            } finally {
+                // Re-enable input
+                slackMessageInput.disabled = false;
+                slackSendButton.disabled = false;
+                slackSendButton.innerHTML = `
+                    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                        <path d="M18 2L9 11M18 2L12 18L9 11M18 2L2 8L9 11" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                `;
+                slackMessageInput.focus();
+            }
+        }
+
+        if (slackSendButton) {
+            slackSendButton.addEventListener('click', sendSlackMessage);
+        }
     </script>
 </body>
 </html>

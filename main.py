@@ -13,13 +13,24 @@ import os
 
 from services.email_service import EmailService
 from services.app_launcher import AppLauncher
+from services.whatsapp_service import WhatsAppService
+from services.telegram_service import TelegramService
+from services.slack_service import SlackService
 from models.schemas import (
     SendEmailRequest, 
     EmailReplyRequest, 
     LaunchAppRequest,
     EmailListResponse,
     OperationResponse,
-    UserCredentials
+    UserCredentials,
+    GetWhatsAppMessagesRequest,
+    WhatsAppListResponse,
+    GetTelegramMessagesRequest,
+    TelegramListResponse,
+    GetSlackMessagesRequest,
+    SlackListResponse,
+    SendSlackMessageRequest,
+    SendSlackMessageResponse
 )
 from pydantic import BaseModel
 
@@ -61,6 +72,9 @@ app.add_middleware(
 # Initialize services
 email_service = EmailService()
 app_launcher = AppLauncher()
+whatsapp_service = WhatsAppService()
+telegram_service = TelegramService()
+slack_service = SlackService()
 
 
 @app.on_event("startup")
@@ -85,6 +99,9 @@ async def startup_event():
         logger.warning("=" * 70)
     
     await email_service.initialize()
+    await whatsapp_service.initialize()
+    await telegram_service.initialize()
+    await slack_service.initialize()
     logger.info("Services initialized successfully")
 
 
@@ -93,6 +110,9 @@ async def shutdown_event():
     """Cleanup on shutdown"""
     logger.info("Shutting down ChatGPT Backend Broker...")
     await email_service.cleanup()
+    await whatsapp_service.cleanup()
+    await telegram_service.cleanup()
+    await slack_service.cleanup()
 
 
 @app.get("/")
@@ -315,6 +335,225 @@ async def launch_app(request: LaunchAppRequest):
     except Exception as e:
         logger.error(f"Error launching app: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/whatsapp/messages", response_model=WhatsAppListResponse)
+async def get_whatsapp_messages(request: GetWhatsAppMessagesRequest):
+    """
+    Retrieve WhatsApp messages
+    
+    Args:
+        request: Limit and optional access token for WhatsApp API
+    
+    Returns:
+        List of WhatsApp messages
+    """
+    try:
+        logger.info(f"Fetching {request.limit} WhatsApp messages")
+        messages, total_count = await whatsapp_service.get_messages(
+            limit=request.limit,
+            access_token=request.access_token
+        )
+        logger.info(f"Successfully retrieved {len(messages)} WhatsApp messages")
+        return WhatsAppListResponse(
+            success=True,
+            count=len(messages),
+            total_count=total_count,
+            messages=messages
+        )
+    except Exception as e:
+        error_msg = str(e)
+        logger.error(f"Error fetching WhatsApp messages: {error_msg}")
+        import traceback
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=error_msg)
+
+
+@app.get("/api/whatsapp/qr-code")
+async def get_whatsapp_qr_code():
+    """
+    Get WhatsApp QR code for scanning
+    Note: WhatsApp Cloud API doesn't use QR codes - setup is done via API credentials
+    
+    Returns:
+        Message indicating Cloud API setup method
+    """
+    try:
+        # WhatsApp Cloud API doesn't use QR codes
+        # Check connection status instead
+        is_connected, status = await whatsapp_service.check_connection_status()
+        if is_connected:
+            return {
+                "success": False, 
+                "message": "WhatsApp Cloud API is connected. No QR code needed.",
+                "connected": True,
+                "uses_cloud_api": True
+            }
+        else:
+            return {
+                "success": False,
+                "message": "WhatsApp Cloud API not configured. Please set WHATSAPP_ACCESS_TOKEN and WHATSAPP_PHONE_NUMBER_ID in .env file. See WHATSAPP_CLOUD_API_SETUP.md for instructions.",
+                "connected": False,
+                "uses_cloud_api": True
+            }
+    except Exception as e:
+        error_msg = str(e)
+        logger.error(f"Error checking WhatsApp status: {error_msg}")
+        raise HTTPException(status_code=500, detail=error_msg)
+
+
+@app.get("/api/whatsapp/status")
+async def get_whatsapp_status():
+    """
+    Check WhatsApp connection status
+    
+    Returns:
+        Connection status
+    """
+    try:
+        is_connected, status_message = await whatsapp_service.check_connection_status()
+        return {
+            "success": True,
+            "connected": is_connected,
+            "message": status_message
+        }
+    except Exception as e:
+        logger.error(f"Error checking status: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/telegram/messages", response_model=TelegramListResponse)
+async def get_telegram_messages(request: GetTelegramMessagesRequest):
+    """
+    Retrieve Telegram messages
+    
+    Args:
+        request: Limit for messages to retrieve
+    
+    Returns:
+        List of Telegram messages
+    """
+    try:
+        logger.info(f"Fetching {request.limit} Telegram messages")
+        messages, total_count = await telegram_service.get_messages(
+            limit=request.limit
+        )
+        logger.info(f"Successfully retrieved {len(messages)} Telegram messages")
+        return TelegramListResponse(
+            success=True,
+            count=len(messages),
+            total_count=total_count,
+            messages=messages
+        )
+    except Exception as e:
+        error_msg = str(e)
+        logger.error(f"Error fetching Telegram messages: {error_msg}")
+        import traceback
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=error_msg)
+
+
+@app.get("/api/telegram/status")
+async def get_telegram_status():
+    """
+    Check Telegram connection status
+    
+    Returns:
+        Connection status
+    """
+    try:
+        is_connected, status_message = await telegram_service.check_connection_status()
+        return {
+            "success": True,
+            "connected": is_connected,
+            "message": status_message
+        }
+    except Exception as e:
+        logger.error(f"Error checking Telegram status: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/slack/messages", response_model=SlackListResponse)
+async def get_slack_messages(request: GetSlackMessagesRequest):
+    """
+    Retrieve Slack messages
+    
+    Args:
+        request: Limit for messages to retrieve
+    
+    Returns:
+        List of Slack messages
+    """
+    try:
+        logger.info(f"Fetching {request.limit} Slack messages")
+        messages, total_count = await slack_service.get_messages(
+            limit=request.limit
+        )
+        logger.info(f"Successfully retrieved {len(messages)} Slack messages")
+        return SlackListResponse(
+            success=True,
+            count=len(messages),
+            total_count=total_count,
+            messages=messages
+        )
+    except Exception as e:
+        error_msg = str(e)
+        logger.error(f"Error fetching Slack messages: {error_msg}")
+        import traceback
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=error_msg)
+
+
+@app.get("/api/slack/status")
+async def get_slack_status():
+    """
+    Check Slack connection status
+    
+    Returns:
+        Connection status
+    """
+    try:
+        is_connected, status_message = await slack_service.check_connection_status()
+        return {
+            "success": True,
+            "connected": is_connected,
+            "message": status_message
+        }
+    except Exception as e:
+        logger.error(f"Error checking Slack status: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/slack/send", response_model=SendSlackMessageResponse)
+async def send_slack_message(request: SendSlackMessageRequest):
+    """
+    Send a message to a Slack channel or DM
+    
+    Args:
+        request: Channel ID, message text, and optional thread timestamp
+    
+    Returns:
+        Success status and message timestamp
+    """
+    try:
+        logger.info(f"Sending message to channel {request.channel_id}")
+        message_ts = await slack_service.send_message(
+            channel_id=request.channel_id,
+            text=request.text,
+            thread_ts=request.thread_ts
+        )
+        logger.info(f"Successfully sent message. Timestamp: {message_ts}")
+        return SendSlackMessageResponse(
+            success=True,
+            message="Message sent successfully",
+            message_ts=message_ts
+        )
+    except Exception as e:
+        error_msg = str(e)
+        logger.error(f"Error sending Slack message: {error_msg}")
+        import traceback
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=error_msg)
 
 
 @app.get("/api/chatgpt/functions")

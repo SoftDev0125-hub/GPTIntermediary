@@ -63,9 +63,14 @@ class EmailService:
             
             # Refresh if expired
             if creds.expired and creds.refresh_token:
-                creds.refresh(Request())
+                try:
+                    creds.refresh(Request())
+                except Exception as refresh_error:
+                    logger.error(f"Failed to refresh token: {str(refresh_error)}")
+                    raise Exception("Token refresh failed. Please re-authenticate with: python get_gmail_token.py")
             
-            return build('gmail', 'v1', credentials=creds)
+            # Build service with cache_discovery=False to avoid timeout issues
+            return build('gmail', 'v1', credentials=creds, cache_discovery=False)
         except Exception as e:
             logger.error(f"Failed to create Gmail service: {str(e)}")
             raise Exception(f"Invalid credentials: {str(e)}")
@@ -149,15 +154,28 @@ class EmailService:
             service = self._get_service(access_token, refresh_token)
             
             # Get total unread count from system label (more accurate than page-limited list)
-            label_info = service.users().labels().get(userId='me', id='UNREAD').execute()
-            total_unread = label_info.get('messagesUnread', 0)
+            # Add timeout handling
+            try:
+                label_info = service.users().labels().get(userId='me', id='UNREAD').execute()
+                total_unread = label_info.get('messagesUnread', 0)
+            except Exception as label_error:
+                logger.warning(f"Could not get unread count: {str(label_error)}")
+                total_unread = 0
 
-            # Query for unread messages (paged subset)
-            results = service.users().messages().list(
-                userId='me',
-                q='is:unread',
-                maxResults=limit
-            ).execute()
+            # Query for unread messages (paged subset) with timeout handling
+            try:
+                results = service.users().messages().list(
+                    userId='me',
+                    q='is:unread',
+                    maxResults=limit
+                ).execute()
+            except Exception as list_error:
+                error_msg = str(list_error)
+                if 'timeout' in error_msg.lower() or '10060' in error_msg:
+                    logger.error("Gmail API timeout - network connection issue")
+                    raise Exception("Connection timeout. Please check your internet connection and try again.")
+                else:
+                    raise
 
             messages = results.get('messages', [])
             email_list = []

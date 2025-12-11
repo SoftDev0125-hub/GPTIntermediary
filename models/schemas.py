@@ -63,3 +63,94 @@ class OperationResponse(BaseModel):
     success: bool
     message: str
     data: Optional[Dict[str, Any]] = None
+
+
+class WhatsAppMessage(BaseModel):
+    """WhatsApp message model"""
+    message_id: str
+    from_number: str
+    from_name: Optional[str] = None
+    body: str
+    timestamp: str
+    is_read: bool = False
+    chat_id: Optional[str] = None
+    chat_name: Optional[str] = None
+
+
+class GetWhatsAppMessagesRequest(BaseModel):
+    """Request model for getting WhatsApp messages"""
+    limit: int = 50
+    access_token: Optional[str] = None
+
+
+class WhatsAppListResponse(BaseModel):
+    """Response model for WhatsApp message list operations"""
+    success: bool
+    count: int
+    total_count: int
+    messages: List[WhatsAppMessage]
+
+
+class TelegramMessage(BaseModel):
+    """Telegram message model"""
+    message_id: str
+    from_id: str
+    from_name: Optional[str] = None
+    body: str
+    timestamp: str
+    is_read: bool = False
+    chat_id: Optional[str] = None
+    chat_name: Optional[str] = None
+
+
+class GetTelegramMessagesRequest(BaseModel):
+    """Request model for getting Telegram messages"""
+    limit: int = 50
+
+
+class TelegramListResponse(BaseModel):
+    """Response model for Telegram message list operations"""
+    success: bool
+    count: int
+    total_count: int
+    messages: List[TelegramMessage]
+
+
+class SlackMessage(BaseModel):
+    """Slack message model"""
+    message_id: str
+    from_id: str
+    from_name: Optional[str] = None
+    body: str
+    timestamp: str
+    channel_id: Optional[str] = None
+    channel_name: Optional[str] = None
+    is_thread: bool = False
+    thread_ts: Optional[str] = None
+
+
+class GetSlackMessagesRequest(BaseModel):
+    """Request model for getting Slack messages"""
+    limit: int = 50
+
+
+class SlackListResponse(BaseModel):
+    """Response model for Slack message list operations"""
+    success: bool
+    count: int
+    total_count: int
+    messages: List[SlackMessage]
+
+
+class SendSlackMessageRequest(BaseModel):
+    """Request model for sending Slack messages"""
+    channel_id: str
+    text: str
+    thread_ts: Optional[str] = None
+
+
+class SendSlackMessageResponse(BaseModel):
+    """Response model for sending Slack messages"""
+    success: bool
+    message: str
+    message_ts: Optional[str] = None
