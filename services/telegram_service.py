@@ -595,13 +595,16 @@ class TelegramService:
             
             all_messages = []
             
-            # Get all dialogs (chats)
-            dialogs = await self.client.get_dialogs(limit=100)
+            # Get all dialogs (chats) - limit to reduce processing time
+            dialogs = await self.client.get_dialogs(limit=min(50, limit * 2))  # Limit dialogs to speed up
             
-            for dialog in dialogs:
+            # Process only first N chats to speed up initial load
+            max_chats_to_process = min(50, len(dialogs))  # Process max 50 chats initially
+            
+            for dialog in dialogs[:max_chats_to_process]:
                 try:
-                    # Get messages from this chat
-                    messages_list = await self.client.get_messages(dialog.entity, limit=min(limit, 100))
+                    # Get fewer messages per chat to speed up (reduced from 100 to 50)
+                    messages_list = await self.client.get_messages(dialog.entity, limit=min(limit, 50))
                     
                     for msg in messages_list:
                         try:
@@ -656,26 +659,26 @@ class TelegramService:
                     sender_id = str(msg.sender.id)
                 if hasattr(msg.sender, 'username') and msg.sender.username:
                     sender_name = f"@{msg.sender.username}"
-            
-            # Get message text
-            body = ""
-            if hasattr(msg, 'text') and msg.text:
-                body = msg.text
-            elif hasattr(msg, 'media') and msg.media:
-                if hasattr(msg.media, 'photo'):
-                    body = "[Photo]"
-                elif hasattr(msg.media, 'document'):
-                    body = f"[Document] {getattr(msg.media.document, 'file_name', '')}"
-                elif hasattr(msg.media, 'video'):
-                    body = "[Video]"
-                elif hasattr(msg.media, 'audio'):
-                    body = "[Audio]"
-                elif hasattr(msg.media, 'voice'):
-                    body = "[Voice Message]"
-                else:
-                    body = "[Media]"
+        
+        # Get message text
+        body = ""
+        if hasattr(msg, 'text') and msg.text:
+            body = msg.text
+        elif hasattr(msg, 'media') and msg.media:
+            if hasattr(msg.media, 'photo'):
+                body = "[Photo]"
+            elif hasattr(msg.media, 'document'):
+                body = f"[Document] {getattr(msg.media.document, 'file_name', '')}"
+            elif hasattr(msg.media, 'video'):
+                body = "[Video]"
+            elif hasattr(msg.media, 'audio'):
+                body = "[Audio]"
+            elif hasattr(msg.media, 'voice'):
+                body = "[Voice Message]"
             else:
-                body = "[Empty Message]"
+                body = "[Media]"
+        else:
+            body = "[Empty Message]"
         
         # Get chat information
         chat_name = dialog.name
@@ -742,17 +745,60 @@ class TelegramService:
             if not await self.client.is_user_authorized():
                 raise Exception("Telegram client not authorized. Please authenticate first.")
             
-            logger.info(f"Sending message to chat {chat_id}")
-            
-            # Convert chat_id to integer if it's a numeric string
-            try:
-                chat_id_int = int(chat_id)
-            except ValueError:
-                # If it's not numeric, try to find the entity by username or other means
-                chat_id_int = chat_id
+            logger.info(f"Sending message to chat {chat_id} (type: {type(chat_id)})")
             
             # Get the entity (chat/user) to send to
-            entity = await self.client.get_entity(chat_id_int)
+            # First, try to find the entity from dialogs (most reliable)
+            entity = None
+            dialogs = await self.client.get_dialogs(limit=200)
+            logger.info(f"Searching through {len(dialogs)} dialogs for chat_id {chat_id}")
+            
+            for dialog in dialogs:
+                dialog_id_str = str(dialog.id)
+                # Also try comparing with the entity's ID
+                try:
+                    entity_id = getattr(dialog.entity, 'id', None)
+                    entity_id_str = str(entity_id) if entity_id else None
+                except:
+                    entity_id_str = None
+                
+                logger.debug(f"Comparing: dialog.id={dialog_id_str}, entity.id={entity_id_str} with chat_id={chat_id}")
+                
+                if dialog_id_str == str(chat_id) or (entity_id_str and entity_id_str == str(chat_id)):
+                    entity = dialog.entity
+                    logger.info(f"Found entity for chat_id {chat_id}: {dialog.name} (dialog.id={dialog.id}, entity.id={getattr(dialog.entity, 'id', 'N/A')})")
+                    break
+            
+            # If not found in dialogs, try get_entity with the ID
+            if not entity:
+                logger.warning(f"Chat {chat_id} not found in dialogs, trying get_entity...")
+                try:
+                    # Try as integer first
+                    try:
+                        chat_id_int = int(chat_id)
+                        entity = await self.client.get_entity(chat_id_int)
+                        logger.info(f"Got entity by integer ID: {chat_id_int}")
+                    except (ValueError, TypeError):
+                        # Try as string (username)
+                        entity = await self.client.get_entity(chat_id)
+                        logger.info(f"Got entity by username/string: {chat_id}")
+                except Exception as e:
+                    logger.error(f"Could not get entity by ID/username {chat_id}: {str(e)}")
+                    # List available dialogs for debugging
+                    available_chats = [f"{d.name} (id: {d.id})" for d in dialogs[:10]]
+                    logger.error(f"Available chats (first 10): {', '.join(available_chats)}")
+                    raise Exception(f"Could not find chat with ID: {chat_id}. Error: {str(e)}")
+            
+            if not entity:
+                raise Exception(f"Could not find chat with ID: {chat_id}")
+            
+            # Verify entity is valid before sending
+            try:
+                # Try to get entity info to verify it's valid
+                entity_id = getattr(entity, 'id', None)
+                logger.info(f"Using entity with ID: {entity_id}, type: {type(entity).__name__}")
+            except Exception as e:
+                logger.warning(f"Could not verify entity: {str(e)}")
             
             # Prepare message parameters
             send_kwargs = {}
@@ -764,7 +810,42 @@ class TelegramService:
                     logger.warning(f"Invalid reply_to_message_id: {reply_to_message_id}")
             
             # Send the message
-            sent_message = await self.client.send_message(entity, text, **send_kwargs)
+            # Ensure we're using the entity correctly
+            # In Telethon, dialog.entity should be directly usable, but let's ensure it's resolved
+            try:
+                entity_type = type(entity).__name__
+                logger.info(f"Sending message to entity type: {entity_type}, entity: {entity}")
+                
+                # If entity has an ID, try to ensure it's fully resolved by getting it fresh
+                # This helps with some edge cases where the entity might not be fully loaded
+                if hasattr(entity, 'id'):
+                    try:
+                        # Get a fresh copy of the entity to ensure it's fully resolved
+                        fresh_entity = await self.client.get_entity(entity.id)
+                        logger.info(f"Got fresh entity: {type(fresh_entity).__name__}")
+                        entity = fresh_entity
+                    except Exception as resolve_error:
+                        logger.warning(f"Could not resolve entity by ID, using original: {str(resolve_error)}")
+                        # Continue with original entity
+                
+                # Send the message
+                sent_message = await self.client.send_message(entity, text, **send_kwargs)
+            except Exception as send_error:
+                error_msg = str(send_error)
+                logger.error(f"Error sending message: {error_msg}")
+                
+                # Provide more helpful error message
+                if "PeerIdInvalidError" in error_msg or "invalid Peer" in error_msg:
+                    # Try to get more info about the entity
+                    entity_info = f"Entity type: {type(entity).__name__}"
+                    if hasattr(entity, 'id'):
+                        entity_info += f", ID: {entity.id}"
+                    if hasattr(entity, 'username'):
+                        entity_info += f", Username: {entity.username}"
+                    logger.error(f"Invalid peer error. {entity_info}")
+                    raise Exception(f"Cannot send message to this chat. The chat ID might be invalid or the chat type doesn't support sending messages. {entity_info}")
+                else:
+                    raise
             
             message_id = str(sent_message.id) if hasattr(sent_message, 'id') else ""
             logger.info(f"Message sent successfully. Message ID: {message_id}")

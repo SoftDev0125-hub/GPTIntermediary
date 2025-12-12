@@ -139,17 +139,19 @@ class SlackService:
                 conversations = channels_response.get("channels", [])
                 logger.info(f"Found {len(conversations)} conversations")
                 
-                # Get messages from each conversation
-                for conv in conversations:
+                # Get messages from each conversation - limit to first N conversations for faster loading
+                max_conversations = min(30, len(conversations))  # Process max 30 conversations initially
+                
+                for conv in conversations[:max_conversations]:
                     try:
                         conv_id = conv["id"]
                         conv_name = conv.get("name", conv.get("user", "Unknown"))
                         conv_type = conv.get("is_im", False) and "DM" or (conv.get("is_private", False) and "Private" or "Channel")
                         
-                        # Get messages from this conversation
+                        # Get messages from this conversation - reduced limit for faster loading
                         messages_response = self.client.conversations_history(
                             channel=conv_id,
-                            limit=min(limit, 100)  # Slack API limit is 100
+                            limit=min(limit, 20)  # Reduced from 100 to 20 for faster loading
                         )
                         
                         if messages_response["ok"]:

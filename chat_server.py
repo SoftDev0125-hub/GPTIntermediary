@@ -164,7 +164,7 @@ def chat():
     
     if not OPENAI_API_KEY or OPENAI_API_KEY == 'your_openai_api_key_here':
         return jsonify({
-            'response': '⚠️ OpenAI API key not configured. Please set OPENAI_API_KEY in your .env file.',
+            'response': '[WARNING] OpenAI API key not configured. Please set OPENAI_API_KEY in your .env file.',
             'error': 'missing_api_key'
         })
     
@@ -252,11 +252,13 @@ if __name__ == '__main__':
     print("ChatGPT Interface Server Starting...")
     print("=" * 60)
     print(f"Backend URL: {BACKEND_URL}")
-    print(f"OpenAI API Key: {'✓ Configured' if OPENAI_API_KEY and OPENAI_API_KEY != 'your_openai_api_key_here' else '✗ Not configured'}")
+    # Use ASCII-safe characters for Windows compatibility
+    api_status = '[OK] Configured' if OPENAI_API_KEY and OPENAI_API_KEY != 'your_openai_api_key_here' else '[X] Not configured'
+    print(f"OpenAI API Key: {api_status}")
     print("=" * 60)
-    print("\n🚀 Server running on http://localhost:5000")
-    print("📱 Open chat_interface.html in your browser to start chatting")
-    print("\nMake sure the backend is running on port 8000!")
+    print("\n[*] Server running on http://localhost:5000")
+    print("[*] Open chat_interface.html in your browser to start chatting")
+    print("\n[*] Make sure the backend is running on port 8000!")
     print("=" * 60)
     
     app.run(host='0.0.0.0', port=5000, debug=True)

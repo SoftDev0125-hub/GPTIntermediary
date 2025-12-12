@@ -100,30 +100,42 @@
                     </div>
                     <div class="pagination-controls" id="paginationControls" style="display: none;">
                         <button id="prevButton" class="btn btn-pagination">← Previous</button>
-                        <span class="page-info" id="pageInfo">Page 1</span>
+                        <div class="page-numbers" id="pageNumbersBottom"></div>
                         <button id="nextButton" class="btn btn-pagination">Next →</button>
                     </div>
                 </div>
 
-                <!-- Email Detail Modal -->
+                <!-- Email Detail Modal - Beautiful Dialog -->
                 <div class="email-detail-modal" id="emailDetailModal" style="display: none;">
+                    <div class="email-detail-overlay"></div>
                     <div class="email-detail-container">
                         <div class="email-detail-header">
-                            <button class="close-btn" id="closeEmailBtn">✕</button>
-                            <h2 id="detailSubject">Subject</h2>
+                            <div class="email-detail-header-content">
+                                <h2 id="detailSubject" class="email-detail-subject">Subject</h2>
+                                <button class="email-close-btn" id="closeEmailBtn" aria-label="Close">
+                                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                                    </svg>
+                                </button>
+                            </div>
                         </div>
                         <div class="email-detail-info">
-                            <div class="detail-row">
-                                <span class="detail-label">From:</span>
-                                <span id="detailFrom">sender@example.com</span>
-                            </div>
-                            <div class="detail-row">
-                                <span class="detail-label">Date:</span>
-                                <span id="detailDate">Date</span>
+                            <div class="email-detail-info-row">
+                                <div class="email-detail-info-item">
+                                    <span class="email-detail-label">From:</span>
+                                    <span id="detailFrom" class="email-detail-value">sender@example.com</span>
+                                </div>
+                                <div class="email-detail-info-item">
+                                    <span class="email-detail-label">Date:</span>
+                                    <span id="detailDate" class="email-detail-value">Date</span>
+                                </div>
                             </div>
                         </div>
-                        <div class="email-detail-body" id="detailBody">
-                            <!-- Email body content here -->
+                        <div class="email-detail-body-container">
+                            <div class="email-detail-body" id="detailBody">
+                                <!-- Email body content here -->
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -131,75 +143,68 @@
         </div>
 
         <div id="whatsapp" class="tab-content">
-            <div class="header">
-                <div class="header-content">
-                    <h1>WhatsApp Messages</h1>
-                    <div class="status-badge">Ready</div>
+            <div class="whatsapp-container">
+                <!-- WhatsApp Sidebar -->
+                <div class="whatsapp-sidebar">
+                    <div class="whatsapp-sidebar-header">
+                        <h2>Chats</h2>
+                        <button id="whatsappRefreshButton" class="whatsapp-refresh-btn">Refresh</button>
                 </div>
-            </div>
-
-            <div class="email-container">
-                <div class="email-header">
-                    <h2>Messages</h2>
-                    <div class="email-count" id="whatsappCount">Messages: --</div>
-                    <div class="button-group">
-                        <button id="whatsappRefreshButton" class="btn">Refresh</button>
+                    <div class="whatsapp-sidebar-content" id="whatsappChatsList">
+                        <div class="whatsapp-sidebar-empty">Click "Refresh" to load chats</div>
                     </div>
                 </div>
 
-                <div class="email-scroll-area">
-                    <!-- Setup Instructions Area -->
-                    <div id="whatsappQRCode" style="display: none; text-align: center; padding: 20px;">
-                        <h3 style="color: #e2e8f0; margin-bottom: 15px;">WhatsApp Cloud API Setup</h3>
-                        <div style="background: rgba(99, 102, 241, 0.1); padding: 20px; border-radius: 10px; margin-bottom: 15px; border: 1px solid rgba(99, 102, 241, 0.3);">
+                <!-- WhatsApp Main Area -->
+                <div class="whatsapp-main">
+                    <!-- Setup Instructions Area (shown when not connected) -->
+                    <div id="whatsappQRCode" style="display: none; text-align: center; padding: 40px 20px; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center;">
+                        <h3 style="color: #e2e8f0; margin-bottom: 15px;">WhatsApp Connection</h3>
+                        <div style="background: rgba(99, 102, 241, 0.1); padding: 20px; border-radius: 10px; margin-bottom: 15px; border: 1px solid rgba(99, 102, 241, 0.3); max-width: 500px;">
                             <p style="color: #e2e8f0; margin-bottom: 15px;">
-                                This app uses <strong>WhatsApp Cloud API</strong> (Meta's official API).
+                                Connect your <strong>personal WhatsApp account</strong> using WhatsApp Web.
                             </p>
                             <p style="color: #94a3b8; margin-bottom: 15px;">
-                                To connect, you need to configure API credentials in your <code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px;">.env</code> file:
+                                Scan the QR code below with your WhatsApp mobile app:
                             </p>
-                            <div style="text-align: left; background: rgba(0,0,0,0.3); padding: 15px; border-radius: 8px; margin: 15px 0; font-family: monospace; font-size: 12px; color: #cbd5e1;">
-                                WHATSAPP_ACCESS_TOKEN=your_token<br>
-                                WHATSAPP_PHONE_NUMBER_ID=your_phone_id
-                            </div>
-                            <p style="color: #94a3b8; margin-top: 15px; font-size: 14px;">
-                                See <strong>WHATSAPP_CLOUD_API_SETUP.md</strong> for detailed setup instructions.
-                            </p>
-                        </div>
+                            <ol style="text-align: left; color: #94a3b8; margin: 15px 0; padding-left: 20px;">
+                                <li>Open WhatsApp on your phone</li>
+                                <li>Tap Menu (three dots) or Settings</li>
+                                <li>Tap "Linked Devices" or "WhatsApp Web"</li>
+                                <li>Tap "Link a Device"</li>
+                                <li>Point your phone at the QR code below</li>
+                            </ol>
                         <div id="connectionStatus" style="margin-top: 15px; color: #94a3b8;"></div>
-                    </div>
-                    
-                    <div id="whatsappList" class="email-list">
-                        <div class="empty-state">
-                            <div class="empty-state-text">WhatsApp</div>
-                            <p>Click "Refresh" to load your WhatsApp messages</p>
-                        </div>
                     </div>
                 </div>
 
-                <!-- WhatsApp Message Detail Modal -->
-                <div class="email-detail-modal" id="whatsappDetailModal" style="display: none;">
-                    <div class="email-detail-container">
-                        <div class="email-detail-header">
-                            <button class="close-btn" id="closeWhatsAppBtn">✕</button>
-                            <h2 id="whatsappDetailFrom">From</h2>
+                    <!-- WhatsApp Messages Area (shown when connected) -->
+                    <div class="whatsapp-header" id="whatsappHeader" style="display: none;">
+                        <div class="whatsapp-header-content">
+                            <h2 id="whatsappCurrentChat">Select a chat</h2>
+                            <div class="whatsapp-header-info" id="whatsappCount">-- messages</div>
                         </div>
-                        <div class="email-detail-info">
-                            <div class="detail-row">
-                                <span class="detail-label">Number:</span>
-                                <span id="whatsappDetailNumber">+1234567890</span>
                             </div>
-                            <div class="detail-row">
-                                <span class="detail-label">Time:</span>
-                                <span id="whatsappDetailTime">Time</span>
+                    <div class="whatsapp-messages-container" id="whatsappMessagesContainer" style="display: none;">
+                        <div class="whatsapp-empty-state">
+                            <div class="whatsapp-empty-icon">💬</div>
+                            <h3>Welcome to WhatsApp</h3>
+                            <p>Select a chat from the sidebar or click "Refresh" to load your messages</p>
                             </div>
-                            <div class="detail-row" id="whatsappDetailChatRow" style="display: none;">
-                                <span class="detail-label">Chat:</span>
-                                <span id="whatsappDetailChat">Chat Name</span>
                             </div>
-                        </div>
-                        <div class="email-detail-body" id="whatsappDetailBody">
-                            <!-- WhatsApp message body content here -->
+                    <div class="whatsapp-input-container" id="whatsappInputContainer" style="display: none;">
+                        <div class="whatsapp-input-wrapper">
+                            <textarea 
+                                id="whatsappMessageInput" 
+                                class="whatsapp-message-input" 
+                                placeholder="Type a message..."
+                                rows="1"
+                            ></textarea>
+                            <button id="whatsappSendButton" class="whatsapp-send-button" disabled>
+                                <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                                    <path d="M18 2L9 11M18 2L12 18L9 11M18 2L2 8L9 11" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                </svg>
+                            </button>
                         </div>
                     </div>
                 </div>
@@ -213,7 +218,7 @@
                     <div class="telegram-sidebar-header">
                         <h2>Chats</h2>
                         <button id="telegramShowButton" class="telegram-refresh-btn">Refresh</button>
-                    </div>
+                </div>
                     <div class="telegram-sidebar-content" id="telegramChatsList">
                         <div class="telegram-sidebar-empty">Click "Refresh" to load chats</div>
                     </div>
@@ -232,8 +237,8 @@
                             <div class="telegram-empty-icon">✈️</div>
                             <h3>Welcome to Telegram</h3>
                             <p>Select a chat from the sidebar or click "Refresh" to load your messages</p>
+                </div>
                         </div>
-                    </div>
                     <div class="telegram-input-container" id="telegramInputContainer" style="display: none;">
                         <div class="telegram-input-wrapper">
                             <textarea 
@@ -247,8 +252,8 @@
                                     <path d="M18 2L9 11M18 2L12 18L9 11M18 2L2 8L9 11" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
                                 </svg>
                             </button>
-                        </div>
-                    </div>
+                            </div>
+                            </div>
                 </div>
             </div>
         </div>
@@ -260,7 +265,7 @@
                     <div class="slack-sidebar-header">
                         <h2>Channels & Conversations</h2>
                         <button id="slackViewButton" class="slack-refresh-btn">Refresh</button>
-                    </div>
+                </div>
                     <div class="slack-sidebar-content" id="slackChannelsList">
                         <div class="slack-sidebar-empty">Click "Refresh" to load channels</div>
                     </div>
@@ -279,8 +284,8 @@
                             <div class="slack-empty-icon">💬</div>
                             <h3>Welcome to Slack</h3>
                             <p>Select a channel from the sidebar or click "Refresh" to load your messages</p>
+                </div>
                         </div>
-                    </div>
                     <div class="slack-input-container" id="slackInputContainer" style="display: none;">
                         <div class="slack-input-wrapper">
                             <textarea 
@@ -294,8 +299,8 @@
                                     <path d="M18 2L9 11M18 2L12 18L9 11M18 2L2 8L9 11" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
                                 </svg>
                             </button>
-                        </div>
-                    </div>
+                            </div>
+                            </div>
                 </div>
             </div>
         </div>
@@ -482,28 +487,50 @@
 
             // Populate modal with email data
             detailSubject.textContent = email.subject || '(No Subject)';
-            detailFrom.textContent = email.from_email || 'Unknown';
+            detailFrom.textContent = email.from_email || email.from || 'Unknown';
             detailDate.textContent = email.date || new Date().toLocaleDateString();
             
-            // Format body content
+            // Format body content with better readability
             const bodyContent = email.body || 'No content available';
+            
+            // Clear previous content
+            detailBody.innerHTML = '';
+            detailBody.className = 'email-detail-body';
             
             // Check if body contains HTML
             if (bodyContent.includes('<') && bodyContent.includes('>')) {
                 // Render as HTML (with sanitization) - like Gmail
                 detailBody.innerHTML = sanitizeHtml(bodyContent);
-                detailBody.style.whiteSpace = 'normal';
+                detailBody.className = 'email-detail-body email-detail-body-html';
             } else {
-                // Render as plain text
-                detailBody.textContent = bodyContent;
-                detailBody.style.whiteSpace = 'pre-wrap';
+                // Render as plain text with better formatting
+                const formattedText = bodyContent
+                    .replace(/\n\n+/g, '\n\n') // Normalize multiple line breaks
+                    .replace(/\n/g, '<br>'); // Convert line breaks to HTML
+                detailBody.innerHTML = `<div class="email-text-content">${formattedText}</div>`;
+                detailBody.className = 'email-detail-body email-detail-body-text';
             }
 
-            // Show modal
+            // Show modal with animation
             modal.style.display = 'flex';
+            setTimeout(() => {
+                modal.classList.add('email-modal-visible');
+            }, 10);
+            
+            // Prevent body scroll when modal is open
+            document.body.style.overflow = 'hidden';
             
             // Mark email as read in Gmail
             markEmailAsRead(email);
+        }
+
+        function closeEmailDetail() {
+            const modal = document.getElementById('emailDetailModal');
+            modal.classList.remove('email-modal-visible');
+            setTimeout(() => {
+                modal.style.display = 'none';
+                document.body.style.overflow = '';
+            }, 300);
         }
 
         async function markEmailAsRead(email) {
@@ -567,45 +594,38 @@
             return temp.innerHTML;
         }
 
-        function closeEmailDetail() {
-            const modal = document.getElementById('emailDetailModal');
-            modal.style.display = 'none';
-        }
-
         function updatePaginationControls(totalPages) {
             const paginationControlsTop = document.getElementById('paginationControlsTop');
             const paginationControls = document.getElementById('paginationControls');
-            const pageInfo = document.getElementById('pageInfo');
             const prevButton = document.getElementById('prevButton');
             const nextButton = document.getElementById('nextButton');
             const prevButtonTop = document.getElementById('prevButtonTop');
             const nextButtonTop = document.getElementById('nextButtonTop');
-            const pageNumbers = document.getElementById('pageNumbers');
 
             if (totalPages > 1) {
                 // Show both pagination controls
                 paginationControlsTop.style.display = 'flex';
                 paginationControls.style.display = 'flex';
                 
-                // Update bottom pagination
-                pageInfo.textContent = `Page ${currentPage} of ${totalPages}`;
+                // Update button states for both top and bottom
                 prevButton.disabled = currentPage === 1;
                 nextButton.disabled = currentPage === totalPages;
-                
-                // Update top pagination
                 prevButtonTop.disabled = currentPage === 1;
                 nextButtonTop.disabled = currentPage === totalPages;
                 
-                // Generate page numbers
-                generatePageNumbers(totalPages);
+                // Generate page numbers for both top and bottom (same structure)
+                generatePageNumbers(totalPages, 'pageNumbers');
+                generatePageNumbers(totalPages, 'pageNumbersBottom');
             } else {
                 paginationControlsTop.style.display = 'none';
                 paginationControls.style.display = 'none';
             }
         }
 
-        function generatePageNumbers(totalPages) {
-            const pageNumbers = document.getElementById('pageNumbers');
+        function generatePageNumbers(totalPages, containerId = 'pageNumbers') {
+            const pageNumbers = document.getElementById(containerId);
+            if (!pageNumbers) return;
+            
             let numbersHTML = '';
             
             // Show up to 7 page numbers with ellipsis for large page counts
@@ -742,47 +762,254 @@
         document.getElementById('closeEmailBtn').addEventListener('click', closeEmailDetail);
         
         // Close modal when clicking outside of it
-        document.getElementById('emailDetailModal').addEventListener('click', (e) => {
-            if (e.target.id === 'emailDetailModal') {
-                closeEmailDetail();
+        // Close modal when clicking on overlay or outside
+        const emailDetailModal = document.getElementById('emailDetailModal');
+        if (emailDetailModal) {
+            emailDetailModal.addEventListener('click', (e) => {
+                // Close if clicking on overlay or modal background (not the container)
+                if (e.target.id === 'emailDetailModal' || e.target.classList.contains('email-detail-overlay')) {
+                    closeEmailDetail();
+                }
+            });
+            
+            // Prevent closing when clicking inside the container
+            const emailDetailContainer = emailDetailModal.querySelector('.email-detail-container');
+            if (emailDetailContainer) {
+                emailDetailContainer.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                });
             }
-        });
+            
+            // Close on ESC key
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape' && emailDetailModal.style.display === 'flex') {
+                    closeEmailDetail();
+                }
+            });
+        }
 
         messageInput.focus();
 
         // WhatsApp functionality
         const whatsappRefreshButton = document.getElementById('whatsappRefreshButton');
-        const whatsappList = document.getElementById('whatsappList');
+        const whatsappChatsList = document.getElementById('whatsappChatsList');
+        const whatsappMessagesContainer = document.getElementById('whatsappMessagesContainer');
+        const whatsappCurrentChat = document.getElementById('whatsappCurrentChat');
         const whatsappCount = document.getElementById('whatsappCount');
+        const whatsappQRCode = document.getElementById('whatsappQRCode');
+        const whatsappHeader = document.getElementById('whatsappHeader');
+        const whatsappInputContainer = document.getElementById('whatsappInputContainer');
+        
         let allWhatsAppMessages = [];
+        let whatsappMessagesByChat = {};
+        let currentWhatsAppChatId = null;
         let totalWhatsAppCount = 0;
+        let isLoadingWhatsAppMessages = false; // Prevent concurrent requests
 
         function updateWhatsAppCount() {
             if (!whatsappCount) return;
-            const shown = allWhatsAppMessages.length;
-            const total = totalWhatsAppCount || 0;
-            whatsappCount.textContent = `Showing ${shown} / ${total} messages`;
+            if (currentWhatsAppChatId && whatsappMessagesByChat[currentWhatsAppChatId]) {
+                whatsappCount.textContent = `${whatsappMessagesByChat[currentWhatsAppChatId].messages.length} messages`;
+            } else {
+                const total = Object.values(whatsappMessagesByChat).reduce((sum, ch) => sum + ch.messages.length, 0);
+                whatsappCount.textContent = `${total} total messages`;
+            }
         }
 
-        function renderWhatsAppMessages() {
-            const messageItems = allWhatsAppMessages.map((message, index) => `
-                <div class="email-item" data-message-index="${index}">
-                    <div class="email-from">From: ${message.from_name || message.from_number || 'Unknown'}</div>
-                    <div class="email-subject">${message.body ? (message.body.length > 50 ? message.body.substring(0, 50) + '...' : message.body) : '(No content)'}</div>
-                    <div class="email-date">${message.timestamp || new Date().toLocaleDateString()}</div>
-                </div>
-            `).join('');
-
-            whatsappList.innerHTML = messageItems;
-            updateWhatsAppCount();
-
-            // Add click handlers to message items
-            document.querySelectorAll('#whatsappList .email-item').forEach(item => {
-                item.addEventListener('click', () => {
-                    const messageIndex = parseInt(item.dataset.messageIndex);
-                    showWhatsAppDetail(allWhatsAppMessages[messageIndex]);
+        function groupMessagesByChat(messages) {
+            const grouped = {};
+            messages.forEach(msg => {
+                const chatId = msg.chat_id || msg.chat_name || msg.from_number || 'unknown';
+                if (!grouped[chatId]) {
+                    grouped[chatId] = {
+                        chatId: chatId,
+                        chatName: msg.chat_name || msg.from_number || 'Unknown',
+                        messages: []
+                    };
+                }
+                grouped[chatId].messages.push(msg);
+            });
+            
+            // Sort messages within each chat by timestamp
+            Object.values(grouped).forEach(chat => {
+                chat.messages.sort((a, b) => {
+                    const timeA = new Date(a.timestamp || 0).getTime();
+                    const timeB = new Date(b.timestamp || 0).getTime();
+                    return timeA - timeB; // Oldest first
                 });
             });
+            
+            return grouped;
+        }
+
+        function renderWhatsAppChats() {
+            if (!whatsappChatsList) return;
+            
+            const chats = Object.values(whatsappMessagesByChat);
+            if (chats.length === 0) {
+                whatsappChatsList.innerHTML = '<div class="whatsapp-sidebar-empty">No chats found</div>';
+                return;
+            }
+            
+            // Sort chats by most recent message (like real WhatsApp)
+            chats.sort((a, b) => {
+                const aLastMsg = a.messages && a.messages.length > 0 ? a.messages[a.messages.length - 1] : null;
+                const bLastMsg = b.messages && b.messages.length > 0 ? b.messages[b.messages.length - 1] : null;
+                
+                if (!aLastMsg && !bLastMsg) return 0;
+                if (!aLastMsg) return 1;
+                if (!bLastMsg) return -1;
+                
+                const aTime = new Date(aLastMsg.timestamp || 0).getTime();
+                const bTime = new Date(bLastMsg.timestamp || 0).getTime();
+                return bTime - aTime; // Most recent first
+            });
+            
+            const chatsHTML = chats.map(chat => {
+                const lastMessage = chat.messages[chat.messages.length - 1];
+                const preview = lastMessage ? (lastMessage.body || '[Media]').substring(0, 30) : 'No messages';
+                const time = lastMessage ? formatWhatsAppTime(lastMessage.timestamp) : '';
+                
+                // Count unread messages (messages that are not read)
+                const unreadCount = chat.messages.filter(msg => !msg.is_read && !msg.is_sent).length;
+                const unreadBadge = unreadCount > 0 ? `<span class="whatsapp-unread-badge">${unreadCount > 99 ? '99+' : unreadCount}</span>` : '';
+                
+                return `
+                    <div class="whatsapp-chat-item ${currentWhatsAppChatId === chat.chatId ? 'active' : ''}" data-chat-id="${chat.chatId}">
+                        <div class="whatsapp-chat-avatar">
+                            ${(chat.chatName || 'U').charAt(0).toUpperCase()}
+                        </div>
+                        <div class="whatsapp-chat-info">
+                            <div class="whatsapp-chat-name">${chat.chatName || 'Unknown'}</div>
+                            <div class="whatsapp-chat-preview">${preview}${preview.length >= 30 ? '...' : ''}</div>
+                        </div>
+                        <div class="whatsapp-chat-meta">
+                            <span class="whatsapp-chat-time">${time}</span>
+                            ${unreadBadge}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            whatsappChatsList.innerHTML = chatsHTML;
+
+            // Add click handlers
+            document.querySelectorAll('.whatsapp-chat-item').forEach(item => {
+                item.addEventListener('click', () => {
+                    const chatId = item.dataset.chatId;
+                    selectWhatsAppChat(chatId);
+                });
+            });
+        }
+
+        function selectWhatsAppChat(chatId) {
+            currentWhatsAppChatId = chatId;
+            const chat = whatsappMessagesByChat[chatId];
+            if (!chat) return;
+
+            whatsappCurrentChat.textContent = chat.chatName;
+            updateWhatsAppCount();
+
+            // Render messages for this chat
+            renderWhatsAppMessages(chat.messages);
+
+            // Show header and input
+            whatsappHeader.style.display = 'flex';
+            whatsappInputContainer.style.display = 'block';
+            whatsappMessagesContainer.style.display = 'block';
+
+            // Update active state
+            document.querySelectorAll('.whatsapp-chat-item').forEach(item => {
+                item.classList.toggle('active', item.dataset.chatId === chatId);
+            });
+        }
+
+        function formatWhatsAppTime(timestamp) {
+            if (!timestamp) return '';
+            try {
+                const date = new Date(timestamp);
+                const now = new Date();
+                const diff = now - date;
+                const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+                
+                if (days === 0) {
+                    return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+                } else if (days === 1) {
+                    return 'Yesterday';
+                } else if (days < 7) {
+                    return date.toLocaleDateString('en-US', { weekday: 'short' });
+                } else {
+                    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                }
+            } catch {
+                return timestamp;
+            }
+        }
+
+        function renderWhatsAppMessages(messages) {
+            if (!whatsappMessagesContainer || !messages || messages.length === 0) {
+                if (whatsappMessagesContainer) {
+                    whatsappMessagesContainer.innerHTML = '<div class="whatsapp-empty-state"><p>No messages in this chat</p></div>';
+                }
+                return;
+            }
+
+            let lastDate = null;
+            const messagesHTML = messages.map((msg, index) => {
+                const msgDate = new Date(msg.timestamp || Date.now());
+                const currentDate = msgDate.toDateString();
+                const showDateDivider = lastDate !== currentDate;
+                lastDate = currentDate;
+
+                const timeStr = formatWhatsAppTime(msg.timestamp);
+                const isSent = msg.from_name === 'You' || msg.from_name === 'Me';
+                const formattedBody = formatWhatsAppMessage(msg.body || '');
+
+                let html = '';
+                
+                // Date divider
+                if (showDateDivider) {
+                    const dateStr = msgDate.toLocaleDateString('en-US', { 
+                        weekday: 'long', 
+                        year: 'numeric', 
+                        month: 'long', 
+                        day: 'numeric' 
+                    });
+                    html += `<div class="whatsapp-date-divider"><span>${dateStr}</span></div>`;
+                }
+
+                // Message bubble
+                html += `
+                    <div class="whatsapp-message-wrapper ${isSent ? 'sent' : 'received'}">
+                        <div class="whatsapp-message-bubble">
+                            <div class="whatsapp-message-text">${formattedBody || '<em>No content</em>'}</div>
+                            <div class="whatsapp-message-time">${timeStr}</div>
+                        </div>
+                    </div>
+                `;
+
+                return html;
+            }).join('');
+
+            whatsappMessagesContainer.innerHTML = messagesHTML;
+            
+            // Smooth scroll to bottom (like real WhatsApp)
+            setTimeout(() => {
+                whatsappMessagesContainer.scrollTo({
+                    top: whatsappMessagesContainer.scrollHeight,
+                    behavior: 'smooth'
+                });
+            }, 100);
+        }
+
+        function formatWhatsAppMessage(text) {
+            if (!text) return '';
+            // Escape HTML and preserve line breaks
+            return text
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/\n/g, '<br>');
         }
 
         function showWhatsAppDetail(message) {
@@ -843,28 +1070,64 @@
                 
                 if (data.connected) {
                     // Already connected, hide setup instructions and load messages
-                    if (qrContainer) qrContainer.style.display = 'none';
-                    whatsappList.style.display = 'block';
+                    if (whatsappQRCode) whatsappQRCode.style.display = 'none';
                     await loadWhatsAppMessages();
                     return true;
                 } else {
-                    // Not connected, show setup instructions
-                    if (qrContainer) {
-                        qrContainer.style.display = 'block';
-                        whatsappList.style.display = 'none';
+                    // Not connected, show QR code or setup instructions
+                    if (whatsappQRCode) {
+                        whatsappQRCode.style.display = 'flex';
+                        if (whatsappHeader) whatsappHeader.style.display = 'none';
+                        if (whatsappMessagesContainer) whatsappMessagesContainer.style.display = 'none';
+                        if (whatsappInputContainer) whatsappInputContainer.style.display = 'none';
+                        
+                        // Display QR code if available
+                        if (data.qr_code) {
+                            const qrImage = document.createElement('img');
+                            qrImage.src = `data:image/png;base64,${data.qr_code}`;
+                            qrImage.style.maxWidth = '300px';
+                            qrImage.style.margin = '20px auto';
+                            qrImage.style.display = 'block';
+                            qrImage.style.border = '2px solid rgba(99, 102, 241, 0.3)';
+                            qrImage.style.borderRadius = '10px';
+                            qrImage.style.padding = '10px';
+                            qrImage.style.background = 'white';
+                            
+                            // Remove existing QR image if any
+                            const existingQr = whatsappQRCode.querySelector('img');
+                            if (existingQr) existingQr.remove();
+                            
+                            whatsappQRCode.insertBefore(qrImage, whatsappQRCode.firstChild);
+                            
+                            // Start polling for connection when QR code is shown
+                            if (!connectionPollInterval) {
+                                startConnectionPolling();
+                            }
+                        }
                         
                         const statusDiv = document.getElementById('connectionStatus');
                         if (statusDiv) {
-                            statusDiv.innerHTML = `<span style="color: #f59e0b;">⚠️ ${data.message || 'Setup required'}</span>`;
+                            statusDiv.innerHTML = `<span style="color: #f59e0b;">⚠️ ${data.message || 'Please scan the QR code above with your WhatsApp mobile app'}</span>`;
+                        }
+                        
+                        // Start polling for connection when QR code is shown
+                        if (data.qr_code && !connectionPollInterval) {
+                            startConnectionPolling();
                         }
                     } else {
-                        whatsappList.innerHTML = `<div class="empty-state"><div class="empty-state-text">Setup Required</div><p>${data.message || 'WhatsApp Cloud API not configured'}</p></div>`;
+                        if (whatsappMessagesContainer) {
+                            whatsappMessagesContainer.innerHTML = `<div class="whatsapp-empty-state"><p>${data.message || 'WhatsApp not configured. Please check backend logs.'}</p></div>`;
+                            whatsappMessagesContainer.style.display = 'block';
+                        }
                     }
                     return false;
                 }
             } catch (error) {
                 console.error('[!] Error checking status:', error);
-                whatsappList.innerHTML = `<div class="empty-state"><div class="empty-state-text">Error</div><p>Failed to check status: ${error.message}</p></div>`;
+                if (whatsappMessagesContainer) {
+                    whatsappMessagesContainer.innerHTML = `<div class="whatsapp-empty-state"><p>Failed to check status: ${error.message}</p><p style="font-size: 0.9em; margin-top: 10px;">Make sure the backend server is running on http://localhost:8000</p></div>`;
+                    whatsappMessagesContainer.style.display = 'block';
+                }
                 return false;
             }
         }
@@ -882,22 +1145,29 @@
                 if (isConnected) {
                     if (statusDiv) statusDiv.innerHTML = '<span style="color: #10b981;">✓ Connected! Loading messages...</span>';
                     clearInterval(connectionPollInterval);
+                    connectionPollInterval = null;
                     // Hide setup instructions and load messages
-                    const qrContainer = document.getElementById('whatsappQRCode');
-                    if (qrContainer) qrContainer.style.display = 'none';
-                    whatsappList.style.display = 'block';
+                    if (whatsappQRCode) whatsappQRCode.style.display = 'none';
                     await loadWhatsAppMessages();
                 } else {
-                    if (statusDiv) statusDiv.innerHTML = '<span style="color: #f59e0b;">Waiting for configuration...</span>';
+                    if (statusDiv) statusDiv.innerHTML = '<span style="color: #f59e0b;">⏳ Waiting for QR code scan... Please scan the QR code above with your WhatsApp mobile app.</span>';
                 }
-            }, 5000); // Check every 5 seconds (Cloud API doesn't need frequent polling)
+            }, 3000); // Check every 3 seconds for faster detection (reduced from 5 seconds)
         }
 
         async function loadWhatsAppMessages() {
+            // Prevent concurrent requests
+            if (isLoadingWhatsAppMessages) {
+                console.log('[WhatsApp] Already loading messages, skipping...');
+                return;
+            }
+            
+            isLoadingWhatsAppMessages = true;
             whatsappRefreshButton.disabled = true;
             whatsappRefreshButton.textContent = 'Loading...';
             allWhatsAppMessages = [];
             totalWhatsAppCount = 0;
+            let timeoutId = null; // Declare at function scope
 
             try {
                 // First check connection status
@@ -907,65 +1177,231 @@
                     // Not connected, show QR code
                     const qrLoaded = await loadQRCode();
                     if (!qrLoaded) {
-                        whatsappList.innerHTML = '<div class="empty-state"><div class="empty-state-text">Setup Required</div><p>Please wait while we prepare the QR code...</p></div>';
+                        if (whatsappMessagesContainer) {
+                            whatsappMessagesContainer.innerHTML = '<div class="whatsapp-empty-state"><p>Please wait while we prepare the QR code...</p></div>';
+                            whatsappMessagesContainer.style.display = 'block';
+                        }
                         // Retry loading QR code
                         setTimeout(loadQRCode, 2000);
                     }
+                    isLoadingWhatsAppMessages = false;
                     whatsappRefreshButton.disabled = false;
                     whatsappRefreshButton.textContent = 'Refresh';
                     return;
                 }
 
                 console.log('[*] Requesting WhatsApp messages from backend...');
-                const response = await fetch('http://localhost:8000/api/whatsapp/messages', {
+                // Show loading message
+                if (whatsappMessagesContainer) {
+                    whatsappMessagesContainer.innerHTML = '<div class="whatsapp-empty-state"><p>Loading WhatsApp messages...<br><small>Extracting preview messages instantly, then getting full messages from top chats (this may take 30-90 seconds)</small></p></div>';
+                    whatsappMessagesContainer.style.display = 'block';
+                }
+                
+                const controller = new AbortController();
+                // WhatsApp extraction can take time - use a very long timeout or disable it
+                // Set to 3 minutes (180 seconds) to allow for processing many chats
+                timeoutId = setTimeout(() => {
+                    console.log('[!] Request timeout - aborting after 3 minutes');
+                    controller.abort();
+                }, 180000); // 3 minute timeout (allows time for processing many chats)
+                
+                let response, data;
+                try {
+                    response = await fetch('http://localhost:8000/api/whatsapp/messages', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                     },
                     body: JSON.stringify({
-                        limit: 100
-                    })
+                            limit: 1000  // Request up to 1000 messages to get all messages from all chats
+                        }),
+                        signal: controller.signal
                 });
 
+                    if (timeoutId) {
+                        clearTimeout(timeoutId);
+                        timeoutId = null;
+                    }
                 console.log('[*] Response status:', response.status);
-                const data = await response.json();
+                    
+                    if (!response.ok) {
+                        let errorData;
+                        try {
+                            errorData = await response.json();
+                        } catch (e) {
+                            const errorText = await response.text();
+                            errorData = { detail: errorText || `HTTP ${response.status}: ${response.statusText}` };
+                        }
+                        const errorMsg = errorData.detail || errorData.error || errorData.message || JSON.stringify(errorData);
+                        console.error('[!] Backend error (HTTP ' + response.status + '):', errorMsg);
+                        throw new Error(errorMsg);
+                    }
+                    
+                    data = await response.json();
                 console.log('[*] Response data:', data);
 
                 // Hide QR code if showing
-                const qrContainer = document.getElementById('whatsappQRCode');
-                if (qrContainer) qrContainer.style.display = 'none';
-                whatsappList.style.display = 'block';
+                    if (whatsappQRCode) whatsappQRCode.style.display = 'none';
 
-                if (response.ok && data.success) {
+                    if (data.success) {
                     allWhatsAppMessages = data.messages || [];
                     totalWhatsAppCount = typeof data.total_count === 'number' ? data.total_count : allWhatsAppMessages.length;
-                    updateWhatsAppCount();
-                    console.log(`[OK] Got ${allWhatsAppMessages.length} WhatsApp messages`);
+                        
+                        // Group messages by chat
+                        whatsappMessagesByChat = groupMessagesByChat(allWhatsAppMessages);
+                        
+                        console.log(`[OK] Got ${allWhatsAppMessages.length} WhatsApp messages in ${Object.keys(whatsappMessagesByChat).length} chats`);
+                        
                     if (allWhatsAppMessages.length === 0) {
-                        whatsappList.innerHTML = '<div class="empty-state"><div class="empty-state-text">OK</div><p>No WhatsApp messages found</p></div>';
+                            whatsappMessagesContainer.innerHTML = '<div class="whatsapp-empty-state"><p>No WhatsApp messages found</p></div>';
+                            whatsappMessagesContainer.style.display = 'block';
                     } else {
-                        renderWhatsAppMessages();
-                    }
+                            // Render chat list in sidebar (sorted by most recent)
+                            renderWhatsAppChats();
+                            
+                            // Auto-select most recent chat (like real WhatsApp)
+                            if (Object.keys(whatsappMessagesByChat).length > 0) {
+                                // Find chat with most recent message
+                                let mostRecentChatId = null;
+                                let mostRecentTime = 0;
+                                
+                                Object.keys(whatsappMessagesByChat).forEach(chatId => {
+                                    const chat = whatsappMessagesByChat[chatId];
+                                    if (chat.messages && chat.messages.length > 0) {
+                                        const lastMessage = chat.messages[chat.messages.length - 1];
+                                        const msgTime = new Date(lastMessage.timestamp || 0).getTime();
+                                        if (msgTime > mostRecentTime) {
+                                            mostRecentTime = msgTime;
+                                            mostRecentChatId = chatId;
+                                        }
+                                    }
+                                });
+                                
+                                // Select most recent chat, or current chat if it still exists
+                                if (currentWhatsAppChatId && whatsappMessagesByChat[currentWhatsAppChatId]) {
+                                    // Keep current chat selected
+                                    selectWhatsAppChat(currentWhatsAppChatId);
+                                } else if (mostRecentChatId) {
+                                    // Select most recent chat
+                                    selectWhatsAppChat(mostRecentChatId);
+                                } else {
+                                    // Fallback to first chat
+                                    const firstChatId = Object.keys(whatsappMessagesByChat)[0];
+                                    selectWhatsAppChat(firstChatId);
+                                }
+                            }
+                        }
+                        updateWhatsAppCount();
                 } else {
                     const errorMsg = data.error || data.detail || JSON.stringify(data);
                     console.error('[!] Backend error:', errorMsg);
-                    whatsappList.innerHTML = `<div class="empty-state"><div class="empty-state-text">Error</div><p>${errorMsg}</p></div>`;
-                    if (whatsappCount) whatsappCount.textContent = 'Showing 0 / -- messages';
+                        if (whatsappMessagesContainer) {
+                            whatsappMessagesContainer.innerHTML = `<div class="whatsapp-empty-state"><p>${errorMsg}</p></div>`;
+                            whatsappMessagesContainer.style.display = 'block';
+                        }
+                        if (whatsappCount) whatsappCount.textContent = 'Error';
                 }
             } catch (error) {
+                    if (timeoutId) {
+                        clearTimeout(timeoutId);
+                        timeoutId = null;
+                    }
                 console.error('[!] Exception:', error);
-                whatsappList.innerHTML = `<div class="empty-state"><div class="empty-state-text">Error</div><p>Exception: ${error.message}</p></div>`;
-                if (whatsappCount) whatsappCount.textContent = 'Showing 0 / -- messages';
+                    let errorMsg = error.message || 'Unknown error';
+                    if (error.name === 'AbortError' || error.name === 'TimeoutError' || error.message.includes('aborted')) {
+                        errorMsg = 'Request timed out after 3 minutes. The extraction is taking longer than expected.\n\n' +
+                                   'This usually means:\n' +
+                                   '1. You have many chats with lots of messages\n' +
+                                   '2. WhatsApp Web is still loading or slow\n' +
+                                   '3. Network or browser automation delay\n\n' +
+                                   'Solutions:\n' +
+                                   '- Click Refresh again (it may work on retry)\n' +
+                                   '- Check if WhatsApp Web is properly connected\n' +
+                                   '- The app processes previews from many chats and full messages from top 3 chats\n' +
+                                   '- If this persists, check backend logs for errors\n' +
+                                   '- Try restarting the backend server';
+                    }
+                    if (whatsappMessagesContainer) {
+                        whatsappMessagesContainer.innerHTML = `<div class="whatsapp-empty-state"><p style="white-space: pre-line;">${errorMsg}</p></div>`;
+                        whatsappMessagesContainer.style.display = 'block';
+                    }
+                    if (whatsappCount) whatsappCount.textContent = 'Error';
+                }
+            } catch (error) {
+                if (timeoutId) {
+                    clearTimeout(timeoutId);
+                    timeoutId = null;
+                }
+                console.error('[!] Outer exception:', error);
+                if (whatsappMessagesContainer) {
+                    whatsappMessagesContainer.innerHTML = `<div class="whatsapp-empty-state"><p>Exception: ${error.message}</p></div>`;
+                    whatsappMessagesContainer.style.display = 'block';
+                }
+                if (whatsappCount) whatsappCount.textContent = 'Error';
+            } finally {
+                if (timeoutId) {
+                    clearTimeout(timeoutId);
+                    timeoutId = null;
+                }
+                isLoadingWhatsAppMessages = false;
+                whatsappRefreshButton.disabled = false;
+                whatsappRefreshButton.textContent = 'Refresh';
             }
-
-            whatsappRefreshButton.disabled = false;
-            whatsappRefreshButton.textContent = 'Refresh';
         }
 
         whatsappRefreshButton.addEventListener('click', loadWhatsAppMessages);
+        
+        // Auto-refresh WhatsApp messages periodically (like real WhatsApp app)
+        let whatsappAutoRefreshInterval = null;
+        
+        function startWhatsAppAutoRefresh() {
+            // Clear existing interval if any
+            if (whatsappAutoRefreshInterval) {
+                clearInterval(whatsappAutoRefreshInterval);
+            }
+            
+            // Auto-refresh every 30 seconds (like real WhatsApp)
+            whatsappAutoRefreshInterval = setInterval(() => {
+                // Only auto-refresh if WhatsApp tab is active, we have messages, and not already loading
+                const whatsappTab = document.getElementById('whatsapp');
+                if (whatsappTab && whatsappTab.classList.contains('active')) {
+                    if (!isLoadingWhatsAppMessages && Object.keys(whatsappMessagesByChat).length > 0) {
+                        console.log('[WhatsApp] Auto-refreshing messages...');
+                        loadWhatsAppMessages();
+                    } else if (isLoadingWhatsAppMessages) {
+                        console.log('[WhatsApp] Skipping auto-refresh - already loading');
+                    }
+                }
+            }, 30000); // 30 seconds
+        }
+        
+        // Start auto-refresh when WhatsApp tab is opened
+        document.querySelectorAll('.tab-button').forEach(button => {
+            button.addEventListener('click', () => {
+                const tab = button.dataset.tab;
+                if (tab === 'whatsapp') {
+                    // Start auto-refresh when WhatsApp tab is opened
+                    startWhatsAppAutoRefresh();
+                } else {
+                    // Stop auto-refresh when other tabs are opened
+                    if (whatsappAutoRefreshInterval) {
+                        clearInterval(whatsappAutoRefreshInterval);
+                        whatsappAutoRefreshInterval = null;
+                    }
+                }
+            });
+        });
+        
+        // Start auto-refresh if WhatsApp tab is already active
+        if (document.getElementById('whatsapp') && document.getElementById('whatsapp').classList.contains('active')) {
+            startWhatsAppAutoRefresh();
+        }
 
-        // Close WhatsApp detail modal
-        document.getElementById('closeWhatsAppBtn').addEventListener('click', closeWhatsAppDetail);
+        // Close WhatsApp detail modal (if it exists)
+        const closeWhatsAppBtn = document.getElementById('closeWhatsAppBtn');
+        if (closeWhatsAppBtn) {
+            closeWhatsAppBtn.addEventListener('click', closeWhatsAppDetail);
+        }
         
         // Telegram message sending
         let currentTelegramChatId = null;
@@ -998,10 +1434,18 @@
         }
 
         async function sendTelegramMessage() {
-            if (!currentTelegramChatId || !telegramMessageInput) return;
+            console.log(`[DEBUG] sendTelegramMessage called, currentTelegramChatId: ${currentTelegramChatId}`);
+            if (!currentTelegramChatId || !telegramMessageInput) {
+                console.error('[DEBUG] Cannot send: missing currentTelegramChatId or telegramMessageInput');
+                alert('Please select a chat first');
+                return;
+            }
             
             const text = telegramMessageInput.value.trim();
-            if (!text) return;
+            if (!text) {
+                console.error('[DEBUG] Cannot send: empty message text');
+                return;
+            }
 
             // Disable input while sending
             telegramMessageInput.disabled = true;
@@ -1062,11 +1506,14 @@
         }
         
         // Close modal when clicking outside of it
-        document.getElementById('whatsappDetailModal').addEventListener('click', (e) => {
-            if (e.target.id === 'whatsappDetailModal') {
-                closeWhatsAppDetail();
-            }
-        });
+        const whatsappDetailModal = document.getElementById('whatsappDetailModal');
+        if (whatsappDetailModal) {
+            whatsappDetailModal.addEventListener('click', (e) => {
+                if (e.target.id === 'whatsappDetailModal') {
+                    closeWhatsAppDetail();
+                }
+            });
+        }
 
         // Telegram functionality
         const telegramShowButton = document.getElementById('telegramShowButton');
@@ -1200,7 +1647,7 @@
                     <div class="telegram-chat-item ${isActive ? 'active' : ''}" data-chat-id="${chat.chatId}">
                         <div class="telegram-chat-avatar" style="background-color: ${avatarColor}">
                             ${initials}
-                        </div>
+                </div>
                         <div class="telegram-chat-info">
                             <div class="telegram-chat-name">${chat.chatName}</div>
                             <div class="telegram-chat-preview">${preview}</div>
@@ -1255,6 +1702,7 @@
                 // Update send button state
                 if (telegramSendButton) {
                     telegramSendButton.disabled = !messageInput.value.trim() || !currentTelegramChatId;
+                    console.log(`[DEBUG] Chat selected: ${chatId}, currentTelegramChatId: ${currentTelegramChatId}, send button disabled: ${telegramSendButton.disabled}`);
                 }
             }
         }
@@ -1328,7 +1776,7 @@
                         'Content-Type': 'application/json',
                     },
                     body: JSON.stringify({
-                        limit: 200
+                        limit: 50  // Reduced from 200 to 50 for faster loading
                     })
                 });
 
@@ -1474,7 +1922,7 @@
                     }
                     telegramChatsList.innerHTML = '<div class="telegram-sidebar-empty">Error loading chats</div>';
                     if (telegramCount) telegramCount.textContent = 'Error';
-                }
+        }
             } catch (error) {
                 console.error('[!] Exception:', error);
                 const errorMsg = error.message || 'Unknown error';
@@ -1703,7 +2151,7 @@
                         <div class="slack-channel-meta">
                             <span class="slack-channel-count">${channel.messages.length} msgs</span>
                             <span class="slack-channel-time">${time}</span>
-                        </div>
+                </div>
                     </div>
                 `;
             }).join('');
@@ -1832,7 +2280,7 @@
                         'Content-Type': 'application/json',
                     },
                     body: JSON.stringify({
-                        limit: 200
+                        limit: 50  // Reduced from 200 to 50 for faster loading
                     })
                 });
 
@@ -1907,7 +2355,7 @@
             
             const text = slackMessageInput.value.trim();
             if (!text) return;
-
+        
             // Disable input while sending
             slackMessageInput.disabled = true;
             slackSendButton.disabled = true;

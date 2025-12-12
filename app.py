@@ -1,82 +1,113 @@
-"""
-Desktop Application Launcher for ChatGPT Assistant
-Uses webview to create a standalone desktop app
-Includes automatic Gmail token refresh
-"""
-
-import webview
-import threading
-import time
-import subprocess
-import sys
 import os
+import sys
+import time
 import signal
 import atexit
+import subprocess
+import threading
 
-# Servers
+# Try to import psutil for better process management
+try:
+    import psutil
+    HAS_PSUTIL = True
+except ImportError:
+    HAS_PSUTIL = False
+    print("[!] Warning: psutil not installed. Process cleanup may be less reliable.")
+    print("[!] Install with: pip install psutil")
+
+# Global variables to track server processes
 backend_process = None
 chat_process = None
 django_process = None
-
-DJANGO_PORT = 8001
-DJANGO_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "django_app")
-
-# Track if servers are running
 servers_running = False
+backend_log = None
 
-def refresh_gmail_tokens():
-    """Refresh Gmail tokens by running get_gmail_token.py"""
-    print("[*] Refreshing Gmail tokens...")
-    print("[*] Note: This requires browser interaction. If you see no browser window,")
-    print("[*]       run 'python get_gmail_token.py' manually to authorize Gmail access")
-    try:
-        result = subprocess.run(
-            [sys.executable, "get_gmail_token.py"],
-            cwd=os.path.dirname(os.path.abspath(__file__)),
-            capture_output=True,
-            text=True,
-            timeout=120
-        )
-        if result.returncode == 0:
-            print("[OK] Gmail tokens refreshed successfully!")
-            return True
-        else:
-            print("[!] Gmail token refresh had issues (this is ok if you already have valid tokens)")
-            print("[!] If you need new tokens, run: python get_gmail_token.py")
-            return False
-    except subprocess.TimeoutExpired:
-        print("[!] Gmail token refresh timed out (continuing with existing tokens)")
-        return False
-    except Exception as e:
-        print(f"[!] Gmail token refresh error (continuing anyway): {str(e)}")
-        return False
+# Django server configuration
+DJANGO_DIR = "django_app"
+DJANGO_PORT = 8001
 
 def start_servers():
-    """Start backend, chat, and Django servers"""
+    """Start all backend servers in separate processes"""
     global backend_process, chat_process, django_process, servers_running
     
-    if servers_running:
-        print("[!] Servers are already running!")
-        return
+    # Make sure we're in the right directory
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    os.chdir(script_dir)
     
-    print("[*] Starting servers...")
     servers_running = True
+    print("[*] Starting all backend servers...")
+    print(f"[*] Working directory: {os.getcwd()}")
     
     try:
         # Start backend server (main.py on port 8000)
-        print("[*] Starting backend server (port 8000)...")
-        backend_process = subprocess.Popen(
-            [sys.executable, "main.py"],
-            stdout=None,  # inherit stdout so errors are visible
-            stderr=None,
-            cwd=os.path.dirname(os.path.abspath(__file__))
-        )
-        time.sleep(3)  # Wait for backend to start
-        if backend_process.poll() is not None:
-            print("[!] Backend server failed to start!")
+        print("[*] Starting backend server (main.py on port 8000)...")
+        try:
+            # Create log file for backend server output
+            log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logs')
+            os.makedirs(log_dir, exist_ok=True)
+            global backend_log
+            backend_log = open(os.path.join(log_dir, 'backend_server.log'), 'w', encoding='utf-8')
+            
+            backend_process = subprocess.Popen(
+                [sys.executable, "main.py"],
+                stdout=backend_log,  # Write to log file
+                stderr=backend_log,  # Write errors to log file
+                cwd=os.path.dirname(os.path.abspath(__file__)),
+                creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
+            )
+            time.sleep(6)  # Wait for backend to start
+            backend_log.flush()  # Ensure log is written
+            
+            # Check if process is still running
+            if backend_process.poll() is not None:
+                backend_log.close()
+                # Read the log file to see what happened
+                try:
+                    log_path = os.path.join(log_dir, 'backend_server.log')
+                    with open(log_path, 'r', encoding='utf-8') as f:
+                        log_content = f.read()
+                        if log_content:
+                            print(f"[!] Backend server failed to start!")
+                            print(f"[!] Last 500 chars of log: {log_content[-500:]}")
+                        else:
+                            print(f"[!] Backend server failed to start! (no log output)")
+                    print(f"[!] Full log available at: {log_path}")
+                except Exception as log_error:
+                    print(f"[!] Backend server failed to start! Could not read log: {log_error}")
+                servers_running = False
+                return
+            
+            # Verify server is actually responding
+            import urllib.request
+            import socket
+            max_retries = 10
+            backend_ready = False
+            for i in range(max_retries):
+                try:
+                    response = urllib.request.urlopen('http://localhost:8000/', timeout=3)
+                    print("[OK] Backend server started and responding on http://localhost:8000")
+                    backend_ready = True
+                    break
+                except (urllib.error.URLError, socket.timeout, ConnectionRefusedError):
+                    if i < max_retries - 1:
+                        if (i + 1) % 3 == 0:  # Print every 3 attempts
+                            print(f"[*] Waiting for backend server to respond... ({i+1}/{max_retries})")
+                        time.sleep(1)
+                    else:
+                        print("[!] Warning: Backend server process started but not responding yet")
+                        print("[!] It may still be initializing. Check logs/backend_server.log for details.")
+                        print("[!] Continuing anyway...")
+                        break
+                except Exception as e:
+                    print(f"[!] Warning: Could not verify backend server: {e}")
+                    break
+            
+            # Keep log file open for the process lifetime
+            # backend_log will be closed when process is stopped
+        except Exception as e:
+            print(f"[!] Error starting backend server: {e}")
             servers_running = False
             return
-        print("[OK] Backend server started")
         
         # Start chat server (chat_server.py on port 5000)
         print("[*] Starting chat server (port 5000)...")
@@ -84,56 +115,73 @@ def start_servers():
         chat_server_file = "chat_server.py"
         if not os.path.exists(os.path.join(os.path.dirname(os.path.abspath(__file__)), chat_server_file)):
             chat_server_file = "chat_server_simple.py"
+            if not os.path.exists(os.path.join(os.path.dirname(os.path.abspath(__file__)), chat_server_file)):
+                print("[!] No chat server file found (looking for chat_server.py or chat_server_simple.py)")
+                servers_running = False
+                return
         
-        chat_process = subprocess.Popen(
-            [sys.executable, chat_server_file],
-            stdout=None,
-            stderr=None,
-            cwd=os.path.dirname(os.path.abspath(__file__))
-        )
-        time.sleep(2)  # Wait for chat server to start
-        if chat_process.poll() is not None:
-            print("[!] Chat server failed to start!")
+        try:
+            chat_process = subprocess.Popen(
+                [sys.executable, chat_server_file],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                cwd=os.path.dirname(os.path.abspath(__file__)),
+                creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
+            )
+            time.sleep(3)  # Wait for chat server to start
+            if chat_process.poll() is not None:
+                stdout, stderr = chat_process.communicate()
+                print("[!] Chat server failed to start!")
+                if stderr:
+                    print(f"[!] Error: {stderr.decode('utf-8', errors='ignore')[:200]}")
+                servers_running = False
+                return
+            print("[OK] Chat server started on http://localhost:5000")
+        except Exception as e:
+            print(f"[!] Error starting chat server: {e}")
             servers_running = False
             return
-        print("[OK] Chat server started")
-
-        # Start Django service (migrate + runserver)
+        
+        # Start Django server if django_app directory exists
         try:
-            if os.path.isdir(DJANGO_DIR):
-                print(f"[*] Applying Django migrations in {DJANGO_DIR}...")
-                migrate_result = subprocess.run(
-                    [sys.executable, "manage.py", "migrate", "--run-syncdb"],
-                    cwd=DJANGO_DIR,
-                    capture_output=True,
-                    text=True,
-                    timeout=90,
-                )
-                if migrate_result.returncode != 0:
-                    print("[!] Django migrate failed (continuing):")
-                    print(migrate_result.stdout)
-                    print(migrate_result.stderr)
+            if os.path.exists(DJANGO_DIR) and os.path.isdir(DJANGO_DIR):
+                print(f"[*] Starting Django server on port {DJANGO_PORT}...")
+                # Get absolute path to manage.py
+                django_dir_abs = os.path.abspath(DJANGO_DIR)
+                manage_py = os.path.join(django_dir_abs, "manage.py")
+                if os.path.exists(manage_py):
+                    try:
+                        django_process = subprocess.Popen(
+                            [sys.executable, "manage.py", "runserver", f"127.0.0.1:{DJANGO_PORT}", "--noreload"],
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                            cwd=django_dir_abs,  # Use absolute path for cwd
+                            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
+                        )
+                        time.sleep(3)
+                        if django_process.poll() is not None:
+                            stdout, stderr = django_process.communicate()
+                            print("[!] Django server failed to start!")
+                            if stderr:
+                                print(f"[!] Error: {stderr.decode('utf-8', errors='ignore')[:200]}")
+                        else:
+                            print(f"[OK] Django server started on http://localhost:{DJANGO_PORT}")
+                    except Exception as e:
+                        print(f"[!] Error starting Django server: {e}")
                 else:
-                    print("[OK] Django migrate complete")
-
-                print(f"[*] Starting Django dev server on port {DJANGO_PORT}...")
-                django_process = subprocess.Popen(
-                    [sys.executable, "manage.py", "runserver", str(DJANGO_PORT)],
-                    stdout=None,
-                    stderr=None,
-                    cwd=DJANGO_DIR,
-                )
-                time.sleep(2)
-                if django_process.poll() is not None:
-                    print("[!] Django server failed to start!")
-                else:
-                    print("[OK] Django server started")
+                    print(f"[!] manage.py not found in {DJANGO_DIR}")
             else:
                 print(f"[!] Django directory not found: {DJANGO_DIR} (skipping)")
         except Exception as e:
             print(f"[!] Django start error (skipping): {e}")
 
         print("[OK] All servers started successfully!")
+        print("[*] Server status:")
+        print(f"    - Backend API: http://localhost:8000")
+        print(f"    - Chat Server: http://localhost:5000")
+        if django_process and django_process.poll() is None:
+            print(f"    - Django Server: http://localhost:{DJANGO_PORT}")
+        print("[*] You can now use the application interface.")
         
     except Exception as e:
         print(f"[!] Error starting servers: {e}")
@@ -142,50 +190,163 @@ def start_servers():
         servers_running = False
         stop_servers()
 
+def kill_process_by_port(port):
+    """Kill process using a specific port (Windows/Linux compatible)"""
+    if not HAS_PSUTIL:
+        # Fallback: Use netstat and taskkill on Windows, or lsof and kill on Unix
+        try:
+            if sys.platform == 'win32':
+                # Use netstat to find PID, then taskkill
+                result = subprocess.run(
+                    ['netstat', '-ano'],
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                )
+                for line in result.stdout.split('\n'):
+                    if f':{port}' in line and 'LISTENING' in line:
+                        parts = line.split()
+                        if len(parts) >= 5:
+                            pid = parts[-1]
+                            try:
+                                subprocess.run(['taskkill', '/F', '/PID', pid], 
+                                             capture_output=True, timeout=2)
+                                print(f"[OK] Killed process {pid} on port {port}")
+                                return True
+                            except:
+                                pass
+            else:
+                # Unix-like: use lsof to find PID, then kill
+                result = subprocess.run(
+                    ['lsof', '-ti', f':{port}'],
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                )
+                if result.returncode == 0 and result.stdout.strip():
+                    pid = result.stdout.strip()
+                    subprocess.run(['kill', '-9', pid], timeout=2)
+                    print(f"[OK] Killed process {pid} on port {port}")
+                    return True
+        except Exception as e:
+            print(f"[!] Error killing process on port {port} (fallback method): {e}")
+        return False
+    
+    # Use psutil if available
+    try:
+        for proc in psutil.process_iter(['pid', 'name', 'connections']):
+            try:
+                for conn in proc.info['connections'] or []:
+                    if conn.laddr.port == port:
+                        print(f"[*] Found process {proc.info['name']} (PID: {proc.info['pid']}) using port {port}")
+                        proc.kill()
+                        proc.wait(timeout=2)
+                        print(f"[OK] Killed process on port {port}")
+                        return True
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                continue
+    except Exception as e:
+        print(f"[!] Error killing process on port {port}: {e}")
+    return False
+
 def stop_servers():
     """Stop all servers"""
-    global backend_process, chat_process, django_process, servers_running
+    global backend_process, chat_process, django_process, servers_running, backend_log
     
     if not servers_running:
+        # Even if servers_running is False, try to kill processes by port
+        print("[*] Attempting to stop any remaining server processes...")
+        kill_process_by_port(8000)  # Backend
+        kill_process_by_port(5000)  # Chat
+        kill_process_by_port(DJANGO_PORT)  # Django
         return
     
     print("[*] Stopping servers...")
     servers_running = False
     
+    # Close log files if they exist
+    try:
+        if backend_log:
+            backend_log.close()
+            backend_log = None
+    except:
+        pass
+    
     # List of all processes to stop
     processes_to_stop = [
-        (backend_process, "backend server", "port 8000"),
-        (chat_process, "chat server", "port 5000"),
-        (django_process, "Django server", f"port {DJANGO_PORT}")
+        (backend_process, "backend server", 8000),
+        (chat_process, "chat server", 5000),
+        (django_process, "Django server", DJANGO_PORT)
     ]
     
     # Stop all processes
-    for process, name, port_info in processes_to_stop:
+    for process, name, port in processes_to_stop:
         if process:
             try:
-                print(f"[*] Terminating {name} ({port_info})...")
-                process.terminate()
-                process.wait(timeout=3)
-                print(f"[OK] {name} stopped")
-            except subprocess.TimeoutExpired:
-                print(f"[*] Force killing {name}...")
-                try:
-                    process.kill()
-                    process.wait(timeout=1)
-                    print(f"[OK] {name} force killed")
-                except Exception as e:
-                    print(f"[!] Error killing {name}: {e}")
+                print(f"[*] Terminating {name} (port {port})...")
+                # On Windows, terminate() might not work, so try kill() directly
+                if sys.platform == 'win32':
+                    if HAS_PSUTIL:
+                        try:
+                            # Try to get the process tree and kill children too
+                            parent = psutil.Process(process.pid)
+                            children = parent.children(recursive=True)
+                            for child in children:
+                                try:
+                                    child.kill()
+                                except:
+                                    pass
+                            parent.kill()
+                            process.wait(timeout=2)
+                            print(f"[OK] {name} stopped")
+                        except (psutil.NoSuchProcess, subprocess.TimeoutExpired):
+                            # Fallback to subprocess methods
+                            process.kill()
+                            try:
+                                process.wait(timeout=2)
+                            except:
+                                pass
+                            print(f"[OK] {name} stopped")
+                        except Exception as e:
+                            print(f"[!] Error stopping {name}: {e}")
+                            # Try killing by port as fallback
+                            kill_process_by_port(port)
+                    else:
+                        # No psutil, just kill directly
+                        process.kill()
+                        try:
+                            process.wait(timeout=2)
+                        except:
+                            pass
+                        print(f"[OK] {name} stopped")
+                else:
+                    # On Unix-like systems, use terminate first
+                    process.terminate()
+                    try:
+                        process.wait(timeout=3)
+                        print(f"[OK] {name} stopped")
+                    except subprocess.TimeoutExpired:
+                        print(f"[*] Force killing {name}...")
+                        process.kill()
+                        process.wait(timeout=1)
+                        print(f"[OK] {name} force killed")
             except Exception as e:
                 print(f"[!] Error stopping {name}: {e}")
+                # Try killing by port as fallback
+                kill_process_by_port(port)
+    
+    # Also try killing by port in case process objects are invalid
+    print("[*] Checking for any remaining processes on server ports...")
+    kill_process_by_port(8000)  # Backend
+    kill_process_by_port(5000)  # Chat
+    kill_process_by_port(DJANGO_PORT)  # Django
     
     # Reset process variables
     backend_process = None
     chat_process = None
     django_process = None
     
-    # Give ports time to be released
-    time.sleep(1)
-    print("[OK] All servers stopped!")
+    print("[OK] All servers stopped")
 
 def signal_handler(signum, frame):
     """Handle interrupt signals (Ctrl+C)"""
@@ -203,63 +364,135 @@ def main():
     # Register atexit handler to ensure cleanup
     atexit.register(stop_servers)
     
+    # Start all servers in a separate thread
+    print("=" * 60)
+    print("[*] GPT Intermediary - Starting Application")
+    print("=" * 60)
+    
     try:
-        # Refresh Gmail tokens first
-        refresh_gmail_tokens()
-        
-        print("[*] Waiting 2 seconds before starting servers...")
-        time.sleep(2)
-        
-        # Start servers in background thread
-        server_thread = threading.Thread(target=start_servers, daemon=False)
+        # Start servers in a thread to keep them running
+        server_thread = threading.Thread(target=start_servers, daemon=True)
         server_thread.start()
         
         # Wait for servers to be ready
         print("[*] Waiting for servers to initialize...")
-        time.sleep(8)  # Wait for all servers to start
+        time.sleep(10)  # Wait for all servers to start (increased wait time)
         
         # Check if servers started successfully
         if not servers_running:
             print("[!] Failed to start servers. Exiting...")
+            print("[!] Check the error messages above to see which server failed.")
+            print("[!] You can try starting servers manually:")
+            print("[!]   - Backend: python main.py")
+            print("[!]   - Chat: python chat_server.py")
             return
         
+        # Verify backend server is actually running with retries
+        print("[*] Verifying backend server is responding...")
+        import urllib.request
+        import socket
+        max_retries = 15
+        backend_ready = False
+        for i in range(max_retries):
+            try:
+                response = urllib.request.urlopen('http://localhost:8000/', timeout=3)
+                print("[OK] Backend server is responding on http://localhost:8000")
+                backend_ready = True
+                break
+            except (urllib.error.URLError, socket.timeout, ConnectionRefusedError) as e:
+                if i < max_retries - 1:
+                    if (i + 1) % 3 == 0:  # Print every 3 attempts
+                        print(f"[*] Waiting for backend server... ({i+1}/{max_retries})")
+                    time.sleep(1)
+                else:
+                    print(f"[!] Warning: Backend server may not be ready: {e}")
+                    print("[!] The window will open, but some features may not work.")
+                    print("[!] Check if main.py started successfully in the background.")
+                    print("[!] You may need to start it manually: python main.py")
+            except Exception as e:
+                print(f"[!] Warning: Could not verify backend server: {e}")
+                break
+        
+        if not backend_ready:
+            print("[!] Backend server verification failed after multiple attempts.")
+            print("[!] Continuing anyway - the app window will open.")
+            print("[!] If features don't work, check if the backend server is running.")
+        
         # Get the chat interface HTML path
-        html_path = os.path.join(os.path.dirname(__file__), 'chat_interface.html')
+        html_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'chat_interface.html')
+        html_path = os.path.normpath(html_path)
         
         if not os.path.exists(html_path):
             print(f"[!] Error: {html_path} not found!")
+            print(f"[!] Current directory: {os.getcwd()}")
+            print(f"[!] Script directory: {os.path.dirname(os.path.abspath(__file__))}")
             stop_servers()
             return
         
-        print(f"[INFO] Loading HTML from: {html_path}")
+        print(f"[*] Opening chat interface: {html_path}")
+        print("[*] The application window should open now...")
+        print("[*] Press Ctrl+C to stop all servers and exit")
+        print("=" * 60)
         
-        # Create desktop window
-        window = webview.create_window(
-            'ChatGPT Assistant - AI Automation',
-            f'file://{html_path}',
-            width=1200,
-            height=800,
-            resizable=True,
-            frameless=False,
-            easy_drag=True,
-            background_color='#0a0e27'
-        )
-        
-        # Start the GUI (this blocks until window is closed)
-        print("[INFO] Starting webview GUI...")
-        print("[INFO] Close the window or press Ctrl+C to stop all servers")
-        webview.start(debug=False)
+        # Try to create and show the webview window
+        try:
+            import webview
+            
+            # Create the window
+            window = webview.create_window(
+                'GPT Intermediary',
+                html_path,
+                width=1400,
+                height=900,
+                resizable=True
+            )
+            
+            # Start the webview (this blocks until window is closed)
+            webview.start()
+            
+            print("\n[*] Application window closed")
+            # Stop servers when window closes
+            stop_servers()
+            
+        except ImportError:
+            print("[!] pywebview not installed. Opening in default browser instead...")
+            import webbrowser
+            webbrowser.open(f'file:///{html_path}')
+            print("[*] Opened in browser. Servers will continue running.")
+            print("[*] Press Ctrl+C to stop servers and exit")
+            
+            # Keep the main thread alive
+            try:
+                while servers_running:
+                    time.sleep(1)
+            except KeyboardInterrupt:
+                pass
+                
+        except Exception as e:
+            print(f"[!] Error creating webview window: {e}")
+            print("[*] Attempting to open in default browser instead...")
+            import webbrowser
+            webbrowser.open(f'file:///{html_path}')
+            print("[*] Opened in browser. Servers will continue running.")
+            print("[*] Press Ctrl+C to stop servers and exit")
+            
+            # Keep the main thread alive
+            try:
+                while servers_running:
+                    time.sleep(1)
+            except KeyboardInterrupt:
+                pass
         
     except KeyboardInterrupt:
-        print("\n[*] Keyboard interrupt received...")
+        print("\n[*] Keyboard interrupt received")
     except Exception as e:
-        print(f"[ERROR] Error in main: {e}")
+        print(f"[!] Application error: {e}")
         import traceback
         traceback.print_exc()
     finally:
-        # Clean up servers when window closes or on error
-        print("[INFO] Cleaning up...")
+        print("\n[*] Shutting down...")
         stop_servers()
+        print("[*] Goodbye!")
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

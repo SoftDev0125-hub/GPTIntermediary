@@ -374,33 +374,42 @@ async def get_whatsapp_messages(request: GetWhatsAppMessagesRequest):
 @app.get("/api/whatsapp/qr-code")
 async def get_whatsapp_qr_code():
     """
-    Get WhatsApp QR code for scanning
-    Note: WhatsApp Cloud API doesn't use QR codes - setup is done via API credentials
+    Get WhatsApp QR code for scanning (WhatsApp Web for personal accounts)
     
     Returns:
-        Message indicating Cloud API setup method
+        QR code image (base64) or connection status
     """
     try:
-        # WhatsApp Cloud API doesn't use QR codes
-        # Check connection status instead
         is_connected, status = await whatsapp_service.check_connection_status()
+        
         if is_connected:
             return {
-                "success": False, 
-                "message": "WhatsApp Cloud API is connected. No QR code needed.",
+                "success": True,
                 "connected": True,
-                "uses_cloud_api": True
+                "qr_code": None,
+                "message": "WhatsApp is already connected. No QR code needed.",
             }
         else:
-            return {
-                "success": False,
-                "message": "WhatsApp Cloud API not configured. Please set WHATSAPP_ACCESS_TOKEN and WHATSAPP_PHONE_NUMBER_ID in .env file. See WHATSAPP_CLOUD_API_SETUP.md for instructions.",
-                "connected": False,
-                "uses_cloud_api": True
-            }
+            # Get QR code for WhatsApp Web
+            qr_code = await whatsapp_service.get_qr_code()
+            
+            if qr_code:
+                return {
+                    "success": True,
+                    "connected": False,
+                    "qr_code": qr_code,
+                    "message": "Please scan the QR code with your WhatsApp mobile app to connect.",
+                }
+            else:
+                return {
+                    "success": False,
+                    "connected": False,
+                    "qr_code": None,
+                    "message": status or "Unable to generate QR code. Please try again.",
+                }
     except Exception as e:
         error_msg = str(e)
-        logger.error(f"Error checking WhatsApp status: {error_msg}")
+        logger.error(f"Error getting WhatsApp QR code: {error_msg}")
         raise HTTPException(status_code=500, detail=error_msg)
 
 
@@ -572,6 +581,38 @@ async def delete_telegram_session():
     except Exception as e:
         logger.error(f"Error deleting Telegram session: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/telegram/send", response_model=SendTelegramMessageResponse)
+async def send_telegram_message(request: SendTelegramMessageRequest):
+    """
+    Send a message to a Telegram chat
+    
+    Args:
+        request: Chat ID, message text, and optional reply to message ID
+    
+    Returns:
+        Success status and message ID
+    """
+    try:
+        logger.info(f"Sending message to Telegram chat {request.chat_id}")
+        message_id = await telegram_service.send_message(
+            chat_id=request.chat_id,
+            text=request.text,
+            reply_to_message_id=request.reply_to_message_id
+        )
+        logger.info(f"Successfully sent Telegram message. Message ID: {message_id}")
+        return SendTelegramMessageResponse(
+            success=True,
+            message="Message sent successfully",
+            message_id=message_id
+        )
+    except Exception as e:
+        error_msg = str(e)
+        logger.error(f"Error sending Telegram message: {error_msg}")
+        import traceback
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=error_msg)
 
 
 @app.post("/api/slack/messages", response_model=SlackListResponse)
