@@ -65,32 +65,6 @@ class OperationResponse(BaseModel):
     data: Optional[Dict[str, Any]] = None
 
 
-class WhatsAppMessage(BaseModel):
-    """WhatsApp message model"""
-    message_id: str
-    from_number: str
-    from_name: Optional[str] = None
-    body: str
-    timestamp: str
-    is_read: bool = False
-    chat_id: Optional[str] = None
-    chat_name: Optional[str] = None
-
-
-class GetWhatsAppMessagesRequest(BaseModel):
-    """Request model for getting WhatsApp messages"""
-    limit: int = 50
-    access_token: Optional[str] = None
-
-
-class WhatsAppListResponse(BaseModel):
-    """Response model for WhatsApp message list operations"""
-    success: bool
-    count: int
-    total_count: int
-    messages: List[WhatsAppMessage]
-
-
 class TelegramMessage(BaseModel):
     """Telegram message model"""
     message_id: str

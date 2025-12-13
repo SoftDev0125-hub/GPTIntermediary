@@ -55,47 +55,64 @@ def start_servers():
                 cwd=os.path.dirname(os.path.abspath(__file__)),
                 creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
             )
-            time.sleep(6)  # Wait for backend to start
+            time.sleep(2)  # Reduced initial wait - verification loop will handle longer waits
             backend_log.flush()  # Ensure log is written
             
-            # Check if process is still running
-            if backend_process.poll() is not None:
-                backend_log.close()
-                # Read the log file to see what happened
-                try:
-                    log_path = os.path.join(log_dir, 'backend_server.log')
-                    with open(log_path, 'r', encoding='utf-8') as f:
-                        log_content = f.read()
-                        if log_content:
-                            print(f"[!] Backend server failed to start!")
-                            print(f"[!] Last 500 chars of log: {log_content[-500:]}")
-                        else:
-                            print(f"[!] Backend server failed to start! (no log output)")
-                    print(f"[!] Full log available at: {log_path}")
-                except Exception as log_error:
-                    print(f"[!] Backend server failed to start! Could not read log: {log_error}")
-                servers_running = False
-                return
-            
-            # Verify server is actually responding
+            # Verify server is actually responding with process health checks
             import urllib.request
             import socket
-            max_retries = 10
+            max_retries = 15  # Increased from 10 to 15 to allow more time for service initialization
             backend_ready = False
+            log_path = os.path.join(log_dir, 'backend_server.log')
+            
             for i in range(max_retries):
+                # Check if process is still running (important during long waits)
+                if backend_process.poll() is not None:
+                    backend_log.close()
+                    # Process died, read the log file to see what happened
+                    try:
+                        with open(log_path, 'r', encoding='utf-8') as f:
+                            log_content = f.read()
+                            if log_content:
+                                print(f"[!] Backend server process died!")
+                                print(f"[!] Last 500 chars of log: {log_content[-500:]}")
+                            else:
+                                print(f"[!] Backend server process died! (no log output)")
+                    except Exception as log_error:
+                        print(f"[!] Backend server process died! Could not read log: {log_error}")
+                    print(f"[!] Full log available at: {log_path}")
+                    servers_running = False
+                    return
+                
                 try:
-                    response = urllib.request.urlopen('http://localhost:8000/', timeout=3)
+                    response = urllib.request.urlopen('http://localhost:8000/', timeout=2)  # Reduced timeout for faster checks
                     print("[OK] Backend server started and responding on http://localhost:8000")
                     backend_ready = True
                     break
                 except (urllib.error.URLError, socket.timeout, ConnectionRefusedError):
                     if i < max_retries - 1:
-                        if (i + 1) % 3 == 0:  # Print every 3 attempts
+                        # Print progress every 3 attempts
+                        if (i + 1) % 3 == 0:
                             print(f"[*] Waiting for backend server to respond... ({i+1}/{max_retries})")
+                            # Show recent log output if available (for debugging)
+                            try:
+                                with open(log_path, 'r', encoding='utf-8') as f:
+                                    log_lines = f.readlines()
+                                    if log_lines:
+                                        recent_logs = ''.join(log_lines[-3:]).strip()
+                                        if recent_logs and len(recent_logs) < 200:
+                                            print(f"    Recent log: {recent_logs}")
+                            except:
+                                pass
                         time.sleep(1)
                     else:
-                        print("[!] Warning: Backend server process started but not responding yet")
-                        print("[!] It may still be initializing. Check logs/backend_server.log for details.")
+                        # Final attempt failed - check if process is still alive
+                        if backend_process.poll() is None:
+                            print("[!] Warning: Backend server process is running but not responding yet")
+                            print("[!] It may still be initializing services.")
+                        else:
+                            print("[!] Error: Backend server process died!")
+                        print(f"[!] Check logs/backend_server.log for details: {log_path}")
                         print("[!] Continuing anyway...")
                         break
                 except Exception as e:
@@ -395,7 +412,7 @@ def main():
         backend_ready = False
         for i in range(max_retries):
             try:
-                response = urllib.request.urlopen('http://localhost:8000/', timeout=3)
+                response = urllib.request.urlopen('http://localhost:8000/', timeout=2)  # Reduced timeout for faster checks
                 print("[OK] Backend server is responding on http://localhost:8000")
                 backend_ready = True
                 break

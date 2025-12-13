@@ -13,7 +13,6 @@ import os
 
 from services.email_service import EmailService
 from services.app_launcher import AppLauncher
-from services.whatsapp_service import WhatsAppService
 from services.telegram_service import TelegramService
 from services.slack_service import SlackService
 from models.schemas import (
@@ -23,8 +22,6 @@ from models.schemas import (
     EmailListResponse,
     OperationResponse,
     UserCredentials,
-    GetWhatsAppMessagesRequest,
-    WhatsAppListResponse,
     GetTelegramMessagesRequest,
     TelegramListResponse,
     SendTelegramMessageRequest,
@@ -74,7 +71,6 @@ app.add_middleware(
 # Initialize services
 email_service = EmailService()
 app_launcher = AppLauncher()
-whatsapp_service = WhatsAppService()
 telegram_service = TelegramService()
 slack_service = SlackService()
 
@@ -101,7 +97,6 @@ async def startup_event():
         logger.warning("=" * 70)
     
     await email_service.initialize()
-    await whatsapp_service.initialize()
     await telegram_service.initialize()
     await slack_service.initialize()
     logger.info("Services initialized successfully")
@@ -112,7 +107,6 @@ async def shutdown_event():
     """Cleanup on shutdown"""
     logger.info("Shutting down ChatGPT Backend Broker...")
     await email_service.cleanup()
-    await whatsapp_service.cleanup()
     await telegram_service.cleanup()
     await slack_service.cleanup()
 
@@ -336,100 +330,6 @@ async def launch_app(request: LaunchAppRequest):
             )
     except Exception as e:
         logger.error(f"Error launching app: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/api/whatsapp/messages", response_model=WhatsAppListResponse)
-async def get_whatsapp_messages(request: GetWhatsAppMessagesRequest):
-    """
-    Retrieve WhatsApp messages
-    
-    Args:
-        request: Limit and optional access token for WhatsApp API
-    
-    Returns:
-        List of WhatsApp messages
-    """
-    try:
-        logger.info(f"Fetching {request.limit} WhatsApp messages")
-        messages, total_count = await whatsapp_service.get_messages(
-            limit=request.limit,
-            access_token=request.access_token
-        )
-        logger.info(f"Successfully retrieved {len(messages)} WhatsApp messages")
-        return WhatsAppListResponse(
-            success=True,
-            count=len(messages),
-            total_count=total_count,
-            messages=messages
-        )
-    except Exception as e:
-        error_msg = str(e)
-        logger.error(f"Error fetching WhatsApp messages: {error_msg}")
-        import traceback
-        logger.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=error_msg)
-
-
-@app.get("/api/whatsapp/qr-code")
-async def get_whatsapp_qr_code():
-    """
-    Get WhatsApp QR code for scanning (WhatsApp Web for personal accounts)
-    
-    Returns:
-        QR code image (base64) or connection status
-    """
-    try:
-        is_connected, status = await whatsapp_service.check_connection_status()
-        
-        if is_connected:
-            return {
-                "success": True,
-                "connected": True,
-                "qr_code": None,
-                "message": "WhatsApp is already connected. No QR code needed.",
-            }
-        else:
-            # Get QR code for WhatsApp Web
-            qr_code = await whatsapp_service.get_qr_code()
-            
-            if qr_code:
-                return {
-                    "success": True,
-                    "connected": False,
-                    "qr_code": qr_code,
-                    "message": "Please scan the QR code with your WhatsApp mobile app to connect.",
-                }
-            else:
-                return {
-                    "success": False,
-                    "connected": False,
-                    "qr_code": None,
-                    "message": status or "Unable to generate QR code. Please try again.",
-                }
-    except Exception as e:
-        error_msg = str(e)
-        logger.error(f"Error getting WhatsApp QR code: {error_msg}")
-        raise HTTPException(status_code=500, detail=error_msg)
-
-
-@app.get("/api/whatsapp/status")
-async def get_whatsapp_status():
-    """
-    Check WhatsApp connection status
-    
-    Returns:
-        Connection status
-    """
-    try:
-        is_connected, status_message = await whatsapp_service.check_connection_status()
-        return {
-            "success": True,
-            "connected": is_connected,
-            "message": status_message
-        }
-    except Exception as e:
-        logger.error(f"Error checking status: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
