@@ -105,6 +105,32 @@ class SendTelegramMessageResponse(BaseModel):
     message: str
 
 
+class WhatsAppMessage(BaseModel):
+    """WhatsApp message model"""
+    message_id: str
+    from_number: str
+    from_name: Optional[str] = None
+    body: str
+    timestamp: str
+    is_read: bool = False
+    is_sent: bool = False  # True if sent by current user, False if received
+    chat_id: Optional[str] = None
+    chat_name: Optional[str] = None
+
+
+class GetWhatsAppMessagesRequest(BaseModel):
+    """Request model for getting WhatsApp messages"""
+    limit: int = 50
+
+
+class WhatsAppListResponse(BaseModel):
+    """Response model for WhatsApp message list operations"""
+    success: bool
+    count: int
+    total_count: int
+    messages: List[WhatsAppMessage]
+
+
 class SlackMessage(BaseModel):
     """Slack message model"""
     message_id: str
