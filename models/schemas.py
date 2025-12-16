@@ -105,32 +105,6 @@ class SendTelegramMessageResponse(BaseModel):
     message: str
 
 
-class WhatsAppMessage(BaseModel):
-    """WhatsApp message model"""
-    message_id: str
-    from_number: str
-    from_name: Optional[str] = None
-    body: str
-    timestamp: str
-    is_read: bool = False
-    is_sent: bool = False  # True if sent by current user, False if received
-    chat_id: Optional[str] = None
-    chat_name: Optional[str] = None
-
-
-class GetWhatsAppMessagesRequest(BaseModel):
-    """Request model for getting WhatsApp messages"""
-    limit: int = 50
-
-
-class WhatsAppListResponse(BaseModel):
-    """Response model for WhatsApp message list operations"""
-    success: bool
-    count: int
-    total_count: int
-    messages: List[WhatsAppMessage]
-
-
 class SlackMessage(BaseModel):
     """Slack message model"""
     message_id: str
@@ -169,3 +143,104 @@ class SendSlackMessageResponse(BaseModel):
     success: bool
     message: str
     message_ts: Optional[str] = None
+
+
+# Word Document Models
+class CreateWordDocumentRequest(BaseModel):
+    """Request model for creating a Word document"""
+    file_path: str = Field(..., description="Path where the document should be saved")
+    content: Optional[str] = Field(None, description="Optional initial content for the document")
+    title: Optional[str] = Field(None, description="Optional document title")
+
+
+class OpenWordDocumentRequest(BaseModel):
+    """Request model for opening a Word document"""
+    file_path: str = Field(..., description="Path to the document")
+
+
+class AddTextToWordRequest(BaseModel):
+    """Request model for adding text to a Word document"""
+    file_path: str = Field(..., description="Path to the document")
+    text: str = Field(..., description="Text to add")
+    bold: bool = Field(False, description="Make text bold")
+    italic: bool = Field(False, description="Make text italic")
+    underline: bool = Field(False, description="Underline text")
+    font_name: Optional[str] = Field(None, description="Font name (e.g., 'Arial', 'Times New Roman')")
+    font_size: Optional[int] = Field(None, description="Font size in points")
+    color: Optional[str] = Field(None, description="Text color in hex format (e.g., '#FF0000' for red)")
+
+
+class FormatParagraphRequest(BaseModel):
+    """Request model for formatting a paragraph in a Word document"""
+    file_path: str = Field(..., description="Path to the document")
+    paragraph_index: int = Field(..., description="Index of the paragraph to format (0-based)")
+    alignment: Optional[str] = Field(None, description="Paragraph alignment: 'left', 'center', 'right', 'justify'")
+    line_spacing: Optional[float] = Field(None, description="Line spacing (e.g., 1.5, 2.0)")
+    space_before: Optional[float] = Field(None, description="Space before paragraph in points")
+    space_after: Optional[float] = Field(None, description="Space after paragraph in points")
+    left_indent: Optional[float] = Field(None, description="Left indent in inches")
+    right_indent: Optional[float] = Field(None, description="Right indent in inches")
+
+
+class AddHeadingRequest(BaseModel):
+    """Request model for adding a heading to a Word document"""
+    file_path: str = Field(..., description="Path to the document")
+    text: str = Field(..., description="Heading text")
+    level: int = Field(1, description="Heading level (1-9)")
+
+
+class AddListRequest(BaseModel):
+    """Request model for adding a list to a Word document"""
+    file_path: str = Field(..., description="Path to the document")
+    items: List[str] = Field(..., description="List of items to add")
+    numbered: bool = Field(False, description="True for numbered list, False for bulleted list")
+
+
+class AddTableRequest(BaseModel):
+    """Request model for adding a table to a Word document"""
+    file_path: str = Field(..., description="Path to the document")
+    rows: int = Field(..., description="Number of rows")
+    cols: int = Field(..., description="Number of columns")
+    data: Optional[List[List[str]]] = Field(None, description="Optional 2D list of data to populate the table")
+    header_row: bool = Field(False, description="Whether the first row should be formatted as a header")
+
+
+class FindReplaceRequest(BaseModel):
+    """Request model for find and replace in a Word document"""
+    file_path: str = Field(..., description="Path to the document")
+    find_text: str = Field(..., description="Text to find")
+    replace_text: str = Field(..., description="Text to replace with")
+    replace_all: bool = Field(True, description="Whether to replace all occurrences")
+
+
+class PageSetupRequest(BaseModel):
+    """Request model for setting page setup in a Word document"""
+    file_path: str = Field(..., description="Path to the document")
+    margins: Optional[Dict[str, float]] = Field(None, description="Dictionary with margin values in inches (top, bottom, left, right)")
+    orientation: Optional[str] = Field(None, description="Page orientation: 'portrait' or 'landscape'")
+    page_size: Optional[str] = Field(None, description="Page size: 'Letter', 'A4', 'Legal', 'A3', 'A5'")
+
+
+class SaveWordDocumentRequest(BaseModel):
+    """Request model for saving a Word document"""
+    file_path: str = Field(..., description="Current path to the document")
+    new_path: Optional[str] = Field(None, description="Optional new path to save as")
+
+
+class WordDocumentInfoResponse(BaseModel):
+    """Response model for Word document information"""
+    success: bool
+    file_path: Optional[str] = None
+    file_size: Optional[int] = None
+    paragraph_count: Optional[int] = None
+    table_count: Optional[int] = None
+    section_count: Optional[int] = None
+    preview: Optional[str] = None
+    message: Optional[str] = None
+    error: Optional[str] = None
+
+
+class SaveWordHTMLRequest(BaseModel):
+    """Request model for saving HTML content to Word document with formatting"""
+    file_path: str = Field(..., description="Path where the document should be saved")
+    html_content: str = Field(..., description="HTML content from contenteditable div")

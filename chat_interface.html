@@ -23,7 +23,7 @@
         <div class="tab-bar">
             <button class="tab-button active" data-tab="chat">Chat</button>
             <button class="tab-button" data-tab="email">Email</button>
-            <button class="tab-button" data-tab="whatsapp">WhatsApp</button>
+            <button class="tab-button" data-tab="word">Word</button>
             <button class="tab-button" data-tab="telegram">Telegram</button>
             <button class="tab-button" data-tab="slack">Slack</button>
         </div>
@@ -142,64 +142,6 @@
             </div>
         </div>
 
-        <div id="whatsapp" class="tab-content">
-            <div class="whatsapp-container">
-                <!-- WhatsApp Sidebar -->
-                <div class="whatsapp-sidebar">
-                    <div class="whatsapp-sidebar-header">
-                        <h2>Chats</h2>
-                        <button id="whatsappRefreshButton" class="whatsapp-refresh-btn">Refresh</button>
-                </div>
-                    <div class="whatsapp-sidebar-content" id="whatsappChatsList">
-                        <div class="whatsapp-sidebar-empty">Click "Refresh" to load chats</div>
-                    </div>
-                </div>
-
-                <!-- WhatsApp Main Area -->
-                <div class="whatsapp-main">
-                    <!-- QR Code Area (shown when not connected) -->
-                    <div id="whatsappQRCode" style="display: flex; text-align: center; padding: 20px; height: 100%; flex-direction: column; justify-content: center; align-items: center; overflow: auto;">
-                        <h3 style="color: #e2e8f0; margin-bottom: 15px;">WhatsApp Connection</h3>
-                        <div style="background: rgba(37, 211, 102, 0.1); padding: 20px; border-radius: 10px; margin-bottom: 15px; border: 1px solid rgba(37, 211, 102, 0.3); max-width: 700px; width: 100%;">
-                            <p style="color: #e2e8f0; margin-bottom: 15px;">
-                                Connect your <strong>personal WhatsApp account</strong> using WhatsApp Web.
-                            </p>
-                            <p style="color: #94a3b8; margin-bottom: 15px;">
-                                Scan the QR code below with your WhatsApp mobile app:
-                            </p>
-                            <ol style="text-align: left; color: #94a3b8; margin: 15px 0; padding-left: 20px;">
-                                <li>Open WhatsApp on your phone</li>
-                                <li>Tap Menu (three dots) or Settings</li>
-                                <li>Tap "Linked Devices" or "WhatsApp Web"</li>
-                                <li>Tap "Link a Device"</li>
-                                <li>Point your phone at the QR code below</li>
-                            </ol>
-                            <button id="refreshQRButton" onclick="loadQRCode()" style="background: #25d366; color: white; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; margin: 15px 0; font-size: 0.9em; font-weight: 500;">
-                                🔄 Refresh QR Code
-                            </button>
-                            <div id="connectionStatus" style="margin-top: 15px; color: #94a3b8; min-height: 20px;">
-                                <span style="color: #94a3b8;">⏳ Loading QR code...</span>
-                            </div>
-                    </div>
-                </div>
-
-                    <!-- WhatsApp Messages Area (shown when connected) -->
-                    <div class="whatsapp-header" id="whatsappHeader" style="display: none;">
-                        <div class="whatsapp-header-content">
-                            <h2 id="whatsappCurrentChat">Select a chat</h2>
-                            <div class="whatsapp-header-info" id="whatsappCount">-- messages</div>
-                        </div>
-                            </div>
-                    <div class="whatsapp-messages-container" id="whatsappMessagesContainer" style="display: none;">
-                        <div class="whatsapp-empty-state">
-                            <div class="whatsapp-empty-icon">💬</div>
-                            <h3>Welcome to WhatsApp</h3>
-                            <p>Select a chat from the sidebar or click "Refresh" to load your messages</p>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
 
         <div id="telegram" class="tab-content">
             <div class="telegram-container">
@@ -244,6 +186,242 @@
                             </button>
                             </div>
                             </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="word" class="tab-content">
+            <div class="header">
+                <div class="header-content">
+                    <h1>Microsoft Word</h1>
+                    <div class="status-badge">Ready</div>
+                </div>
+            </div>
+
+            <div class="word-container">
+                <div class="word-header">
+                    <h2>Word Documents</h2>
+                    <div class="button-group">
+                        <button id="createWordDocButton" class="btn">Create Document</button>
+                        <button id="openWordDocButton" class="btn btn-secondary">Open Document</button>
+                        <button id="wordInfoButton" class="btn btn-secondary">Document Info</button>
+                    </div>
+                </div>
+
+                <div class="word-scroll-area">
+                    <div id="wordDocumentArea" class="word-document-area">
+                        <div class="empty-state">
+                            <div class="empty-state-text">📄</div>
+                            <h3>Word Document Manager</h3>
+                            <p>Create a new document or open an existing one to get started</p>
+                            <div style="margin-top: 20px; text-align: left; max-width: 600px; background: rgba(0,0,0,0.05); padding: 16px; border-radius: 8px;">
+                                <p style="font-weight: 600; margin-bottom: 12px;">Available Features:</p>
+                                <ul style="margin: 8px 0; padding-left: 20px; line-height: 1.8;">
+                                    <li>Create and open Word documents</li>
+                                    <li>Add formatted text (bold, italic, underline, fonts, colors)</li>
+                                    <li>Format paragraphs (alignment, spacing, indentation)</li>
+                                    <li>Add headings, lists, and tables</li>
+                                    <li>Find and replace text</li>
+                                    <li>Configure page setup (margins, orientation, page size)</li>
+                                    <li>Save documents</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Word Document Creation Modal -->
+                <div class="word-modal" id="wordCreateModal" style="display: none;">
+                    <div class="word-modal-content">
+                        <div class="word-modal-header">
+                            <h3>Create New Document</h3>
+                            <button class="word-modal-close" id="wordCreateModalClose">&times;</button>
+                        </div>
+                        <div class="word-modal-body">
+                            <div class="form-group">
+                                <label for="wordFilePath">File Path:</label>
+                                <div style="display: flex; gap: 8px; align-items: center;">
+                                    <input type="text" id="wordFilePath" placeholder="C:\Users\Username\Documents\document.docx" style="flex: 1;" />
+                                    <button type="button" id="wordFilePathBrowse" class="btn btn-secondary" style="white-space: nowrap; padding: 8px 16px;">Browse</button>
+                                </div>
+                                <input type="file" id="wordFilePathInput" accept=".docx" style="display: none;" />
+                                <small>Enter the full path where you want to save the document, or click Browse to select a location</small>
+                            </div>
+                            <div class="form-group">
+                                <label for="wordDocTitle">Document Title (optional):</label>
+                                <input type="text" id="wordDocTitle" placeholder="My Document" />
+                            </div>
+                            <div class="form-group">
+                                <label for="wordDocContent">Initial Content (optional):</label>
+                                <textarea id="wordDocContent" rows="5" placeholder="Enter initial content for your document..."></textarea>
+                            </div>
+                        </div>
+                        <div class="word-modal-footer">
+                            <button class="btn btn-secondary" id="wordCreateCancel">Cancel</button>
+                            <button class="btn" id="wordCreateSubmit">Create Document</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Word Document Open Modal -->
+                <div class="word-modal" id="wordOpenModal" style="display: none;">
+                    <div class="word-modal-content">
+                        <div class="word-modal-header">
+                            <h3>Open Document</h3>
+                            <button class="word-modal-close" id="wordOpenModalClose">&times;</button>
+                        </div>
+                        <div class="word-modal-body">
+                            <div class="form-group">
+                                <label for="wordOpenFilePath">File Path:</label>
+                                <div style="display: flex; gap: 8px; align-items: center;">
+                                    <input type="text" id="wordOpenFilePath" placeholder="C:\Users\Username\Documents\document.docx" style="flex: 1;" />
+                                    <button type="button" id="wordOpenFilePathBrowse" class="btn btn-secondary" style="white-space: nowrap; padding: 8px 16px;">Browse</button>
+                                </div>
+                                <input type="file" id="wordOpenFilePathInput" accept=".docx" style="display: none;" />
+                                <small>Enter the full path to the Word document you want to open, or click Browse to select a file</small>
+                            </div>
+                        </div>
+                        <div class="word-modal-footer">
+                            <button class="btn btn-secondary" id="wordOpenCancel">Cancel</button>
+                            <button class="btn" id="wordOpenSubmit">Open Document</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Word Document Save As Modal -->
+        <div class="word-modal" id="wordSaveAsModal" style="display: none;">
+            <div class="word-modal-content">
+                <div class="word-modal-header">
+                    <h3>Save As</h3>
+                    <button class="word-modal-close" id="wordSaveAsModalClose">&times;</button>
+                </div>
+                <div class="word-modal-body">
+                    <div class="form-group">
+                        <label for="wordSaveAsFolderPath">Folder Path:</label>
+                        <div style="display: flex; gap: 8px; align-items: center;">
+                            <input type="text" id="wordSaveAsFolderPath" placeholder="C:\Users\Username\Documents" style="flex: 1;" />
+                            <button type="button" id="wordSaveAsFolderPathBrowse" class="btn btn-secondary" style="white-space: nowrap; padding: 8px 16px;">Browse Folder</button>
+                        </div>
+                        <small>Select the folder where you want to save the document</small>
+                    </div>
+                    <div class="form-group" style="margin-top: 16px;">
+                        <label for="wordSaveAsFileName">File Name:</label>
+                        <input type="text" id="wordSaveAsFileName" placeholder="document.docx" style="width: 100%;" />
+                        <small>Enter the file name (include .docx extension or it will be added automatically)</small>
+                    </div>
+                </div>
+                <div class="word-modal-footer">
+                    <button class="btn btn-secondary" id="wordSaveAsCancel">Cancel</button>
+                    <button class="btn" id="wordSaveAsSubmit">Save</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Folder Browser Dialog for Save As -->
+        <div class="word-modal" id="wordFolderBrowserDialog" style="display: none; z-index: 2001;">
+            <div class="word-modal-content" style="max-width: 800px; width: 90%; max-height: 85vh; display: flex; flex-direction: column;">
+                <div class="word-modal-header" style="flex-shrink: 0;">
+                    <h3>Select Folder</h3>
+                    <button class="word-modal-close" id="wordFolderBrowserDialogClose">&times;</button>
+                </div>
+                
+                <!-- Navigation Bar -->
+                <div style="padding: 8px 16px; background: #f5f5f5; border-bottom: 1px solid #ddd; display: flex; align-items: center; gap: 8px; flex-shrink: 0;">
+                    <button type="button" id="wordFolderBrowserNavUp" class="word-nav-btn" title="Up" style="width: 32px; height: 32px; padding: 0; border: 1px solid #ccc; background: white; border-radius: 2px; cursor: pointer;">↑</button>
+                    <div id="wordFolderBrowserPathBreadcrumb" style="flex: 1; padding: 4px 8px; background: white; border: 1px solid #ccc; border-radius: 2px; font-size: 12px; color: #333; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                        <!-- Path breadcrumb will be shown here -->
+                    </div>
+                    <button type="button" id="wordFolderBrowserRefresh" class="word-nav-btn" title="Refresh" style="width: 32px; height: 32px; padding: 0; border: 1px solid #ccc; background: white; border-radius: 2px; cursor: pointer;">↻</button>
+                </div>
+
+                <!-- Folder List -->
+                <div style="flex: 1; overflow-y: auto; background: white; padding: 4px 0; min-height: 300px;">
+                    <div id="wordFolderBrowserContent" style="padding: 8px;">
+                        <!-- Folders will be listed here -->
+                    </div>
+                </div>
+
+                <!-- Bottom Section -->
+                <div style="padding: 12px 16px; background: #f5f5f5; border-top: 1px solid #ddd; flex-shrink: 0; display: flex; justify-content: flex-end; gap: 8px;">
+                    <button class="btn btn-secondary" id="wordFolderBrowserCancel">Cancel</button>
+                    <button class="btn" id="wordFolderBrowserSelect">Select Folder</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- File Browser Dialog (Windows-style) -->
+        <div class="word-modal" id="wordFileBrowserDialog" style="display: none; z-index: 2000;">
+            <div class="word-modal-content" style="max-width: 900px; width: 90%; max-height: 85vh; display: flex; flex-direction: column;">
+                <div class="word-modal-header" style="flex-shrink: 0;">
+                    <h3 id="wordBrowserDialogTitle">Open</h3>
+                    <button class="word-modal-close" id="wordFileBrowserDialogClose">&times;</button>
+                </div>
+                
+                <!-- Navigation Bar -->
+                <div style="padding: 8px 16px; background: #f5f5f5; border-bottom: 1px solid #ddd; display: flex; align-items: center; gap: 8px; flex-shrink: 0;">
+                    <button type="button" id="wordBrowserNavBack" class="word-nav-btn" title="Back" style="width: 32px; height: 32px; padding: 0; border: 1px solid #ccc; background: white; border-radius: 2px; cursor: pointer;">←</button>
+                    <button type="button" id="wordBrowserNavForward" class="word-nav-btn" title="Forward" style="width: 32px; height: 32px; padding: 0; border: 1px solid #ccc; background: white; border-radius: 2px; cursor: pointer;">→</button>
+                    <button type="button" id="wordBrowserNavUp" class="word-nav-btn" title="Up" style="width: 32px; height: 32px; padding: 0; border: 1px solid #ccc; background: white; border-radius: 2px; cursor: pointer;">↑</button>
+                    <div id="wordBrowserPathBreadcrumb" style="flex: 1; padding: 4px 8px; background: white; border: 1px solid #ccc; border-radius: 2px; font-size: 12px; color: #333; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                        <!-- Path breadcrumb will be shown here -->
+                    </div>
+                    <button type="button" id="wordBrowserRefresh" class="word-nav-btn" title="Refresh" style="width: 32px; height: 32px; padding: 0; border: 1px solid #ccc; background: white; border-radius: 2px; cursor: pointer;">↻</button>
+                </div>
+
+                <!-- Main Content Area -->
+                <div style="display: flex; flex: 1; min-height: 0; overflow: hidden;">
+                    <!-- Left Sidebar -->
+                    <div style="width: 220px; background: #f9f9f9; border-right: 1px solid #ddd; padding: 12px; overflow-y: auto; flex-shrink: 0;">
+                        <div style="margin-bottom: 16px;">
+                            <div style="font-size: 11px; font-weight: 600; color: #666; margin-bottom: 8px; text-transform: uppercase;">Quick Access</div>
+                            <div id="wordBrowserQuickAccess" style="display: flex; flex-direction: column; gap: 2px;">
+                                <!-- Quick access items will be added here -->
+                            </div>
+                        </div>
+                        <div>
+                            <div style="font-size: 11px; font-weight: 600; color: #666; margin-bottom: 8px; text-transform: uppercase;">Folders</div>
+                            <div id="wordBrowserFolderTree" style="display: flex; flex-direction: column; gap: 2px;">
+                                <!-- Folder tree will be added here -->
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Main File List -->
+                    <div style="flex: 1; display: flex; flex-direction: column; overflow: hidden;">
+                        <!-- File List Header -->
+                        <div style="padding: 8px 16px; background: #f5f5f5; border-bottom: 1px solid #ddd; display: grid; grid-template-columns: 2fr 1.5fr 1fr; gap: 16px; font-size: 12px; font-weight: 600; color: #666; flex-shrink: 0;">
+                            <div>Name</div>
+                            <div>Date modified</div>
+                            <div>Type</div>
+                        </div>
+                        <!-- File List Content -->
+                        <div id="wordBrowserDialogContent" style="flex: 1; overflow-y: auto; background: white; padding: 4px 0;">
+                            <!-- Files and folders will be listed here -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Bottom Section -->
+                <div style="padding: 12px 16px; background: #f5f5f5; border-top: 1px solid #ddd; flex-shrink: 0;">
+                    <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px;">
+                        <label style="font-size: 12px; color: #333; white-space: nowrap;">File name:</label>
+                        <input type="text" id="wordBrowserFileName" style="flex: 1; padding: 4px 8px; border: 1px solid #ccc; border-radius: 2px; font-size: 12px;" placeholder="Enter file name or select from list" />
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 12px; justify-content: flex-end;">
+                        <label style="font-size: 12px; color: #333; white-space: nowrap;">Files of type:</label>
+                        <select id="wordBrowserFileType" style="padding: 4px 8px; border: 1px solid #ccc; border-radius: 2px; font-size: 12px; background: white;">
+                            <option value=".docx">Word Documents (*.docx)</option>
+                            <option value="*">All Files (*.*)</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Footer Buttons -->
+                <div class="word-modal-footer" style="flex-shrink: 0;">
+                    <button class="btn" id="wordFileBrowserDialogOpen" style="min-width: 80px;">Open</button>
+                    <button class="btn btn-secondary" id="wordFileBrowserDialogCancel" style="min-width: 80px;">Cancel</button>
                 </div>
             </div>
         </div>
@@ -780,738 +958,8 @@
 
         messageInput.focus();
 
-        // WhatsApp functionality
-        const whatsappRefreshButton = document.getElementById('whatsappRefreshButton');
-        const whatsappChatsList = document.getElementById('whatsappChatsList');
-        const whatsappMessagesContainer = document.getElementById('whatsappMessagesContainer');
-        const whatsappCurrentChat = document.getElementById('whatsappCurrentChat');
-        const whatsappCount = document.getElementById('whatsappCount');
-        const whatsappQRCode = document.getElementById('whatsappQRCode');
-        const whatsappHeader = document.getElementById('whatsappHeader');
-        
-        let allWhatsAppMessages = [];
-        let whatsappMessagesByChat = {};
-        let currentWhatsAppChatId = null;
-        let totalWhatsAppCount = 0;
-        let isLoadingWhatsAppMessages = false;
-        let connectionPollInterval = null;
 
-        function updateWhatsAppCount() {
-            if (!whatsappCount) return;
-            if (currentWhatsAppChatId && whatsappMessagesByChat[currentWhatsAppChatId]) {
-                whatsappCount.textContent = `${whatsappMessagesByChat[currentWhatsAppChatId].messages.length} messages`;
-            } else {
-                const total = Object.values(whatsappMessagesByChat).reduce((sum, ch) => sum + ch.messages.length, 0);
-                whatsappCount.textContent = `${total} total messages`;
-            }
-        }
-
-        function groupMessagesByChat(messages) {
-            const grouped = {};
-            
-            messages.forEach(msg => {
-                // Determine the chat identifier - prioritize phone number for consistency
-                // For sent messages, use the chat_name/chat_id (the recipient)
-                // For received messages, use from_number or from_name (the sender)
-                let chatId = null;
-                let chatDisplayName = null;
-                
-                if (msg.is_sent) {
-                    // Message sent by user - group by recipient (chat_name/chat_id)
-                    chatId = msg.chat_id || msg.chat_name || msg.from_number || 'unknown';
-                    chatDisplayName = (msg.chat_name && msg.chat_name !== 'Unknown') 
-                        ? msg.chat_name 
-                        : (msg.from_number && msg.from_number !== 'Unknown' ? msg.from_number : 'Unknown');
-                } else {
-                    // Message received - group by sender (from_number or from_name)
-                    // Use phone number as primary identifier for consistency
-                    chatId = msg.from_number || msg.from_name || msg.chat_id || msg.chat_name || 'unknown';
-                    
-                    // For display name, prefer name over phone number
-                    if (msg.from_name && msg.from_name !== 'Unknown' && msg.from_name !== 'You') {
-                        chatDisplayName = msg.from_name;
-                    } else if (msg.from_number && msg.from_number !== 'Unknown') {
-                        chatDisplayName = msg.from_number;
-                    } else if (msg.chat_name && msg.chat_name !== 'Unknown') {
-                        chatDisplayName = msg.chat_name;
-                    } else {
-                        chatDisplayName = 'Unknown';
-                    }
-                }
-                
-                // Normalize chatId to ensure consistency
-                // Remove spaces, normalize phone format, convert to lowercase for comparison
-                if (chatId && chatId !== 'unknown' && chatId !== 'Unknown') {
-                    let normalizedId = chatId.toString().trim();
-                    // Normalize phone numbers (remove spaces, dashes, parentheses)
-                    if (normalizedId.includes('+') || /^\d/.test(normalizedId.replace(/[\s\-\(\)]/g, ''))) {
-                        normalizedId = normalizedId.replace(/[\s\-\(\)]/g, '');
-                    }
-                    // Use normalized ID for grouping
-                    const lookupKey = normalizedId.toLowerCase();
-                    
-                    // Check if we already have this chat with a different key
-                    let existingChatId = null;
-                    for (const key in grouped) {
-                        const existingChat = grouped[key];
-                        const existingNormalized = key.toString().trim().replace(/[\s\-\(\)]/g, '').toLowerCase();
-                        if (existingNormalized === lookupKey || 
-                            existingChat.chatName === chatDisplayName ||
-                            (existingChat.chatName && chatDisplayName && 
-                             existingChat.chatName.replace(/[\s\-\(\)]/g, '').toLowerCase() === 
-                             chatDisplayName.replace(/[\s\-\(\)]/g, '').toLowerCase())) {
-                            existingChatId = key;
-                            break;
-                        }
-                    }
-                    
-                    if (existingChatId) {
-                        // Merge into existing chat
-                        chatId = existingChatId;
-                        // Update display name if we have a better one (name over phone)
-                        if (chatDisplayName !== 'Unknown' && 
-                            (!grouped[chatId].chatName || 
-                             (grouped[chatId].chatName && grouped[chatId].chatName.match(/^\+\d/) && !chatDisplayName.match(/^\+\d/)))) {
-                            grouped[chatId].chatName = chatDisplayName;
-                        }
-                    } else {
-                        // Create new chat group using normalized ID
-                        chatId = lookupKey;
-                        if (!grouped[chatId]) {
-                            grouped[chatId] = {
-                                chatId: chatId,
-                                chatName: chatDisplayName,
-                                messages: []
-                            };
-                        }
-                    }
-                } else {
-                    // Handle unknown/empty chatId
-                    if (!grouped[chatId]) {
-                        grouped[chatId] = {
-                            chatId: chatId,
-                            chatName: chatDisplayName,
-                            messages: []
-                        };
-                    }
-                }
-                
-                // Add message to the appropriate chat
-                grouped[chatId].messages.push(msg);
-            });
-            
-            // Sort messages within each chat by timestamp
-            Object.values(grouped).forEach(chat => {
-                chat.messages.sort((a, b) => {
-                    const timeA = new Date(a.timestamp || 0).getTime();
-                    const timeB = new Date(b.timestamp || 0).getTime();
-                    return timeA - timeB;
-                });
-            });
-            
-            // Log grouping results for debugging
-            console.log(`[WhatsApp] Grouped ${messages.length} messages into ${Object.keys(grouped).length} chats`);
-            Object.keys(grouped).forEach(chatId => {
-                console.log(`  - Chat: ${grouped[chatId].chatName} (${chatId}): ${grouped[chatId].messages.length} messages`);
-            });
-            
-            return grouped;
-        }
-
-        function renderWhatsAppChats() {
-            if (!whatsappChatsList) return;
-            
-            const chats = Object.values(whatsappMessagesByChat);
-            console.log(`[WhatsApp] Rendering ${chats.length} chats in sidebar`);
-            
-            if (chats.length === 0) {
-                whatsappChatsList.innerHTML = '<div class="whatsapp-sidebar-empty">No chats found</div>';
-                return;
-            }
-            
-            chats.sort((a, b) => {
-                const aLastMsg = a.messages && a.messages.length > 0 ? a.messages[a.messages.length - 1] : null;
-                const bLastMsg = b.messages && b.messages.length > 0 ? b.messages[b.messages.length - 1] : null;
-                
-                if (!aLastMsg && !bLastMsg) return 0;
-                if (!aLastMsg) return 1;
-                if (!bLastMsg) return -1;
-                
-                const aTime = new Date(aLastMsg.timestamp || 0).getTime();
-                const bTime = new Date(bLastMsg.timestamp || 0).getTime();
-                return bTime - aTime;
-            });
-            
-            const fragment = document.createDocumentFragment();
-            const tempDiv = document.createElement('div');
-            
-            chats.forEach(chat => {
-                // Get the last message for preview
-                const sortedMessages = [...chat.messages].sort((a, b) => {
-                    const timeA = new Date(a.timestamp || 0).getTime();
-                    const timeB = new Date(b.timestamp || 0).getTime();
-                    return timeB - timeA; // Most recent first
-                });
-                const lastMessage = sortedMessages[0];
-                const preview = lastMessage ? (lastMessage.body || '[Media]').substring(0, 30) : 'No messages';
-                const time = lastMessage ? formatWhatsAppTime(lastMessage.timestamp) : '';
-                
-                // Display contact name or phone number
-                const displayName = chat.chatName || 'Unknown';
-                const messageCount = chat.messages.length;
-                
-                tempDiv.innerHTML = `
-                    <div class="whatsapp-chat-item ${currentWhatsAppChatId === chat.chatId ? 'active' : ''}" data-chat-id="${chat.chatId}">
-                        <div class="whatsapp-chat-avatar">
-                            ${displayName.charAt(0).toUpperCase()}
-                        </div>
-                        <div class="whatsapp-chat-info">
-                            <div class="whatsapp-chat-name">${displayName}</div>
-                            <div class="whatsapp-chat-preview">${preview}${preview.length >= 30 ? '...' : ''}</div>
-                        </div>
-                        <div class="whatsapp-chat-meta">
-                            <span class="whatsapp-chat-time">${time}</span>
-                            ${messageCount > 0 ? `<span class="whatsapp-chat-count">${messageCount}</span>` : ''}
-                        </div>
-                    </div>
-                `;
-                fragment.appendChild(tempDiv.firstElementChild.cloneNode(true));
-            });
-
-            whatsappChatsList.textContent = '';
-            whatsappChatsList.appendChild(fragment);
-
-            document.querySelectorAll('.whatsapp-chat-item').forEach(item => {
-                item.addEventListener('click', () => {
-                    const chatId = item.dataset.chatId;
-                    selectWhatsAppChat(chatId);
-                });
-            });
-        }
-
-        function selectWhatsAppChat(chatId) {
-            currentWhatsAppChatId = chatId;
-            const chat = whatsappMessagesByChat[chatId];
-            if (!chat) return;
-
-            whatsappCurrentChat.textContent = chat.chatName;
-            updateWhatsAppCount();
-            renderWhatsAppMessages(chat.messages);
-
-            whatsappHeader.style.display = 'flex';
-            whatsappMessagesContainer.style.display = 'block';
-
-            document.querySelectorAll('.whatsapp-chat-item').forEach(item => {
-                item.classList.toggle('active', item.dataset.chatId === chatId);
-            });
-        }
-
-        function formatWhatsAppTime(timestamp) {
-            if (!timestamp) return '';
-            try {
-                const date = new Date(timestamp);
-                const now = new Date();
-                const diff = now - date;
-                const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-                
-                if (days === 0) {
-                    return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
-                } else if (days === 1) {
-                    return 'Yesterday';
-                } else if (days < 7) {
-                    return date.toLocaleDateString('en-US', { weekday: 'short' });
-                } else {
-                    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-                }
-            } catch {
-                return timestamp;
-            }
-        }
-
-        function renderWhatsAppMessages(messages) {
-            if (!whatsappMessagesContainer || !messages || messages.length === 0) {
-                if (whatsappMessagesContainer) {
-                    whatsappMessagesContainer.innerHTML = '<div class="whatsapp-empty-state"><p>No messages in this chat</p></div>';
-                }
-                return;
-            }
-
-            const fragment = document.createDocumentFragment();
-            const tempDiv = document.createElement('div');
-            
-            let lastDate = null;
-            messages.forEach((msg) => {
-                const msgDate = new Date(msg.timestamp || Date.now());
-                const currentDate = msgDate.toDateString();
-                const showDateDivider = lastDate !== currentDate;
-                lastDate = currentDate;
-
-                const timeStr = formatWhatsAppTime(msg.timestamp);
-                
-                // Check if message is sent by user - prioritize is_sent field, then check from_name
-                // The backend should set is_sent correctly, but we have fallbacks
-                let isSent = false;
-                
-                if (msg.is_sent === true) {
-                    isSent = true;
-                } else if (msg.from_name === 'You' || msg.from_name === 'Me') {
-                    isSent = true;
-                } else if (msg.from_name && msg.from_name.toLowerCase().trim() === 'you') {
-                    isSent = true;
-                }
-                
-                // Debug: Log detection for first few messages
-                if (messages.indexOf(msg) < 5) {
-                    console.log(`[WhatsApp Render] Message ${messages.indexOf(msg)}: from_name="${msg.from_name}", is_sent=${msg.is_sent}, final_isSent=${isSent}, body="${(msg.body || '').substring(0, 30)}"`);
-                }
-                
-                const formattedBody = formatWhatsAppMessage(msg.body || '');
-
-                if (showDateDivider) {
-                    // Format date like WhatsApp: "Yesterday", "Wednesday", or "11/29/2025"
-                    const now = new Date();
-                    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-                    const msgDateOnly = new Date(msgDate.getFullYear(), msgDate.getMonth(), msgDate.getDate());
-                    const diffDays = Math.floor((today - msgDateOnly) / (1000 * 60 * 60 * 24));
-                    
-                    let dateStr = '';
-                    if (diffDays === 0) {
-                        dateStr = 'Today';
-                    } else if (diffDays === 1) {
-                        dateStr = 'Yesterday';
-                    } else if (diffDays < 7) {
-                        dateStr = msgDate.toLocaleDateString('en-US', { weekday: 'long' });
-                    } else {
-                        dateStr = msgDate.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: 'numeric' });
-                    }
-                    
-                    tempDiv.innerHTML = `<div class="whatsapp-date-divider"><span>${dateStr}</span></div>`;
-                    fragment.appendChild(tempDiv.firstElementChild.cloneNode(true));
-                }
-
-                // Ensure classes are correctly applied
-                const wrapperClass = isSent ? 'whatsapp-message-wrapper sent' : 'whatsapp-message-wrapper received';
-                
-                // Use phone number if name is Unknown
-                const displayName = (!isSent && msg.from_name && msg.from_name !== 'Unknown') 
-                    ? msg.from_name 
-                    : (msg.from_number && msg.from_number !== 'Unknown' ? msg.from_number : 'Unknown');
-                
-                // Format time for bubble (e.g., "8:15 AM")
-                const bubbleTime = msgDate.toLocaleTimeString('en-US', { 
-                    hour: 'numeric', 
-                    minute: '2-digit', 
-                    hour12: true 
-                });
-                
-                // Read receipt for sent messages (double blue checkmark)
-                const readReceipt = isSent ? '<span class="whatsapp-sent-indicator">✓✓</span>' : '';
-                
-                tempDiv.innerHTML = `
-                    <div class="${wrapperClass}" data-is-sent="${isSent}" data-from-name="${displayName}" data-chat-name="${msg.chat_name || 'Unknown'}">
-                        <div class="whatsapp-message-bubble">
-                            <div class="whatsapp-message-text">${formattedBody || '<em>No content</em>'}</div>
-                            <div class="whatsapp-message-time">
-                                ${bubbleTime}
-                                ${readReceipt}
-                            </div>
-                        </div>
-                    </div>
-                `;
-                fragment.appendChild(tempDiv.firstElementChild.cloneNode(true));
-            });
-
-            whatsappMessagesContainer.textContent = '';
-            whatsappMessagesContainer.appendChild(fragment);
-            
-            requestAnimationFrame(() => {
-                whatsappMessagesContainer.scrollTo({
-                    top: whatsappMessagesContainer.scrollHeight,
-                    behavior: 'smooth'
-                });
-            });
-        }
-
-        function formatWhatsAppMessage(text) {
-            if (!text) return '';
-            return text
-                .replace(/&/g, '&amp;')
-                .replace(/</g, '&lt;')
-                .replace(/>/g, '&gt;')
-                .replace(/\n/g, '<br>');
-        }
-
-        async function checkWhatsAppConnection() {
-            try {
-                const response = await fetch('http://localhost:8000/api/whatsapp/status');
-                const data = await response.json();
-                return data.connected || false;
-            } catch (error) {
-                console.error('Error checking connection:', error);
-                return false;
-            }
-        }
-
-        async function loadQRCode() {
-            try {
-                console.log('[WhatsApp] Requesting QR code...');
-                
-                // Show loading state
-                if (whatsappQRCode) {
-                    whatsappQRCode.style.display = 'flex';
-                    const statusDiv = document.getElementById('connectionStatus');
-                    if (statusDiv) {
-                        statusDiv.innerHTML = '<span style="color: #94a3b8;">⏳ Loading QR code... Please wait...</span>';
-                    }
-                }
-                
-                const response = await fetch('http://localhost:8000/api/whatsapp/qr-code');
-                
-                if (!response.ok) {
-                    const errorText = await response.text();
-                    console.error('[WhatsApp] HTTP error:', response.status, errorText);
-                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-                }
-                
-                const data = await response.json();
-                console.log('[WhatsApp] QR code response:', { 
-                    success: data.success,
-                    connected: data.connected, 
-                    has_qr: !!data.qr_code, 
-                    qr_length: data.qr_code ? data.qr_code.length : 0,
-                    message: data.message 
-                });
-                
-                if (data.connected) {
-                    if (whatsappQRCode) whatsappQRCode.style.display = 'none';
-                    if (whatsappMessagesContainer) {
-                        whatsappMessagesContainer.innerHTML = '<div class="whatsapp-empty-state"><p>Connected! Click "Refresh" to load messages.</p></div>';
-                        whatsappMessagesContainer.style.display = 'block';
-                    }
-                    return true;
-                } else {
-                    if (whatsappQRCode) {
-                        whatsappQRCode.style.display = 'flex';
-                        if (whatsappHeader) whatsappHeader.style.display = 'none';
-                        if (whatsappMessagesContainer) whatsappMessagesContainer.style.display = 'none';
-                        
-                        if (data.qr_code) {
-                            console.log('[WhatsApp] QR code received, length:', data.qr_code.length);
-                            const qrImage = document.createElement('img');
-                            
-                            // Create data URL
-                            const dataUrl = `data:image/png;base64,${data.qr_code}`;
-                            console.log('[WhatsApp] Data URL created, length:', dataUrl.length);
-                            
-                            qrImage.src = dataUrl;
-                            // Make QR code much larger and centered
-                            qrImage.style.width = '600px';
-                            qrImage.style.height = '600px';
-                            qrImage.style.maxWidth = '90vw';
-                            qrImage.style.maxHeight = '90vh';
-                            qrImage.style.objectFit = 'contain';
-                            qrImage.style.margin = '20px auto';
-                            qrImage.style.display = 'block';
-                            qrImage.style.border = '4px solid rgba(37, 211, 102, 0.8)';
-                            qrImage.style.borderRadius = '15px';
-                            qrImage.style.padding = '20px';
-                            qrImage.style.background = 'white';
-                            qrImage.style.boxShadow = '0 8px 24px rgba(0, 0, 0, 0.4)';
-                            qrImage.style.imageRendering = 'crisp-edges'; // Better quality
-                            qrImage.alt = 'WhatsApp QR Code';
-                            
-                            // Add error handler for image loading
-                            qrImage.onerror = function(e) {
-                                console.error('[WhatsApp] Failed to load QR code image:', e);
-                                const statusDiv = document.getElementById('connectionStatus');
-                                if (statusDiv) {
-                                    statusDiv.innerHTML = '<span style="color: #ef4444;">❌ Failed to load QR code image. The base64 data may be invalid. Check backend logs.</span>';
-                                }
-                            };
-                            
-                            qrImage.onload = function() {
-                                console.log('[WhatsApp] QR code image loaded successfully, dimensions:', qrImage.width, 'x', qrImage.height);
-                                const statusDiv = document.getElementById('connectionStatus');
-                                if (statusDiv) {
-                                    statusDiv.innerHTML = '<span style="color: #10b981;">✓ QR code displayed. Scan with your WhatsApp app.</span>';
-                                }
-                            };
-                            
-                            // Remove any existing QR images
-                            const existingQr = whatsappQRCode.querySelectorAll('img');
-                            existingQr.forEach(img => img.remove());
-                            
-                            // Insert QR code after the instructions div
-                            const instructionsDiv = whatsappQRCode.querySelector('div[style*="background"]');
-                            if (instructionsDiv && instructionsDiv.parentNode) {
-                                instructionsDiv.parentNode.insertBefore(qrImage, instructionsDiv.nextSibling);
-                            } else {
-                                // Fallback: append to container
-                                whatsappQRCode.appendChild(qrImage);
-                            }
-                            
-                            if (!connectionPollInterval) {
-                                startConnectionPolling();
-                            }
-                        } else {
-                            console.warn('[WhatsApp] No QR code in response. Response data:', data);
-                            const statusDiv = document.getElementById('connectionStatus');
-                            if (statusDiv) {
-                                statusDiv.innerHTML = `<span style="color: #ef4444;">❌ ${data.message || 'QR code not available. Check backend logs for details.'}</span>`;
-                            }
-                        }
-                        
-                        const statusDiv = document.getElementById('connectionStatus');
-                        if (statusDiv) {
-                            if (data.qr_code) {
-                            statusDiv.innerHTML = `<span style="color: #f59e0b;">⚠️ ${data.message || 'Please scan the QR code above with your WhatsApp mobile app'}</span>`;
-                    } else {
-                                statusDiv.innerHTML = `<span style="color: #ef4444;">❌ ${data.message || 'QR code not available. Please check backend logs or try refreshing.'}</span>`;
-                        }
-                    }
-                    }
-                    return !!data.qr_code;
-                }
-            } catch (error) {
-                console.error('[!] Error loading QR code:', error);
-                if (whatsappQRCode) {
-                    whatsappQRCode.style.display = 'flex';
-                    const statusDiv = document.getElementById('connectionStatus');
-                    if (statusDiv) {
-                        statusDiv.innerHTML = `<span style="color: #ef4444;">❌ Error: ${error.message}. Make sure the backend server is running.</span>`;
-                    }
-                }
-                if (whatsappMessagesContainer) {
-                    whatsappMessagesContainer.style.display = 'none';
-                }
-                return false;
-            }
-        }
-
-        let qrRefreshInterval = null;
-
-        function startConnectionPolling() {
-            if (connectionPollInterval) {
-                clearInterval(connectionPollInterval);
-            }
-            
-            const statusDiv = document.getElementById('connectionStatus');
-            let qrRefreshCount = 0;
-            
-            // Refresh QR code every 20 seconds (QR codes expire)
-            if (qrRefreshInterval) {
-                clearInterval(qrRefreshInterval);
-            }
-            qrRefreshInterval = setInterval(() => {
-                qrRefreshCount++;
-                console.log(`[WhatsApp] Refreshing QR code (attempt ${qrRefreshCount})...`);
-                loadQRCode();
-            }, 20000); // Refresh every 20 seconds
-            
-            connectionPollInterval = setInterval(async () => {
-                const isConnected = await checkWhatsAppConnection();
-                if (isConnected) {
-                    if (statusDiv) statusDiv.innerHTML = '<span style="color: #10b981;">✓ Connected! Loading messages...</span>';
-                    clearInterval(connectionPollInterval);
-                    connectionPollInterval = null;
-                    if (qrRefreshInterval) {
-                        clearInterval(qrRefreshInterval);
-                        qrRefreshInterval = null;
-                    }
-                    if (whatsappQRCode) whatsappQRCode.style.display = 'none';
-                    if (whatsappMessagesContainer) {
-                        whatsappMessagesContainer.innerHTML = '<div class="whatsapp-empty-state"><p>Connected! Loading messages...</p></div>';
-                        whatsappMessagesContainer.style.display = 'block';
-                    }
-                    // Auto-load messages after connection
-                    setTimeout(() => {
-                        loadWhatsAppMessages();
-                    }, 1000);
-                } else {
-                    if (statusDiv) {
-                        const timeLeft = 20 - (qrRefreshCount * 3 % 20);
-                        statusDiv.innerHTML = `<span style="color: #f59e0b;">⏳ Waiting for QR code scan... (QR refreshes every 20s)</span>`;
-                }
-                }
-            }, 2000); // Check every 2 seconds instead of 3
-        }
-
-        async function loadWhatsAppMessages() {
-            if (isLoadingWhatsAppMessages) {
-                return;
-            }
-            
-            isLoadingWhatsAppMessages = true;
-            whatsappRefreshButton.disabled = true;
-            whatsappRefreshButton.textContent = 'Loading...';
-            // Preserve current messages until new ones are loaded successfully
-
-            try {
-                const isConnected = await checkWhatsAppConnection();
-                
-                if (!isConnected) {
-                    const qrLoaded = await loadQRCode();
-                    if (!qrLoaded) {
-                        if (whatsappMessagesContainer) {
-                            whatsappMessagesContainer.innerHTML = '<div class="whatsapp-empty-state"><p>Please wait while we prepare the QR code...</p></div>';
-                            whatsappMessagesContainer.style.display = 'block';
-                        }
-                        setTimeout(loadQRCode, 2000);
-                    }
-                    isLoadingWhatsAppMessages = false;
-                    whatsappRefreshButton.disabled = false;
-                    whatsappRefreshButton.textContent = 'Refresh';
-                    return;
-                }
-
-                if (whatsappMessagesContainer) {
-                    whatsappMessagesContainer.innerHTML = '<div class="whatsapp-empty-state"><p>Loading WhatsApp messages...</p></div>';
-                    whatsappMessagesContainer.style.display = 'block';
-                }
-                
-                const response = await fetch('http://localhost:8000/api/whatsapp/messages', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        limit: 1000  // Increased limit to get more messages
-                    })
-                });
-                    
-                    if (!response.ok) {
-                    const errorData = await response.json();
-                    throw new Error(errorData.detail || 'Failed to fetch messages');
-                    }
-                    
-                const data = await response.json();
-
-                    if (whatsappQRCode) whatsappQRCode.style.display = 'none';
-
-                    if (data.success) {
-                    // Only update messages after successful load
-                    allWhatsAppMessages = data.messages || [];
-                    totalWhatsAppCount = data.total_count || allWhatsAppMessages.length;
-                        
-                        whatsappMessagesByChat = groupMessagesByChat(allWhatsAppMessages);
-                        
-                    if (allWhatsAppMessages.length === 0) {
-                            whatsappMessagesContainer.innerHTML = '<div class="whatsapp-empty-state"><p>No WhatsApp messages found</p></div>';
-                            whatsappMessagesContainer.style.display = 'block';
-                    } else {
-                            renderWhatsAppChats();
-                            
-                            if (Object.keys(whatsappMessagesByChat).length > 0) {
-                                    const firstChatId = Object.keys(whatsappMessagesByChat)[0];
-                                    selectWhatsAppChat(firstChatId);
-                            }
-                        }
-                        updateWhatsAppCount();
-                } else {
-                    const errorMsg = data.error || data.detail || 'Unknown error';
-                        if (whatsappMessagesContainer) {
-                            whatsappMessagesContainer.innerHTML = `<div class="whatsapp-empty-state"><p>${errorMsg}</p></div>`;
-                            whatsappMessagesContainer.style.display = 'block';
-                        }
-                }
-            } catch (error) {
-                console.error('[!] Error:', error);
-                    if (whatsappMessagesContainer) {
-                    whatsappMessagesContainer.innerHTML = `<div class="whatsapp-empty-state"><p>Error: ${error.message}</p></div>`;
-                        whatsappMessagesContainer.style.display = 'block';
-                    }
-            } finally {
-                isLoadingWhatsAppMessages = false;
-                whatsappRefreshButton.disabled = false;
-                whatsappRefreshButton.textContent = 'Refresh';
-            }
-        }
-
-        if (whatsappRefreshButton) {
-        whatsappRefreshButton.addEventListener('click', loadWhatsAppMessages);
-        }
-
-        // Auto-load QR code when WhatsApp tab is first opened
-        const whatsappTabButton = document.querySelector('[data-tab="whatsapp"]');
-        if (whatsappTabButton) {
-            // Check if WhatsApp tab is active on page load
-            const checkInitialTab = () => {
-                const whatsappTab = document.getElementById('whatsapp');
-                if (whatsappTab && whatsappTab.classList.contains('active')) {
-                    console.log('[WhatsApp] Tab is active on load, checking connection...');
-                    checkWhatsAppConnection().then(isConnected => {
-                        if (!isConnected) {
-                            loadQRCode();
-                        }
-                    });
-                }
-            };
-            
-            // Check immediately and also after a short delay
-            setTimeout(checkInitialTab, 500);
-        }
-
-        // Check connection status on tab switch
-        document.querySelectorAll('.tab-button').forEach(button => {
-            button.addEventListener('click', () => {
-                if (button.dataset.tab === 'whatsapp') {
-                    // Check if we already have messages loaded
-                    const hasMessages = allWhatsAppMessages && allWhatsAppMessages.length > 0;
-                    const hasChats = whatsappMessagesByChat && Object.keys(whatsappMessagesByChat).length > 0;
-                    
-                    if (hasMessages || hasChats) {
-                        // Restore previous state - we have messages, so show them
-                        console.log('[WhatsApp] Restoring previous state with', allWhatsAppMessages.length, 'messages');
-                        
-                        // Render chats if not already rendered
-                        if (hasChats) {
-                            renderWhatsAppChats();
-                            
-                            // Restore selected chat if there was one
-                            if (currentWhatsAppChatId && whatsappMessagesByChat[currentWhatsAppChatId]) {
-                                selectWhatsAppChat(currentWhatsAppChatId);
-                            } else if (Object.keys(whatsappMessagesByChat).length > 0) {
-                                // Select first chat if no previous selection
-                                const firstChatId = Object.keys(whatsappMessagesByChat)[0];
-                                selectWhatsAppChat(firstChatId);
-                            }
-                        }
-                        
-                        // Hide QR code, show messages and header
-                        if (whatsappQRCode) whatsappQRCode.style.display = 'none';
-                        if (whatsappHeader) whatsappHeader.style.display = 'flex';
-                        if (whatsappMessagesContainer) {
-                            whatsappMessagesContainer.style.display = 'block';
-                            // Make sure the selected chat's messages are visible
-                            if (currentWhatsAppChatId && whatsappMessagesByChat[currentWhatsAppChatId]) {
-                                renderWhatsAppMessages(whatsappMessagesByChat[currentWhatsAppChatId].messages);
-                            }
-                        }
-                    } else {
-                        // No messages loaded yet - check connection
-                        if (whatsappQRCode) {
-                            whatsappQRCode.style.display = 'flex';
-                        }
-                        if (whatsappHeader) whatsappHeader.style.display = 'none';
-                        if (whatsappMessagesContainer) whatsappMessagesContainer.style.display = 'none';
-                        
-                        checkWhatsAppConnection().then(isConnected => {
-                            if (!isConnected) {
-                                console.log('[WhatsApp] Not connected, loading QR code...');
-                                loadQRCode();
-                            } else {
-                                console.log('[WhatsApp] Already connected but no messages loaded');
-                                if (whatsappQRCode) whatsappQRCode.style.display = 'none';
-                                if (whatsappMessagesContainer) {
-                                    whatsappMessagesContainer.innerHTML = '<div class="whatsapp-empty-state"><p>Connected! Click "Refresh" to load messages.</p></div>';
-                                    whatsappMessagesContainer.style.display = 'block';
-                                }
-                            }
-                        });
-                    }
-                }
-            });
-        });
+        // Telegram functionality
         
         // Telegram message sending
         let currentTelegramChatId = null;
@@ -2114,6 +1562,7 @@
 
         telegramShowButton.addEventListener('click', loadTelegramMessages);
 
+
         // Slack functionality
         const slackViewButton = document.getElementById('slackViewButton');
         const slackMessagesContainer = document.getElementById('slackMessagesContainer');
@@ -2427,6 +1876,1033 @@
         }
 
         slackViewButton.addEventListener('click', loadSlackMessages);
+
+        // Word Document Management
+        const createWordDocButton = document.getElementById('createWordDocButton');
+        const openWordDocButton = document.getElementById('openWordDocButton');
+        const wordInfoButton = document.getElementById('wordInfoButton');
+        const wordCreateModal = document.getElementById('wordCreateModal');
+        const wordOpenModal = document.getElementById('wordOpenModal');
+        const wordCreateModalClose = document.getElementById('wordCreateModalClose');
+        const wordOpenModalClose = document.getElementById('wordOpenModalClose');
+        const wordCreateCancel = document.getElementById('wordCreateCancel');
+        const wordOpenCancel = document.getElementById('wordOpenCancel');
+        const wordCreateSubmit = document.getElementById('wordCreateSubmit');
+        const wordOpenSubmit = document.getElementById('wordOpenSubmit');
+        const wordDocumentArea = document.getElementById('wordDocumentArea');
+        const wordFilePathBrowse = document.getElementById('wordFilePathBrowse');
+        const wordFilePathInput = document.getElementById('wordFilePathInput');
+        const wordOpenFilePathBrowse = document.getElementById('wordOpenFilePathBrowse');
+        const wordOpenFilePathInput = document.getElementById('wordOpenFilePathInput');
+
+        // Browse button for opening documents
+        if (wordOpenFilePathBrowse && wordOpenFilePathInput) {
+            wordOpenFilePathBrowse.addEventListener('click', async () => {
+                const filePathInput = document.getElementById('wordOpenFilePath');
+                if (filePathInput) {
+                    // Get default Documents path and suggest it
+                    const defaultPath = await getDefaultDocumentsPath();
+                    if (!filePathInput.value.trim()) {
+                        filePathInput.placeholder = `Enter full path (e.g., ${defaultPath}\\yourfile.docx)`;
+                    }
+                    filePathInput.focus();
+                    // Show helpful message
+                    alert('Please enter the full file path manually.\n\nExample: C:\\Users\\YourName\\Documents\\mydocument.docx\n\nNote: Browsers cannot access full file paths for security reasons.');
+                }
+            });
+        }
+        
+        // Helper function to get default Documents path
+        async function getDefaultDocumentsPath() {
+            try {
+                const response = await fetch('http://localhost:8000/api/word/list-directory');
+                const data = await response.json();
+                if (data.success && data.path) {
+                    return data.path;
+                }
+            } catch (error) {
+                console.error('Error getting default path:', error);
+            }
+            // Fallback to Windows default
+            return 'C:\\Users\\User\\Documents';
+        }
+
+        // Browse button for creating documents
+        if (wordFilePathBrowse && wordFilePathInput) {
+            wordFilePathBrowse.addEventListener('click', async () => {
+                const filePathInput = document.getElementById('wordFilePath');
+                if (filePathInput) {
+                    if (!filePathInput.value.trim()) {
+                        // Get default Documents path from server
+                        const defaultPath = await getDefaultDocumentsPath();
+                        const timestamp = new Date().toISOString().replace(/[:.]/g, '-').substring(0, 19);
+                        const suggestedPath = `${defaultPath}\\document_${timestamp}.docx`;
+                        filePathInput.value = suggestedPath;
+                    }
+                    filePathInput.focus();
+                    filePathInput.select();
+                }
+            });
+        }
+
+        // Store current document state
+        let currentWordDocument = {
+            filePath: null,
+            title: null,
+            content: ''
+        };
+
+        // Function to open Word editor
+        function openWordEditor(filePath, title, initialContent) {
+            currentWordDocument.filePath = filePath;
+            currentWordDocument.title = title;
+            currentWordDocument.content = initialContent;
+            
+            if (wordDocumentArea) {
+                const fileName = filePath.split('\\').pop() || filePath.split('/').pop() || 'Document';
+                wordDocumentArea.innerHTML = `
+                    <div class="word-editor-container">
+                        <div class="word-editor-toolbar">
+                            <div class="word-editor-toolbar-group">
+                                <button class="word-editor-btn" id="wordEditorBold" title="Bold (Ctrl+B)">
+                                    <strong>B</strong>
+                                </button>
+                                <button class="word-editor-btn" id="wordEditorItalic" title="Italic (Ctrl+I)">
+                                    <em>I</em>
+                                </button>
+                                <button class="word-editor-btn" id="wordEditorUnderline" title="Underline (Ctrl+U)">
+                                    <u>U</u>
+                                </button>
+                            </div>
+                            <div class="word-editor-toolbar-group">
+                                <select class="word-editor-select" id="wordEditorFontSize" title="Font Size">
+                                    <option value="8">8</option>
+                                    <option value="9">9</option>
+                                    <option value="10">10</option>
+                                    <option value="11">11</option>
+                                    <option value="12" selected>12</option>
+                                    <option value="14">14</option>
+                                    <option value="16">16</option>
+                                    <option value="18">18</option>
+                                    <option value="20">20</option>
+                                    <option value="24">24</option>
+                                    <option value="28">28</option>
+                                    <option value="36">36</option>
+                                </select>
+                                <select class="word-editor-select" id="wordEditorFontFamily" title="Font Family">
+                                    <option value="Arial">Arial</option>
+                                    <option value="Times New Roman">Times New Roman</option>
+                                    <option value="Calibri" selected>Calibri</option>
+                                    <option value="Courier New">Courier New</option>
+                                    <option value="Verdana">Verdana</option>
+                                    <option value="Georgia">Georgia</option>
+                                </select>
+                            </div>
+                            <div class="word-editor-toolbar-group">
+                                <button class="word-editor-btn" id="wordEditorAlignLeft" title="Align Left">⬅</button>
+                                <button class="word-editor-btn" id="wordEditorAlignCenter" title="Align Center">⬌</button>
+                                <button class="word-editor-btn" id="wordEditorAlignRight" title="Align Right">➡</button>
+                            </div>
+                            <div class="word-editor-toolbar-group" style="margin-left: auto;">
+                                <button class="word-editor-btn word-editor-btn-primary" id="wordEditorSave" title="Save (Ctrl+S)">
+                                    💾 Save
+                                </button>
+                            </div>
+                        </div>
+                        <div class="word-editor-header">
+                            <div class="word-editor-title">
+                                <span style="font-weight: 600;">📄 ${fileName}</span>
+                                <span style="font-size: 12px; color: #666; margin-left: 12px;">${filePath}</span>
+                            </div>
+                        </div>
+                        <div class="word-editor-content-wrapper">
+                            <div 
+                                class="word-editor-content" 
+                                id="wordEditorContent" 
+                                contenteditable="true"
+                                style="min-height: 500px; padding: 20px; background: white; border: 1px solid #ddd; border-radius: 4px; outline: none; font-family: 'Calibri', 'Arial', sans-serif; font-size: 12pt; line-height: 1.5;"
+                            >${initialContent || ''}</div>
+                        </div>
+                    </div>
+                `;
+                
+                // Set up editor event listeners
+                setupWordEditor();
+            }
+        }
+
+        // Function to set up Word editor event listeners
+        function setupWordEditor() {
+            const editorContent = document.getElementById('wordEditorContent');
+            const saveBtn = document.getElementById('wordEditorSave');
+            const boldBtn = document.getElementById('wordEditorBold');
+            const italicBtn = document.getElementById('wordEditorItalic');
+            const underlineBtn = document.getElementById('wordEditorUnderline');
+            const alignLeftBtn = document.getElementById('wordEditorAlignLeft');
+            const alignCenterBtn = document.getElementById('wordEditorAlignCenter');
+            const alignRightBtn = document.getElementById('wordEditorAlignRight');
+            const fontSizeSelect = document.getElementById('wordEditorFontSize');
+            const fontFamilySelect = document.getElementById('wordEditorFontFamily');
+
+            // Save functionality - show Save As dialog
+            if (saveBtn && editorContent) {
+                saveBtn.addEventListener('click', () => {
+                    showSaveAsDialog();
+                });
+            }
+
+            // Format buttons
+            if (boldBtn && editorContent) {
+                boldBtn.addEventListener('click', () => {
+                    document.execCommand('bold', false, null);
+                    editorContent.focus();
+                });
+            }
+
+            if (italicBtn && editorContent) {
+                italicBtn.addEventListener('click', () => {
+                    document.execCommand('italic', false, null);
+                    editorContent.focus();
+                });
+            }
+
+            if (underlineBtn && editorContent) {
+                underlineBtn.addEventListener('click', () => {
+                    document.execCommand('underline', false, null);
+                    editorContent.focus();
+                });
+            }
+
+            // Alignment buttons
+            if (alignLeftBtn && editorContent) {
+                alignLeftBtn.addEventListener('click', () => {
+                    document.execCommand('justifyLeft', false, null);
+                    editorContent.focus();
+                });
+            }
+
+            if (alignCenterBtn && editorContent) {
+                alignCenterBtn.addEventListener('click', () => {
+                    document.execCommand('justifyCenter', false, null);
+                    editorContent.focus();
+                });
+            }
+
+            if (alignRightBtn && editorContent) {
+                alignRightBtn.addEventListener('click', () => {
+                    document.execCommand('justifyRight', false, null);
+                    editorContent.focus();
+                });
+            }
+
+            // Font size
+            if (fontSizeSelect && editorContent) {
+                fontSizeSelect.addEventListener('change', (e) => {
+                    document.execCommand('fontSize', false, e.target.value);
+                    editorContent.focus();
+                });
+            }
+
+            // Font family
+            if (fontFamilySelect && editorContent) {
+                fontFamilySelect.addEventListener('change', (e) => {
+                    document.execCommand('fontName', false, e.target.value);
+                    editorContent.focus();
+                });
+            }
+
+            // Keyboard shortcuts
+            if (editorContent) {
+                editorContent.addEventListener('keydown', (e) => {
+                    // Ctrl+S to save - show Save As dialog
+                    if (e.ctrlKey && e.key === 's') {
+                        e.preventDefault();
+                        showSaveAsDialog();
+                    }
+                });
+            }
+        }
+
+        // Function to show Save As dialog
+        async function showSaveAsDialog() {
+            const saveAsModal = document.getElementById('wordSaveAsModal');
+            const saveAsFolderPath = document.getElementById('wordSaveAsFolderPath');
+            const saveAsFileName = document.getElementById('wordSaveAsFileName');
+            
+            if (saveAsModal && saveAsFolderPath && saveAsFileName) {
+                // Pre-fill with current file path if available
+                if (currentWordDocument.filePath) {
+                    const fullPath = currentWordDocument.filePath;
+                    const lastSeparator = Math.max(fullPath.lastIndexOf('\\'), fullPath.lastIndexOf('/'));
+                    if (lastSeparator > 0) {
+                        saveAsFolderPath.value = fullPath.substring(0, lastSeparator);
+                        saveAsFileName.value = fullPath.substring(lastSeparator + 1);
+                    } else {
+                        saveAsFolderPath.value = '';
+                        saveAsFileName.value = fullPath;
+                    }
+                } else {
+                    // Generate default path
+                    try {
+                        const defaultPath = await getDefaultDocumentsPath();
+                        saveAsFolderPath.value = defaultPath;
+                        const timestamp = new Date().toISOString().replace(/[:.]/g, '-').substring(0, 19);
+                        saveAsFileName.value = `document_${timestamp}.docx`;
+                    } catch (error) {
+                        console.error('Error getting default path:', error);
+                        // Fallback
+                        saveAsFolderPath.value = 'C:\\Users\\User\\Documents';
+                        const timestamp = new Date().toISOString().replace(/[:.]/g, '-').substring(0, 19);
+                        saveAsFileName.value = `document_${timestamp}.docx`;
+                    }
+                }
+                saveAsModal.style.display = 'flex';
+                // Small delay to ensure modal is visible before focusing
+                setTimeout(() => {
+                    saveAsFileName.focus();
+                    saveAsFileName.select();
+                }, 100);
+            }
+        }
+
+        // Set up Save As dialog event listeners
+        const wordSaveAsModal = document.getElementById('wordSaveAsModal');
+        const wordSaveAsModalClose = document.getElementById('wordSaveAsModalClose');
+        const wordSaveAsCancel = document.getElementById('wordSaveAsCancel');
+        const wordSaveAsSubmit = document.getElementById('wordSaveAsSubmit');
+        const wordSaveAsFolderPath = document.getElementById('wordSaveAsFolderPath');
+        const wordSaveAsFileName = document.getElementById('wordSaveAsFileName');
+        const wordSaveAsFolderPathBrowse = document.getElementById('wordSaveAsFolderPathBrowse');
+
+        // Close Save As modal
+        if (wordSaveAsModalClose) {
+            wordSaveAsModalClose.addEventListener('click', () => {
+                if (wordSaveAsModal) wordSaveAsModal.style.display = 'none';
+            });
+        }
+
+        if (wordSaveAsCancel) {
+            wordSaveAsCancel.addEventListener('click', () => {
+                if (wordSaveAsModal) wordSaveAsModal.style.display = 'none';
+            });
+        }
+
+        // Folder browser state
+        let currentFolderBrowserPath = null;
+        let selectedFolderPath = null;
+
+        // Browse button for Save As - use native Windows folder picker
+        if (wordSaveAsFolderPathBrowse) {
+            wordSaveAsFolderPathBrowse.addEventListener('click', async () => {
+                await openNativeFolderPicker();
+            });
+        }
+
+        // Function to open native Windows folder picker via backend
+        async function openNativeFolderPicker() {
+            const currentPath = wordSaveAsFolderPath?.value.trim() || null;
+            
+            try {
+                const url = currentPath ? 
+                    `http://localhost:8000/api/word/select-folder?initial_path=${encodeURIComponent(currentPath)}` :
+                    'http://localhost:8000/api/word/select-folder';
+                
+                const response = await fetch(url);
+                const data = await response.json();
+                
+                if (data.success && data.folder_path) {
+                    // User selected a folder
+                    if (wordSaveAsFolderPath) {
+                        wordSaveAsFolderPath.value = data.folder_path;
+                    }
+                } else if (data.cancelled) {
+                    // User cancelled - do nothing
+                    console.log('Folder selection cancelled');
+                } else {
+                    // Error occurred
+                    alert('Error selecting folder: ' + (data.detail || data.message || 'Unknown error'));
+                }
+            } catch (error) {
+                console.error('Error opening folder picker:', error);
+                alert('Error opening folder picker: ' + error.message + '\n\nFalling back to manual entry.');
+                // Fallback: focus the input so user can type manually
+                if (wordSaveAsFolderPath) {
+                    wordSaveAsFolderPath.focus();
+                }
+            }
+        }
+
+        // Function to open folder browser dialog
+        async function openFolderBrowserDialog() {
+            const folderBrowserDialog = document.getElementById('wordFolderBrowserDialog');
+            if (!folderBrowserDialog) return;
+
+            // Get initial path from input or use default
+            let initialPath = wordSaveAsFolderPath?.value.trim();
+            if (!initialPath) {
+                try {
+                    initialPath = await getDefaultDocumentsPath();
+                } catch (error) {
+                    initialPath = 'C:\\Users\\User\\Documents';
+                }
+            }
+
+            currentFolderBrowserPath = initialPath;
+            selectedFolderPath = initialPath;
+            folderBrowserDialog.style.display = 'flex';
+            loadFolderBrowserDirectory(initialPath);
+        }
+
+        // Function to load directory in folder browser
+        async function loadFolderBrowserDirectory(path = null) {
+            const folderBrowserContent = document.getElementById('wordFolderBrowserContent');
+            const folderBrowserPathBreadcrumb = document.getElementById('wordFolderBrowserPathBreadcrumb');
+            
+            if (!folderBrowserContent) return;
+
+            try {
+                const url = path ? 
+                    `http://localhost:8000/api/word/list-directory?path=${encodeURIComponent(path)}` :
+                    'http://localhost:8000/api/word/list-directory';
+                
+                const response = await fetch(url);
+                const data = await response.json();
+
+                if (data.success) {
+                    currentFolderBrowserPath = data.path;
+                    selectedFolderPath = data.path;
+                    updateFolderBrowserPathBreadcrumb(data.path);
+                    
+                    // Clear and populate content - only show directories
+                    folderBrowserContent.innerHTML = '';
+
+                    // Add parent directory row if available
+                    if (data.parent_path) {
+                        const parentRow = document.createElement('div');
+                        parentRow.style.cssText = 'display: flex; align-items: center; gap: 8px; padding: 8px 16px; cursor: pointer; border-bottom: 1px solid #f0f0f0; transition: background 0.15s;';
+                        parentRow.innerHTML = `
+                            <span style="font-size: 20px;">📁</span>
+                            <span style="font-size: 14px; color: #333; font-weight: 500;">.. (Parent Folder)</span>
+                        `;
+                        parentRow.addEventListener('click', () => {
+                            loadFolderBrowserDirectory(data.parent_path);
+                        });
+                        parentRow.addEventListener('mouseenter', () => {
+                            parentRow.style.background = '#e8f4f8';
+                        });
+                        parentRow.addEventListener('mouseleave', () => {
+                            parentRow.style.background = 'transparent';
+                        });
+                        folderBrowserContent.appendChild(parentRow);
+                    }
+
+                    // Add directories only
+                    const directories = data.items.filter(item => item.is_directory);
+                    directories.forEach(item => {
+                        const row = createFolderBrowserRow(item, data.path);
+                        folderBrowserContent.appendChild(row);
+                    });
+
+                    // Update navigation buttons
+                    const navUpBtn = document.getElementById('wordFolderBrowserNavUp');
+                    if (navUpBtn) {
+                        navUpBtn.disabled = !data.parent_path;
+                        navUpBtn.style.opacity = !data.parent_path ? '0.5' : '1';
+                    }
+                } else {
+                    const errorMsg = data.detail || data.message || data.error || 'Unknown error';
+                    folderBrowserContent.innerHTML = `
+                        <div style="padding: 40px; text-align: center; color: #d32f2f;">
+                            <div style="font-size: 48px; margin-bottom: 16px;">⚠️</div>
+                            <div style="font-size: 16px; font-weight: 600; margin-bottom: 8px;">Error Loading Directory</div>
+                            <div style="font-size: 14px; color: #666;">${errorMsg}</div>
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                console.error('Error loading directory:', error);
+                folderBrowserContent.innerHTML = `
+                    <div style="padding: 40px; text-align: center; color: #d32f2f;">
+                        <div style="font-size: 48px; margin-bottom: 16px;">⚠️</div>
+                        <div style="font-size: 16px; font-weight: 600; margin-bottom: 8px;">Network Error</div>
+                        <div style="font-size: 14px; color: #666;">${error.message || 'Failed to connect to server'}</div>
+                    </div>
+                `;
+            }
+        }
+
+        // Create a folder row for the folder browser
+        function createFolderBrowserRow(item, currentPath) {
+            const row = document.createElement('div');
+            row.style.cssText = 'display: flex; align-items: center; gap: 8px; padding: 8px 16px; cursor: pointer; border-bottom: 1px solid #f0f0f0; transition: background 0.15s;';
+            
+            row.innerHTML = `
+                <span style="font-size: 20px;">📁</span>
+                <span style="font-size: 14px; color: #333;" title="${item.path}">${item.name}</span>
+            `;
+
+            row.addEventListener('click', () => {
+                // Navigate into the folder
+                loadFolderBrowserDirectory(item.path);
+            });
+
+            row.addEventListener('dblclick', () => {
+                // Double-click to select and use this folder
+                selectedFolderPath = item.path;
+                if (wordSaveAsFolderPath) {
+                    wordSaveAsFolderPath.value = item.path;
+                }
+                const folderBrowserDialog = document.getElementById('wordFolderBrowserDialog');
+                if (folderBrowserDialog) folderBrowserDialog.style.display = 'none';
+            });
+
+            row.addEventListener('mouseenter', () => {
+                row.style.background = '#e8f4f8';
+            });
+            row.addEventListener('mouseleave', () => {
+                row.style.background = 'transparent';
+            });
+
+            return row;
+        }
+
+        // Update path breadcrumb in folder browser
+        function updateFolderBrowserPathBreadcrumb(path) {
+            const breadcrumb = document.getElementById('wordFolderBrowserPathBreadcrumb');
+            if (!breadcrumb) return;
+            
+            const parts = path.split(/[\\/]/).filter(p => p);
+            let breadcrumbHTML = '';
+            let currentPath = '';
+            
+            parts.forEach((part, index) => {
+                if (index === 0 && path.startsWith('\\')) {
+                    currentPath = '\\' + part;
+                } else {
+                    currentPath = currentPath ? currentPath + '\\' + part : part;
+                }
+                
+                breadcrumbHTML += `<span style="cursor: pointer; color: #0066cc; text-decoration: underline;" data-path="${currentPath}">${part}</span>`;
+                if (index < parts.length - 1) {
+                    breadcrumbHTML += '<span style="margin: 0 4px; color: #666;">\\</span>';
+                }
+            });
+            
+            breadcrumb.innerHTML = breadcrumbHTML || path;
+            
+            // Add click handlers to breadcrumb parts
+            breadcrumb.querySelectorAll('[data-path]').forEach(span => {
+                span.addEventListener('click', () => {
+                    loadFolderBrowserDirectory(span.getAttribute('data-path'));
+                });
+            });
+        }
+
+        // Folder browser dialog event listeners
+        const wordFolderBrowserDialog = document.getElementById('wordFolderBrowserDialog');
+        const wordFolderBrowserDialogClose = document.getElementById('wordFolderBrowserDialogClose');
+        const wordFolderBrowserCancel = document.getElementById('wordFolderBrowserCancel');
+        const wordFolderBrowserSelect = document.getElementById('wordFolderBrowserSelect');
+        const wordFolderBrowserNavUp = document.getElementById('wordFolderBrowserNavUp');
+        const wordFolderBrowserRefresh = document.getElementById('wordFolderBrowserRefresh');
+
+        // Close folder browser
+        if (wordFolderBrowserDialogClose) {
+            wordFolderBrowserDialogClose.addEventListener('click', () => {
+                if (wordFolderBrowserDialog) wordFolderBrowserDialog.style.display = 'none';
+            });
+        }
+
+        if (wordFolderBrowserCancel) {
+            wordFolderBrowserCancel.addEventListener('click', () => {
+                if (wordFolderBrowserDialog) wordFolderBrowserDialog.style.display = 'none';
+            });
+        }
+
+        // Select folder button
+        if (wordFolderBrowserSelect) {
+            wordFolderBrowserSelect.addEventListener('click', () => {
+                if (selectedFolderPath && wordSaveAsFolderPath) {
+                    wordSaveAsFolderPath.value = selectedFolderPath;
+                }
+                if (wordFolderBrowserDialog) wordFolderBrowserDialog.style.display = 'none';
+            });
+        }
+
+        // Navigation buttons
+        if (wordFolderBrowserNavUp) {
+            wordFolderBrowserNavUp.addEventListener('click', async () => {
+                if (currentFolderBrowserPath) {
+                    try {
+                        const response = await fetch(`http://localhost:8000/api/word/list-directory?path=${encodeURIComponent(currentFolderBrowserPath)}`);
+                        const data = await response.json();
+                        if (data.success && data.parent_path) {
+                            loadFolderBrowserDirectory(data.parent_path);
+                        }
+                    } catch (error) {
+                        console.error('Error navigating up:', error);
+                    }
+                }
+            });
+        }
+
+        if (wordFolderBrowserRefresh) {
+            wordFolderBrowserRefresh.addEventListener('click', () => {
+                if (currentFolderBrowserPath) {
+                    loadFolderBrowserDirectory(currentFolderBrowserPath);
+                }
+            });
+        }
+
+        // Save As submit
+        if (wordSaveAsSubmit) {
+            wordSaveAsSubmit.addEventListener('click', async () => {
+                const folderPath = wordSaveAsFolderPath?.value.trim();
+                const fileName = wordSaveAsFileName?.value.trim();
+                
+                if (!folderPath) {
+                    alert('Please enter a folder path');
+                    wordSaveAsFolderPath?.focus();
+                    return;
+                }
+
+                if (!fileName) {
+                    alert('Please enter a file name');
+                    wordSaveAsFileName?.focus();
+                    return;
+                }
+
+                // Ensure the filename ends with .docx
+                let finalFileName = fileName;
+                if (!finalFileName.toLowerCase().endsWith('.docx')) {
+                    finalFileName = finalFileName + '.docx';
+                    if (wordSaveAsFileName) wordSaveAsFileName.value = finalFileName;
+                }
+
+                // Combine folder path and filename
+                // Normalize path separators - ensure we use the EXACT folder path the user selected
+                let normalizedFolder = folderPath.trim();
+                
+                // Remove any quotes that might have been added
+                normalizedFolder = normalizedFolder.replace(/^["']|["']$/g, '');
+                
+                // Replace forward slashes with backslashes for Windows
+                normalizedFolder = normalizedFolder.replace(/\//g, '\\');
+                
+                // Remove trailing slashes but keep the path intact
+                normalizedFolder = normalizedFolder.replace(/\\+$/, '');
+                
+                // Ensure we have a valid folder path (not empty)
+                if (!normalizedFolder) {
+                    alert('Please select a valid folder path');
+                    wordSaveAsFolderPath?.focus();
+                    return;
+                }
+                
+                // Validate that the folder path looks valid (starts with a drive letter on Windows)
+                if (normalizedFolder.length < 3 || !/^[A-Za-z]:/.test(normalizedFolder)) {
+                    console.warn('Folder path might be invalid:', normalizedFolder);
+                }
+                
+                // Construct the full file path using the selected folder
+                // Use proper path separator
+                const finalPath = `${normalizedFolder}\\${finalFileName}`;
+
+                // Debug: Log the path being used to verify it's correct
+                console.log('=== SAVE AS DIALOG ===');
+                console.log('Raw folder path input:', folderPath);
+                console.log('Normalized folder path:', normalizedFolder);
+                console.log('File name:', finalFileName);
+                console.log('Final full path:', finalPath);
+                console.log('========================');
+
+                // Save the document using the selected folder path
+                await saveWordDocument(finalPath);
+                
+                // Close the modal
+                if (wordSaveAsModal) wordSaveAsModal.style.display = 'none';
+            });
+        }
+
+        // Function to save Word document (called from Save As dialog)
+        async function saveWordDocument(savePath = null) {
+            const editorContent = document.getElementById('wordEditorContent');
+            if (!editorContent) {
+                alert('No document to save');
+                return;
+            }
+
+            // Use provided path (from Save As dialog) or current document path
+            const filePath = savePath || currentWordDocument.filePath;
+            if (!filePath) {
+                alert('Please specify a file path');
+                showSaveAsDialog();
+                return;
+            }
+            
+            // Debug: Log the file path being used
+            console.log('saveWordDocument called with filePath:', filePath);
+            console.log('savePath parameter:', savePath);
+            console.log('currentWordDocument.filePath:', currentWordDocument.filePath);
+
+            // Get HTML content to preserve formatting
+            const htmlContent = editorContent.innerHTML || '';
+            
+            // Check if content is empty
+            const textContent = editorContent.innerText || editorContent.textContent || '';
+            if (!textContent.trim()) {
+                alert('Document is empty. Please add some content before saving.');
+                const saveBtn = document.getElementById('wordEditorSave');
+                if (saveBtn) {
+                    saveBtn.disabled = false;
+                    saveBtn.textContent = '💾 Save';
+                }
+                return;
+            }
+            
+            const saveBtn = document.getElementById('wordEditorSave');
+            
+            if (saveBtn) {
+                saveBtn.disabled = true;
+                saveBtn.textContent = '💾 Saving...';
+            }
+
+            try {
+                // Save HTML content with formatting preserved
+                console.log('Sending save request with file_path:', filePath);
+                const saveResponse = await fetch('http://localhost:8000/api/word/save-html', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        file_path: filePath,
+                        html_content: htmlContent
+                    })
+                });
+
+                if (!saveResponse.ok) {
+                    let errorMessage = `HTTP ${saveResponse.status}: Failed to save document`;
+                    try {
+                        const errorData = await saveResponse.json();
+                        errorMessage = errorData.detail || errorData.message || errorData.error || errorMessage;
+                    } catch (e) {
+                        // If response is not JSON, use status text
+                        errorMessage = `${saveResponse.status}: ${saveResponse.statusText || 'Unknown error'}`;
+                    }
+                    throw new Error(errorMessage);
+                }
+                
+                const saveData = await saveResponse.json();
+                console.log('Save response:', saveData);
+                
+                if (saveData.success) {
+                    // Use the file path from the response if available, otherwise use what we sent
+                    const savedPath = saveData.file_path || filePath;
+                    
+                    // Update current document path
+                    currentWordDocument.filePath = savedPath;
+                    
+                    // Update the editor header to show new path
+                    const editorTitle = document.querySelector('.word-editor-title');
+                    if (editorTitle) {
+                        const fileName = savedPath.split('\\').pop() || savedPath.split('/').pop() || 'Document';
+                        editorTitle.innerHTML = `<span style="font-weight: 600;">📄 ${fileName}</span><span style="font-size: 12px; color: #666; margin-left: 12px;">${savedPath}</span>`;
+                    }
+                    
+                    // Show success message with the actual saved path
+                    alert(`Document saved successfully!\n\nPath: ${savedPath}`);
+                    
+                    if (saveBtn) {
+                        saveBtn.textContent = '💾 Saved!';
+                        setTimeout(() => {
+                            if (saveBtn) {
+                                saveBtn.textContent = '💾 Save';
+                                saveBtn.disabled = false;
+                            }
+                        }, 2000);
+                    }
+                } else {
+                    throw new Error(saveData.detail || saveData.message || saveData.error || 'Failed to save document');
+                }
+            } catch (error) {
+                console.error('Error saving document:', error);
+                alert('Error saving document: ' + error.message);
+                if (saveBtn) {
+                    saveBtn.disabled = false;
+                    saveBtn.textContent = '💾 Save';
+                }
+            }
+        }
+
+        // Open create modal - now directly creates and opens editor
+        if (createWordDocButton) {
+            createWordDocButton.addEventListener('click', async () => {
+                // Generate a default file path
+                const timestamp = new Date().toISOString().replace(/[:.]/g, '-').substring(0, 19);
+                const defaultPath = await getDefaultDocumentsPath();
+                const filePath = `${defaultPath}\\document_${timestamp}.docx`;
+                
+                // Create document with default values
+                createWordDocButton.disabled = true;
+                createWordDocButton.textContent = 'Creating...';
+                
+                try {
+                    const response = await fetch('http://localhost:8000/api/word/create', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            file_path: filePath,
+                            title: 'Untitled Document',
+                            content: ''
+                        })
+                    });
+
+                    const data = await response.json();
+                    if (response.ok && data.success) {
+                        // Open the document in the editor immediately
+                        openWordEditor(filePath, 'Untitled Document', '');
+                    } else {
+                        const errorMsg = data.detail || data.message || data.error || 'Failed to create document';
+                        alert('Error creating document:\n\n' + errorMsg);
+                    }
+                } catch (error) {
+                    console.error('Error creating document:', error);
+                    alert('Error creating document: ' + error.message);
+                } finally {
+                    createWordDocButton.disabled = false;
+                    createWordDocButton.textContent = 'Create Document';
+                }
+            });
+        }
+
+        // Open document modal
+        if (openWordDocButton) {
+            openWordDocButton.addEventListener('click', () => {
+                if (wordOpenModal) wordOpenModal.style.display = 'flex';
+            });
+        }
+
+        // Close modals
+        if (wordCreateModalClose) {
+            wordCreateModalClose.addEventListener('click', () => {
+                if (wordCreateModal) wordCreateModal.style.display = 'none';
+            });
+        }
+
+        if (wordOpenModalClose) {
+            wordOpenModalClose.addEventListener('click', () => {
+                if (wordOpenModal) wordOpenModal.style.display = 'none';
+            });
+        }
+
+        if (wordCreateCancel) {
+            wordCreateCancel.addEventListener('click', () => {
+                if (wordCreateModal) wordCreateModal.style.display = 'none';
+            });
+        }
+
+        if (wordOpenCancel) {
+            wordOpenCancel.addEventListener('click', () => {
+                if (wordOpenModal) wordOpenModal.style.display = 'none';
+            });
+        }
+
+        // Create document
+        if (wordCreateSubmit) {
+            wordCreateSubmit.addEventListener('click', async () => {
+                const filePath = document.getElementById('wordFilePath')?.value.trim();
+                const title = document.getElementById('wordDocTitle')?.value.trim();
+                const content = document.getElementById('wordDocContent')?.value.trim();
+
+                if (!filePath) {
+                    alert('Please enter a file path (e.g., C:\\Users\\YourName\\Documents\\mydocument.docx)');
+                    return;
+                }
+
+                // Ensure the path ends with .docx
+                if (!filePath.toLowerCase().endsWith('.docx')) {
+                    filePath = filePath + '.docx';
+                    document.getElementById('wordFilePath').value = filePath;
+                }
+
+                wordCreateSubmit.disabled = true;
+                wordCreateSubmit.textContent = 'Creating...';
+
+                try {
+                    const response = await fetch('http://localhost:8000/api/word/create', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            file_path: filePath,
+                            title: title || undefined,
+                            content: content || undefined
+                        })
+                    });
+
+                    const data = await response.json();
+                    if (response.ok && data.success) {
+                        if (wordCreateModal) wordCreateModal.style.display = 'none';
+                        // Clear form
+                        if (document.getElementById('wordFilePath')) document.getElementById('wordFilePath').value = '';
+                        if (document.getElementById('wordDocTitle')) document.getElementById('wordDocTitle').value = '';
+                        if (document.getElementById('wordDocContent')) document.getElementById('wordDocContent').value = '';
+                        
+                        // Open the document in the editor
+                        openWordEditor(filePath, title || 'Untitled Document', content || '');
+                    } else {
+                        const errorMsg = data.detail || data.message || data.error || 'Failed to create document';
+                        console.error('Create document error:', errorMsg);
+                        alert('Error creating document:\n\n' + errorMsg + '\n\nPlease check:\n- The file path is correct and writable\n- The directory exists\n- You have permission to write to that location');
+                    }
+                } catch (error) {
+                    console.error('Error creating document:', error);
+                    alert('Error creating document: ' + error.message + '\n\nPlease check your network connection and try again.');
+                } finally {
+                    wordCreateSubmit.disabled = false;
+                    wordCreateSubmit.textContent = 'Create Document';
+                }
+            });
+        }
+
+        // Open document
+        if (wordOpenSubmit) {
+            wordOpenSubmit.addEventListener('click', async () => {
+                const filePath = document.getElementById('wordOpenFilePath')?.value.trim();
+
+                if (!filePath) {
+                    alert('Please enter a file path (e.g., C:\\Users\\YourName\\Documents\\mydocument.docx)');
+                    return;
+                }
+
+                // Ensure the path ends with .docx if no extension
+                if (!filePath.includes('.') && !filePath.toLowerCase().endsWith('.docx')) {
+                    filePath = filePath + '.docx';
+                    document.getElementById('wordOpenFilePath').value = filePath;
+                }
+
+                wordOpenSubmit.disabled = true;
+                wordOpenSubmit.textContent = 'Opening...';
+
+                try {
+                    const response = await fetch('http://localhost:8000/api/word/open', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            file_path: filePath
+                        })
+                    });
+
+                    const data = await response.json();
+                    if (response.ok && data.success) {
+                        if (wordOpenModal) wordOpenModal.style.display = 'none';
+                        
+                        // Display document content
+                        if (wordDocumentArea) {
+                            const content = data.data?.content || 'No content';
+                            const paragraphCount = data.data?.paragraph_count || 0;
+                            
+                            wordDocumentArea.innerHTML = `
+                                <div style="padding: 20px; background: white; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                                    <h3 style="color: #2E7D32; margin-bottom: 15px;">📄 Document: ${filePath.split('\\').pop() || filePath.split('/').pop()}</h3>
+                                    <p style="color: #555; margin-bottom: 10px;"><strong>Paragraphs:</strong> ${paragraphCount}</p>
+                                    <div style="margin-top: 20px; padding: 15px; background: #f5f5f5; border-radius: 4px; white-space: pre-wrap; font-family: 'Courier New', monospace; max-height: 400px; overflow-y: auto;">
+                                        ${content || 'Document is empty'}
+                                    </div>
+                                </div>
+                            `;
+                        }
+                    } else {
+                        const errorMsg = data.detail || data.message || data.error || 'Failed to open document';
+                        console.error('Open document error:', errorMsg);
+                        alert('Error opening document:\n\n' + errorMsg + '\n\nPlease check:\n- The file path is correct\n- The file exists\n- The file is a valid .docx document\n- You have permission to read the file');
+                    }
+                } catch (error) {
+                    console.error('Error opening document:', error);
+                    alert('Error opening document: ' + error.message + '\n\nPlease check your network connection and try again.');
+                } finally {
+                    wordOpenSubmit.disabled = false;
+                    wordOpenSubmit.textContent = 'Open Document';
+                }
+            });
+        }
+
+        // Get document info
+        if (wordInfoButton) {
+            wordInfoButton.addEventListener('click', async () => {
+                const filePath = prompt('Enter the file path of the document:');
+                if (!filePath) return;
+
+                wordInfoButton.disabled = true;
+                wordInfoButton.textContent = 'Loading...';
+
+                try {
+                    const response = await fetch('http://localhost:8000/api/word/info', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            file_path: filePath
+                        })
+                    });
+
+                    const data = await response.json();
+                    if (response.ok && data.success) {
+                        if (wordDocumentArea) {
+                            const fileSizeKB = (data.file_size / 1024).toFixed(2);
+                            wordDocumentArea.innerHTML = `
+                                <div style="padding: 20px; background: white; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                                    <h3 style="color: #2196F3; margin-bottom: 15px;">📊 Document Information</h3>
+                                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 20px;">
+                                        <div>
+                                            <p style="color: #555; margin-bottom: 5px;"><strong>File Path:</strong></p>
+                                            <p style="color: #333; word-break: break-all;">${data.file_path}</p>
+                                        </div>
+                                        <div>
+                                            <p style="color: #555; margin-bottom: 5px;"><strong>File Size:</strong></p>
+                                            <p style="color: #333;">${fileSizeKB} KB</p>
+                                        </div>
+                                        <div>
+                                            <p style="color: #555; margin-bottom: 5px;"><strong>Paragraphs:</strong></p>
+                                            <p style="color: #333;">${data.paragraph_count || 0}</p>
+                                        </div>
+                                        <div>
+                                            <p style="color: #555; margin-bottom: 5px;"><strong>Tables:</strong></p>
+                                            <p style="color: #333;">${data.table_count || 0}</p>
+                                        </div>
+                                        <div>
+                                            <p style="color: #555; margin-bottom: 5px;"><strong>Sections:</strong></p>
+                                            <p style="color: #333;">${data.section_count || 0}</p>
+                                        </div>
+                                    </div>
+                                    ${data.preview ? `
+                                        <div style="margin-top: 20px; padding: 15px; background: #f5f5f5; border-radius: 4px;">
+                                            <p style="color: #555; margin-bottom: 10px; font-weight: 600;">Preview:</p>
+                                            <p style="color: #333; white-space: pre-wrap; font-family: 'Courier New', monospace;">${data.preview}</p>
+                                        </div>
+                                    ` : ''}
+                                </div>
+                            `;
+                        }
+                    } else {
+                        alert('Error: ' + (data.error || data.detail || 'Failed to get document info'));
+                    }
+                } catch (error) {
+                    console.error('Error getting document info:', error);
+                    alert('Error getting document info: ' + error.message);
+                } finally {
+                    wordInfoButton.disabled = false;
+                    wordInfoButton.textContent = 'Document Info';
+                }
+            });
+        }
 
         // Slack send message functionality
         const slackMessageInput = document.getElementById('slackMessageInput');

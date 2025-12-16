@@ -15,6 +15,7 @@ CONVERSATION_TYPE_MAPPING = {
     "email": "email",
     "app_launch": "app_launch",
     "task": "task",
+    "word": "word",
     "general": "chat",
 }
 
@@ -252,6 +253,7 @@ class ChatWithQADatabase:
             "email": ["email", "compose"],
             "app_launch": ["app", "launch"],
             "task": ["task", "automation"],
+            "word": ["word", "document", "office"],
             "chat": ["general", "chat"],
         }
         return tags_map.get(conv_type, ["general"])

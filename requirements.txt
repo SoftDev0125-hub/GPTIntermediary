@@ -21,3 +21,6 @@ slack_sdk>=3.27.0
 selenium>=4.15.0
 webdriver-manager>=4.0.0
 playwright>=1.40.0
+qrcode>=7.4.2
+Pillow>=10.0.0
+python-docx>=1.1.0

@@ -17,6 +17,7 @@ class Conversation(models.Model):
         ("email", "Email Composition"),
         ("app_launch", "App Launch"),
         ("task", "Task Automation"),
+        ("word", "Word Document"),
         ("mixed", "Mixed Functions"),
     ]
 

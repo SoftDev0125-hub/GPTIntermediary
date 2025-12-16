@@ -10,12 +10,14 @@ from pydantic import BaseModel
 from typing import Optional, List
 import logging
 import os
+import platform
+import sys
 
 from services.email_service import EmailService
 from services.app_launcher import AppLauncher
-from services.whatsapp_service import WhatsAppService
 from services.telegram_service import TelegramService
 from services.slack_service import SlackService
+from services.word_service import WordService
 from models.schemas import (
     SendEmailRequest, 
     EmailReplyRequest, 
@@ -23,8 +25,6 @@ from models.schemas import (
     EmailListResponse,
     OperationResponse,
     UserCredentials,
-    GetWhatsAppMessagesRequest,
-    WhatsAppListResponse,
     GetTelegramMessagesRequest,
     TelegramListResponse,
     SendTelegramMessageRequest,
@@ -32,7 +32,20 @@ from models.schemas import (
     GetSlackMessagesRequest,
     SlackListResponse,
     SendSlackMessageRequest,
-    SendSlackMessageResponse
+    SendSlackMessageResponse,
+    CreateWordDocumentRequest,
+    OpenWordDocumentRequest,
+    AddTextToWordRequest,
+    FormatParagraphRequest,
+    AddHeadingRequest,
+    AddListRequest,
+    SaveWordHTMLRequest,
+    AddTableRequest,
+    FindReplaceRequest,
+    PageSetupRequest,
+    SaveWordDocumentRequest,
+    SaveWordHTMLRequest,
+    WordDocumentInfoResponse
 )
 from pydantic import BaseModel
 
@@ -74,9 +87,9 @@ app.add_middleware(
 # Initialize services
 email_service = EmailService()
 app_launcher = AppLauncher()
-whatsapp_service = WhatsAppService()
 telegram_service = TelegramService()
 slack_service = SlackService()
+word_service = WordService()
 
 
 @app.on_event("startup")
@@ -101,9 +114,9 @@ async def startup_event():
         logger.warning("=" * 70)
     
     await email_service.initialize()
-    await whatsapp_service.initialize()
     await telegram_service.initialize()
     await slack_service.initialize()
+    await word_service.initialize()
     logger.info("Services initialized successfully")
 
 
@@ -112,9 +125,9 @@ async def shutdown_event():
     """Cleanup on shutdown"""
     logger.info("Shutting down ChatGPT Backend Broker...")
     await email_service.cleanup()
-    await whatsapp_service.cleanup()
     await telegram_service.cleanup()
     await slack_service.cleanup()
+    await word_service.cleanup()
 
 
 @app.get("/")
@@ -337,108 +350,6 @@ async def launch_app(request: LaunchAppRequest):
     except Exception as e:
         logger.error(f"Error launching app: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
-@app.post("/api/whatsapp/messages", response_model=WhatsAppListResponse)
-async def get_whatsapp_messages(request: GetWhatsAppMessagesRequest):
-    """
-    Retrieve WhatsApp messages
-    
-    Args:
-        request: Limit for messages to retrieve
-    
-    Returns:
-        List of WhatsApp messages
-    """
-    try:
-        logger.info(f"Fetching {request.limit} WhatsApp messages")
-        messages, total_count = await whatsapp_service.get_messages(
-            limit=request.limit
-        )
-        logger.info(f"Successfully retrieved {len(messages)} WhatsApp messages")
-        return WhatsAppListResponse(
-            success=True,
-            count=len(messages),
-            total_count=total_count,
-            messages=messages
-        )
-    except Exception as e:
-        error_msg = str(e)
-        logger.error(f"Error fetching WhatsApp messages: {error_msg}")
-        import traceback
-        logger.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=error_msg)
-
-
-@app.get("/api/whatsapp/qr-code")
-async def get_whatsapp_qr_code():
-    """
-    Get WhatsApp QR code for scanning (WhatsApp Web for personal accounts)
-    
-    Returns:
-        QR code image (base64) or connection status
-    """
-    try:
-        is_connected, status = await whatsapp_service.check_connection_status()
-        
-        if is_connected:
-            logger.info("WhatsApp is already connected. No QR code needed.")
-            return {
-                "success": True,
-                "connected": True,
-                "qr_code": None,
-                "message": "WhatsApp is already connected. No QR code needed.",
-            }
-        else:
-            # Get QR code for WhatsApp Web
-            try:
-                qr_code = await whatsapp_service.get_qr_code()
-                
-                if qr_code:
-                    logger.info("QR code successfully retrieved")
-                    return {
-                        "success": True,
-                        "connected": False,
-                        "qr_code": qr_code,
-                        "message": "Please scan the QR code with your WhatsApp mobile app to connect.",
-                    }
-                else:
-                    logger.warning(f"QR code extraction returned None. Status: {status}")
-                    return {
-                        "success": False,
-                        "connected": False,
-                        "qr_code": None,
-                        "message": status or "Unable to generate QR code. Please try again. Check backend logs for details.",
-                    }
-            except Exception as e:
-                error_msg = str(e)
-                logger.error(f"Error getting WhatsApp QR code from service: {error_msg}")
-                import traceback
-                logger.error(traceback.format_exc())
-                raise HTTPException(status_code=500, detail=f"Failed to get QR code: {error_msg}")
-    except Exception as e:
-        error_msg = str(e)
-        logger.error(f"Error checking WhatsApp connection status: {error_msg}")
-        raise HTTPException(status_code=500, detail=f"Failed to check WhatsApp status: {error_msg}")
-
-
-@app.get("/api/whatsapp/status")
-async def get_whatsapp_status():
-    """
-    Check WhatsApp connection status
-    
-    Returns:
-        Connection status
-    """
-    try:
-        is_connected, status_message = await whatsapp_service.check_connection_status()
-        return {
-            "success": True,
-            "connected": is_connected,
-            "message": status_message
-        }
-    except Exception as e:
-        logger.error(f"Error checking status: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
 
 @app.post("/api/telegram/messages", response_model=TelegramListResponse)
 async def get_telegram_messages(request: GetTelegramMessagesRequest):
@@ -705,6 +616,707 @@ async def send_slack_message(request: SendSlackMessageRequest):
         raise HTTPException(status_code=500, detail=error_msg)
 
 
+@app.post("/api/word/create", response_model=OperationResponse)
+async def create_word_document(request: CreateWordDocumentRequest):
+    """
+    Create a new Word document
+    
+    Args:
+        request: Document creation details including file path, content, and title
+    
+    Returns:
+        Operation status and file path
+    """
+    try:
+        logger.info(f"Creating Word document: {request.file_path}")
+        result = await word_service.create_document(
+            file_path=request.file_path,
+            content=request.content,
+            title=request.title
+        )
+        
+        if result.get("success"):
+            return OperationResponse(
+                success=True,
+                message=result.get("message", "Document created successfully"),
+                data={"file_path": result.get("file_path")}
+            )
+        else:
+            raise HTTPException(status_code=500, detail=result.get("error", "Failed to create document"))
+    except Exception as e:
+        logger.error(f"Error creating Word document: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/word/open", response_model=OperationResponse)
+async def open_word_document(request: OpenWordDocumentRequest):
+    """
+    Open an existing Word document
+    
+    Args:
+        request: Document path
+    
+    Returns:
+        Document information and content
+    """
+    try:
+        logger.info(f"Opening Word document: {request.file_path}")
+        result = await word_service.open_document(request.file_path)
+        
+        if result.get("success"):
+            return OperationResponse(
+                success=True,
+                message=result.get("message", "Document opened successfully"),
+                data={
+                    "file_path": result.get("file_path"),
+                    "paragraph_count": result.get("paragraph_count"),
+                    "content": result.get("content", "")
+                }
+            )
+        else:
+            raise HTTPException(status_code=404, detail=result.get("error", "Document not found"))
+    except Exception as e:
+        logger.error(f"Error opening Word document: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/word/add-text", response_model=OperationResponse)
+async def add_text_to_word(request: AddTextToWordRequest):
+    """
+    Add text to a Word document with optional formatting
+    
+    Args:
+        request: Text addition details including formatting options
+    
+    Returns:
+        Operation status
+    """
+    try:
+        logger.info(f"Adding text to Word document: {request.file_path}")
+        result = await word_service.add_text(
+            file_path=request.file_path,
+            text=request.text,
+            bold=request.bold,
+            italic=request.italic,
+            underline=request.underline,
+            font_name=request.font_name,
+            font_size=request.font_size,
+            color=request.color
+        )
+        
+        if result.get("success"):
+            return OperationResponse(
+                success=True,
+                message=result.get("message", "Text added successfully")
+            )
+        else:
+            raise HTTPException(status_code=500, detail=result.get("error", "Failed to add text"))
+    except Exception as e:
+        logger.error(f"Error adding text to Word document: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/word/format-paragraph", response_model=OperationResponse)
+async def format_paragraph(request: FormatParagraphRequest):
+    """
+    Format a paragraph in a Word document
+    
+    Args:
+        request: Paragraph formatting details
+    
+    Returns:
+        Operation status
+    """
+    try:
+        logger.info(f"Formatting paragraph {request.paragraph_index} in document: {request.file_path}")
+        result = await word_service.format_paragraph(
+            file_path=request.file_path,
+            paragraph_index=request.paragraph_index,
+            alignment=request.alignment,
+            line_spacing=request.line_spacing,
+            space_before=request.space_before,
+            space_after=request.space_after,
+            left_indent=request.left_indent,
+            right_indent=request.right_indent
+        )
+        
+        if result.get("success"):
+            return OperationResponse(
+                success=True,
+                message=result.get("message", "Paragraph formatted successfully")
+            )
+        else:
+            raise HTTPException(status_code=500, detail=result.get("error", "Failed to format paragraph"))
+    except Exception as e:
+        logger.error(f"Error formatting paragraph: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/word/add-heading", response_model=OperationResponse)
+async def add_heading(request: AddHeadingRequest):
+    """
+    Add a heading to a Word document
+    
+    Args:
+        request: Heading details
+    
+    Returns:
+        Operation status
+    """
+    try:
+        logger.info(f"Adding heading to Word document: {request.file_path}")
+        result = await word_service.add_heading(
+            file_path=request.file_path,
+            text=request.text,
+            level=request.level
+        )
+        
+        if result.get("success"):
+            return OperationResponse(
+                success=True,
+                message=result.get("message", "Heading added successfully")
+            )
+        else:
+            raise HTTPException(status_code=500, detail=result.get("error", "Failed to add heading"))
+    except Exception as e:
+        logger.error(f"Error adding heading: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/word/add-list", response_model=OperationResponse)
+async def add_list(request: AddListRequest):
+    """
+    Add a list (bulleted or numbered) to a Word document
+    
+    Args:
+        request: List details
+    
+    Returns:
+        Operation status
+    """
+    try:
+        logger.info(f"Adding list to Word document: {request.file_path}")
+        result = await word_service.add_list(
+            file_path=request.file_path,
+            items=request.items,
+            numbered=request.numbered
+        )
+        
+        if result.get("success"):
+            return OperationResponse(
+                success=True,
+                message=result.get("message", "List added successfully")
+            )
+        else:
+            raise HTTPException(status_code=500, detail=result.get("error", "Failed to add list"))
+    except Exception as e:
+        logger.error(f"Error adding list: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/word/add-table", response_model=OperationResponse)
+async def add_table(request: AddTableRequest):
+    """
+    Add a table to a Word document
+    
+    Args:
+        request: Table details
+    
+    Returns:
+        Operation status
+    """
+    try:
+        logger.info(f"Adding table to Word document: {request.file_path}")
+        result = await word_service.add_table(
+            file_path=request.file_path,
+            rows=request.rows,
+            cols=request.cols,
+            data=request.data,
+            header_row=request.header_row
+        )
+        
+        if result.get("success"):
+            return OperationResponse(
+                success=True,
+                message=result.get("message", "Table added successfully")
+            )
+        else:
+            raise HTTPException(status_code=500, detail=result.get("error", "Failed to add table"))
+    except Exception as e:
+        logger.error(f"Error adding table: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/word/find-replace", response_model=OperationResponse)
+async def find_replace(request: FindReplaceRequest):
+    """
+    Find and replace text in a Word document
+    
+    Args:
+        request: Find and replace details
+    
+    Returns:
+        Operation status with replacement count
+    """
+    try:
+        logger.info(f"Find and replace in Word document: {request.file_path}")
+        result = await word_service.find_replace(
+            file_path=request.file_path,
+            find_text=request.find_text,
+            replace_text=request.replace_text,
+            replace_all=request.replace_all
+        )
+        
+        if result.get("success"):
+            return OperationResponse(
+                success=True,
+                message=result.get("message", "Find and replace completed"),
+                data={"replacement_count": result.get("replacement_count", 0)}
+            )
+        else:
+            raise HTTPException(status_code=500, detail=result.get("error", "Failed to perform find and replace"))
+    except Exception as e:
+        logger.error(f"Error in find and replace: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/word/page-setup", response_model=OperationResponse)
+async def set_page_setup(request: PageSetupRequest):
+    """
+    Set page setup options for a Word document
+    
+    Args:
+        request: Page setup details
+    
+    Returns:
+        Operation status
+    """
+    try:
+        logger.info(f"Setting page setup for Word document: {request.file_path}")
+        result = await word_service.set_page_setup(
+            file_path=request.file_path,
+            margins=request.margins,
+            orientation=request.orientation,
+            page_size=request.page_size
+        )
+        
+        if result.get("success"):
+            return OperationResponse(
+                success=True,
+                message=result.get("message", "Page setup updated successfully")
+            )
+        else:
+            raise HTTPException(status_code=500, detail=result.get("error", "Failed to update page setup"))
+    except Exception as e:
+        logger.error(f"Error setting page setup: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/word/save-html", response_model=OperationResponse)
+async def save_word_html(request: SaveWordHTMLRequest):
+    """
+    Save HTML content to Word document with formatting preserved
+    
+    Args:
+        request: HTML content and file path
+    
+    Returns:
+        Success status
+    """
+    try:
+        result = await word_service.save_html_content(
+            file_path=request.file_path,
+            html_content=request.html_content
+        )
+        
+        if result["success"]:
+            return OperationResponse(
+                success=True,
+                message=result.get("message", "Document saved successfully")
+            )
+        else:
+            raise HTTPException(status_code=500, detail=result.get("error", "Failed to save document"))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error saving Word HTML: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Failed to save document: {str(e)}")
+
+
+@app.post("/api/word/save", response_model=OperationResponse)
+async def save_word_document(request: SaveWordDocumentRequest):
+    """
+    Save a Word document (or save as a new file)
+    
+    Args:
+        request: Save details
+    
+    Returns:
+        Operation status with file path
+    """
+    try:
+        logger.info(f"Saving Word document: {request.file_path}")
+        result = await word_service.save_document(
+            file_path=request.file_path,
+            new_path=request.new_path
+        )
+        
+        if result.get("success"):
+            return OperationResponse(
+                success=True,
+                message=result.get("message", "Document saved successfully"),
+                data={"file_path": result.get("file_path")}
+            )
+        else:
+            raise HTTPException(status_code=500, detail=result.get("error", "Failed to save document"))
+    except Exception as e:
+        logger.error(f"Error saving Word document: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/word/info", response_model=WordDocumentInfoResponse)
+async def get_word_document_info(request: OpenWordDocumentRequest):
+    """
+    Get information about a Word document
+    
+    Args:
+        request: Document path
+    
+    Returns:
+        Document information
+    """
+    try:
+        logger.info(f"Getting info for Word document: {request.file_path}")
+        result = await word_service.get_document_info(request.file_path)
+        
+        if result.get("success"):
+            return WordDocumentInfoResponse(
+                success=True,
+                file_path=result.get("file_path"),
+                file_size=result.get("file_size"),
+                paragraph_count=result.get("paragraph_count"),
+                table_count=result.get("table_count"),
+                section_count=result.get("section_count"),
+                preview=result.get("preview"),
+                message="Document information retrieved successfully"
+            )
+        else:
+            return WordDocumentInfoResponse(
+                success=False,
+                error=result.get("error", "Failed to get document info")
+            )
+    except Exception as e:
+        logger.error(f"Error getting Word document info: {str(e)}")
+        return WordDocumentInfoResponse(
+            success=False,
+            error=str(e)
+        )
+
+
+def validate_and_resolve_path(path: str, must_exist: bool = True) -> str:
+    """
+    Validate and resolve a file system path with security checks
+    
+    Args:
+        path: The path to validate
+        must_exist: Whether the path must exist
+    
+    Returns:
+        Resolved absolute path
+    
+    Raises:
+        HTTPException: If path is invalid or inaccessible
+    """
+    import os
+    from pathlib import Path
+    
+    if not path or not isinstance(path, str):
+        raise HTTPException(status_code=400, detail="Invalid path provided")
+    
+    # Remove leading/trailing whitespace
+    path = path.strip()
+    
+    if not path:
+        raise HTTPException(status_code=400, detail="Path cannot be empty")
+    
+    # Handle special cases
+    if path == "~" or path.startswith("~/"):
+        path = os.path.expanduser(path)
+    elif path.startswith("~\\"):
+        path = os.path.expanduser(path.replace("\\", "/"))
+    
+    # Resolve relative paths
+    try:
+        if not os.path.isabs(path):
+            # Make relative to current working directory
+            path = os.path.abspath(path)
+        else:
+            # Normalize absolute path
+            path = os.path.normpath(path)
+    except (OSError, ValueError) as e:
+        raise HTTPException(status_code=400, detail=f"Invalid path format: {str(e)}")
+    
+    # Security: Prevent path traversal attempts
+    # Check for dangerous patterns
+    dangerous_patterns = [
+        "..\\",
+        "../",
+        "..",
+        "\\\\",
+        "//",
+    ]
+    
+    normalized_for_check = path.replace("\\", "/").lower()
+    for pattern in dangerous_patterns:
+        if pattern in normalized_for_check and pattern != "..":
+            # Allow single ".." in middle of path but not at start
+            if pattern == ".." and normalized_for_check.count("..") > 1:
+                raise HTTPException(status_code=403, detail="Path traversal detected")
+    
+    # Additional Windows-specific validation
+    if platform.system() == "Windows":
+        # Check for reserved names (CON, PRN, AUX, NUL, COM1-9, LPT1-9)
+        path_parts = path.split(os.sep)
+        for part in path_parts:
+            if part:
+                # Remove extension for check
+                name_without_ext = os.path.splitext(part)[0].upper()
+                reserved_names = [
+                    "CON", "PRN", "AUX", "NUL",
+                    "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+                    "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"
+                ]
+                if name_without_ext in reserved_names:
+                    raise HTTPException(status_code=400, detail=f"Reserved Windows name not allowed: {part}")
+        
+        # Check for invalid characters (but allow ':' for Windows drive letters)
+        invalid_chars = ['<', '>', '"', '|', '?', '*']
+        for char in invalid_chars:
+            if char in path:
+                raise HTTPException(status_code=400, detail=f"Invalid character in path: {char}")
+        
+        # Check for ':' but allow it only as part of Windows drive letter (e.g., C:)
+        if ':' in path:
+            import re
+            # Allow ':' only if it's part of a Windows drive letter (single letter + :)
+            # Pattern: C: or C:\ or C:/ or C:\Users\...
+            # Check if it matches drive letter pattern at the start (C: followed by optional separator)
+            if re.match(r'^[A-Za-z]:', path):
+                # Valid Windows drive letter, allow it
+                pass
+            else:
+                # If colon exists but not as drive letter, it's invalid
+                colon_pos = path.find(':')
+                if colon_pos != 1 or not path[0].isalpha():
+                    # Multiple colons or colon not at position 1 is invalid
+                    if path.count(':') > 1:
+                        raise HTTPException(status_code=400, detail="Invalid use of ':' in path")
+                    raise HTTPException(status_code=400, detail="Invalid drive letter format")
+    
+    # Check if path exists (if required)
+    if must_exist:
+        try:
+            if not os.path.exists(path):
+                raise HTTPException(status_code=404, detail=f"Path not found: {path}")
+            
+            # Check if accessible
+            if not os.access(path, os.R_OK):
+                raise HTTPException(status_code=403, detail=f"Path not accessible: {path}")
+        except PermissionError:
+            raise HTTPException(status_code=403, detail=f"Permission denied: {path}")
+        except OSError as e:
+            raise HTTPException(status_code=500, detail=f"Error accessing path: {str(e)}")
+    
+    return path
+
+
+@app.get("/api/word/list-directory")
+async def list_directory(path: str = None):
+    """
+    List files and directories in a given path with robust validation
+    
+    Args:
+        path: Directory path to list (defaults to user's Documents folder if not provided)
+    
+    Returns:
+        List of files and directories with their types
+    """
+    try:
+        import os
+        from pathlib import Path
+        
+        # Default to user's Documents folder if no path provided
+        if not path:
+            home_dir = os.path.expanduser("~")
+            documents_path = os.path.join(home_dir, "Documents")
+            # If Documents doesn't exist, try to create it or use home directory
+            if not os.path.exists(documents_path):
+                try:
+                    os.makedirs(documents_path, exist_ok=True)
+                except (OSError, PermissionError) as e:
+                    logger.warning(f"Could not create Documents folder: {e}, using home directory")
+                    documents_path = home_dir
+            path = documents_path
+        
+        # Validate and resolve path
+        try:
+            path = validate_and_resolve_path(path, must_exist=True)
+        except HTTPException as e:
+            logger.error(f"Path validation error: {e.detail}")
+            raise
+        except Exception as e:
+            logger.error(f"Error validating path: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
+            raise HTTPException(status_code=400, detail=f"Invalid path: {str(e)}")
+        
+        # Ensure it's a directory
+        if not os.path.isdir(path):
+            raise HTTPException(status_code=400, detail=f"Path is not a directory: {path}")
+        
+        items = []
+        try:
+            for item in os.listdir(path):
+                item_path = os.path.join(path, item)
+                try:
+                    is_dir = os.path.isdir(item_path)
+                    stat_info = os.stat(item_path)
+                    size = stat_info.st_size if not is_dir else None
+                    modified_time = stat_info.st_mtime
+                    items.append({
+                        "name": item,
+                        "path": item_path,
+                        "is_directory": is_dir,
+                        "size": size,
+                        "extension": os.path.splitext(item)[1].lower() if not is_dir else None,
+                        "modified_time": modified_time
+                    })
+                except (OSError, PermissionError):
+                    # Skip items we can't access
+                    continue
+            
+            # Sort: directories first, then files, both alphabetically
+            items.sort(key=lambda x: (not x["is_directory"], x["name"].lower()))
+            
+            # Get parent path (only if not root)
+            parent_path = None
+            dirname = os.path.dirname(path)
+            if dirname and dirname != path:
+                parent_path = dirname
+            
+            return {
+                "success": True,
+                "path": path,
+                "parent_path": parent_path,
+                "home_path": os.path.expanduser("~"),  # Add home path for Quick Access
+                "items": items
+            }
+        except PermissionError:
+            raise HTTPException(status_code=403, detail=f"Permission denied: {path}")
+    except Exception as e:
+        logger.error(f"Error listing directory: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/word/select-folder")
+async def select_folder(initial_path: str = None):
+    """
+    Open native Windows folder picker dialog using a subprocess
+    
+    Args:
+        initial_path: Optional initial folder path to start from
+    
+    Returns:
+        Selected folder path or None if cancelled
+    """
+    try:
+        if platform.system() != "Windows":
+            raise HTTPException(status_code=400, detail="Folder picker is only available on Windows")
+        
+        import subprocess
+        import json
+        import tempfile
+        
+        # Create a temporary Python script to show the folder picker
+        script_content = """import tkinter as tk
+from tkinter import filedialog
+import sys
+import json
+import os
+
+try:
+    root = tk.Tk()
+    root.withdraw()  # Hide the main window
+    root.attributes('-topmost', True)  # Bring to front
+    
+    initial_path = sys.argv[1] if len(sys.argv) > 1 and sys.argv[1] != 'None' else None
+    
+    if initial_path and os.path.exists(initial_path) and os.path.isdir(initial_path):
+        folder_path = filedialog.askdirectory(initialdir=initial_path, title="Select Folder")
+    else:
+        folder_path = filedialog.askdirectory(title="Select Folder")
+    
+    result = {
+        "success": folder_path is not None and folder_path != "",
+        "folder_path": folder_path if folder_path else None,
+        "cancelled": folder_path is None or folder_path == ""
+    }
+    
+    print(json.dumps(result))
+    root.destroy()
+except Exception as e:
+    result = {
+        "success": False,
+        "error": str(e)
+    }
+    print(json.dumps(result))
+    sys.exit(1)
+"""
+        
+        # Write script to temp file
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False, encoding='utf-8') as f:
+            f.write(script_content)
+            script_path = f.name
+        
+        try:
+            # Run the script
+            cmd = [sys.executable, script_path]
+            if initial_path:
+                cmd.append(initial_path)
+            else:
+                cmd.append('None')
+            
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=300,  # 5 minute timeout
+                creationflags=subprocess.CREATE_NO_WINDOW if platform.system() == "Windows" else 0
+            )
+            
+            if result.returncode == 0 and result.stdout:
+                data = json.loads(result.stdout.strip())
+                return data
+            else:
+                error_msg = result.stderr or "Unknown error"
+                raise Exception(f"Folder picker script failed: {error_msg}")
+                
+        finally:
+            # Clean up temp file
+            try:
+                os.unlink(script_path)
+            except:
+                pass
+                
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in select_folder: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to show folder picker: {str(e)}")
+
+
 @app.get("/api/chatgpt/functions")
 async def get_chatgpt_functions():
     """
@@ -715,6 +1327,7 @@ async def get_chatgpt_functions():
     """
     from config.chatgpt_functions import CHATGPT_FUNCTIONS
     return CHATGPT_FUNCTIONS
+
 
 
 if __name__ == "__main__":
