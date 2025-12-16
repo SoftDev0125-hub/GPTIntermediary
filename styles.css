@@ -1928,6 +1928,39 @@ body::before {
     box-shadow: 0 0 0 2px rgba(76, 175, 80, 0.2);
 }
 
+/* Table editing styles */
+.word-table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 10px 0;
+    cursor: pointer;
+}
+
+.word-table td,
+.word-table th {
+    border: 1px solid #000;
+    padding: 8px;
+    min-width: 50px;
+    position: relative;
+}
+
+.word-table td:hover,
+.word-table th:hover {
+    background-color: #f0f0f0;
+}
+
+.table-cell-selected {
+    background-color: #b3d9ff !important;
+    outline: 2px solid #0066cc;
+    outline-offset: -2px;
+}
+
+.word-table td:focus,
+.word-table th:focus {
+    outline: 2px solid #0066cc;
+    outline-offset: -2px;
+}
+
 .word-modal {
     display: none;
     position: fixed;

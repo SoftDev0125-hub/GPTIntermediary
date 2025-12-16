@@ -1963,17 +1963,24 @@
                 wordDocumentArea.innerHTML = `
                     <div class="word-editor-container">
                         <div class="word-editor-toolbar">
+                            <!-- File Operations -->
                             <div class="word-editor-toolbar-group">
-                                <button class="word-editor-btn" id="wordEditorBold" title="Bold (Ctrl+B)">
-                                    <strong>B</strong>
-                                </button>
-                                <button class="word-editor-btn" id="wordEditorItalic" title="Italic (Ctrl+I)">
-                                    <em>I</em>
-                                </button>
-                                <button class="word-editor-btn" id="wordEditorUnderline" title="Underline (Ctrl+U)">
-                                    <u>U</u>
-                                </button>
+                                <button class="word-editor-btn" id="wordEditorNew" title="New Document">📄 New</button>
+                                <button class="word-editor-btn" id="wordEditorOpen" title="Open Document">📂 Open</button>
+                                <button class="word-editor-btn word-editor-btn-primary" id="wordEditorSave" title="Save (Ctrl+S)">💾 Save</button>
                             </div>
+                            
+                            <!-- Text Formatting -->
+                            <div class="word-editor-toolbar-group">
+                                <button class="word-editor-btn" id="wordEditorBold" title="Bold (Ctrl+B)"><strong>B</strong></button>
+                                <button class="word-editor-btn" id="wordEditorItalic" title="Italic (Ctrl+I)"><em>I</em></button>
+                                <button class="word-editor-btn" id="wordEditorUnderline" title="Underline (Ctrl+U)"><u>U</u></button>
+                                <button class="word-editor-btn" id="wordEditorStrikethrough" title="Strikethrough"><s>S</s></button>
+                                <button class="word-editor-btn" id="wordEditorSubscript" title="Subscript">x₂</button>
+                                <button class="word-editor-btn" id="wordEditorSuperscript" title="Superscript">x²</button>
+                            </div>
+                            
+                            <!-- Font Controls -->
                             <div class="word-editor-toolbar-group">
                                 <select class="word-editor-select" id="wordEditorFontSize" title="Font Size">
                                     <option value="8">8</option>
@@ -1988,6 +1995,8 @@
                                     <option value="24">24</option>
                                     <option value="28">28</option>
                                     <option value="36">36</option>
+                                    <option value="48">48</option>
+                                    <option value="72">72</option>
                                 </select>
                                 <select class="word-editor-select" id="wordEditorFontFamily" title="Font Family">
                                     <option value="Arial">Arial</option>
@@ -1996,17 +2005,66 @@
                                     <option value="Courier New">Courier New</option>
                                     <option value="Verdana">Verdana</option>
                                     <option value="Georgia">Georgia</option>
+                                    <option value="Comic Sans MS">Comic Sans MS</option>
+                                    <option value="Impact">Impact</option>
+                                    <option value="Trebuchet MS">Trebuchet MS</option>
+                                    <option value="Tahoma">Tahoma</option>
                                 </select>
+                                <input type="color" id="wordEditorTextColor" title="Text Color" value="#000000" style="width: 40px; height: 28px; border: 1px solid #ddd; border-radius: 4px; cursor: pointer;">
+                                <button class="word-editor-btn" id="wordEditorHighlight" title="Highlight">🖍️</button>
                             </div>
+                            
+                            <!-- Paragraph Formatting -->
                             <div class="word-editor-toolbar-group">
                                 <button class="word-editor-btn" id="wordEditorAlignLeft" title="Align Left">⬅</button>
                                 <button class="word-editor-btn" id="wordEditorAlignCenter" title="Align Center">⬌</button>
                                 <button class="word-editor-btn" id="wordEditorAlignRight" title="Align Right">➡</button>
+                                <button class="word-editor-btn" id="wordEditorAlignJustify" title="Justify">⬌⬌</button>
+                                <button class="word-editor-btn" id="wordEditorBullets" title="Bullets">• List</button>
+                                <button class="word-editor-btn" id="wordEditorNumbering" title="Numbering">1. List</button>
+                                <button class="word-editor-btn" id="wordEditorIndentDecrease" title="Decrease Indent">⫸</button>
+                                <button class="word-editor-btn" id="wordEditorIndentIncrease" title="Increase Indent">⫷</button>
                             </div>
-                            <div class="word-editor-toolbar-group" style="margin-left: auto;">
-                                <button class="word-editor-btn word-editor-btn-primary" id="wordEditorSave" title="Save (Ctrl+S)">
-                                    💾 Save
-                                </button>
+                            
+                            <!-- Insert Options -->
+                            <div class="word-editor-toolbar-group">
+                                <button class="word-editor-btn" id="wordEditorInsertTable" title="Insert Table">⊞ Table</button>
+                                <button class="word-editor-btn" id="wordEditorInsertImage" title="Insert Image">🖼️ Image</button>
+                                <button class="word-editor-btn" id="wordEditorInsertLink" title="Insert Hyperlink">🔗 Link</button>
+                                <button class="word-editor-btn" id="wordEditorInsertPageBreak" title="Page Break">📄 Page</button>
+                            </div>
+                            
+                            <!-- Table Operations (shown when table is selected) -->
+                            <div class="word-editor-toolbar-group" id="wordTableToolbar" style="display: none;">
+                                <button class="word-editor-btn" id="wordTableInsertRowAbove" title="Insert Row Above">↑ Row</button>
+                                <button class="word-editor-btn" id="wordTableInsertRowBelow" title="Insert Row Below">↓ Row</button>
+                                <button class="word-editor-btn" id="wordTableDeleteRow" title="Delete Row">🗑️ Row</button>
+                                <button class="word-editor-btn" id="wordTableInsertColumnLeft" title="Insert Column Left">← Col</button>
+                                <button class="word-editor-btn" id="wordTableInsertColumnRight" title="Insert Column Right">→ Col</button>
+                                <button class="word-editor-btn" id="wordTableDeleteColumn" title="Delete Column">🗑️ Col</button>
+                                <button class="word-editor-btn" id="wordTableMergeCells" title="Merge Cells">🔗 Merge</button>
+                                <button class="word-editor-btn" id="wordTableSplitCells" title="Split Cells">✂️ Split</button>
+                                <button class="word-editor-btn" id="wordTableDeleteTable" title="Delete Table">🗑️ Table</button>
+                            </div>
+                            
+                            <!-- Headings -->
+                            <div class="word-editor-toolbar-group">
+                                <select class="word-editor-select" id="wordEditorHeading" title="Heading Style" style="width: 120px;">
+                                    <option value="">Normal</option>
+                                    <option value="h1">Heading 1</option>
+                                    <option value="h2">Heading 2</option>
+                                    <option value="h3">Heading 3</option>
+                                    <option value="h4">Heading 4</option>
+                                    <option value="h5">Heading 5</option>
+                                    <option value="h6">Heading 6</option>
+                                </select>
+                            </div>
+                            
+                            <!-- Document Tools -->
+                            <div class="word-editor-toolbar-group">
+                                <button class="word-editor-btn" id="wordEditorFindReplace" title="Find & Replace">🔍 Find</button>
+                                <button class="word-editor-btn" id="wordEditorWordCount" title="Word Count">📊 Count</button>
+                                <button class="word-editor-btn" id="wordEditorPageSetup" title="Page Setup">📐 Setup</button>
                             </div>
                         </div>
                         <div class="word-editor-header">
@@ -2111,13 +2169,728 @@
                 });
             }
 
+            // Additional formatting buttons
+            const strikethroughBtn = document.getElementById('wordEditorStrikethrough');
+            const subscriptBtn = document.getElementById('wordEditorSubscript');
+            const superscriptBtn = document.getElementById('wordEditorSuperscript');
+            const textColorInput = document.getElementById('wordEditorTextColor');
+            const highlightBtn = document.getElementById('wordEditorHighlight');
+            const alignJustifyBtn = document.getElementById('wordEditorAlignJustify');
+            const bulletsBtn = document.getElementById('wordEditorBullets');
+            const numberingBtn = document.getElementById('wordEditorNumbering');
+            const indentDecreaseBtn = document.getElementById('wordEditorIndentDecrease');
+            const indentIncreaseBtn = document.getElementById('wordEditorIndentIncrease');
+            const headingSelect = document.getElementById('wordEditorHeading');
+            const insertTableBtn = document.getElementById('wordEditorInsertTable');
+            const insertImageBtn = document.getElementById('wordEditorInsertImage');
+            const insertLinkBtn = document.getElementById('wordEditorInsertLink');
+            const insertPageBreakBtn = document.getElementById('wordEditorInsertPageBreak');
+            const findReplaceBtn = document.getElementById('wordEditorFindReplace');
+            const wordCountBtn = document.getElementById('wordEditorWordCount');
+            const pageSetupBtn = document.getElementById('wordEditorPageSetup');
+            const newDocBtn = document.getElementById('wordEditorNew');
+            const openDocBtn = document.getElementById('wordEditorOpen');
+
+            // Strikethrough
+            if (strikethroughBtn && editorContent) {
+                strikethroughBtn.addEventListener('click', () => {
+                    document.execCommand('strikeThrough', false, null);
+                    editorContent.focus();
+                });
+            }
+
+            // Subscript
+            if (subscriptBtn && editorContent) {
+                subscriptBtn.addEventListener('click', () => {
+                    document.execCommand('subscript', false, null);
+                    editorContent.focus();
+                });
+            }
+
+            // Superscript
+            if (superscriptBtn && editorContent) {
+                superscriptBtn.addEventListener('click', () => {
+                    document.execCommand('superscript', false, null);
+                    editorContent.focus();
+                });
+            }
+
+            // Text color
+            if (textColorInput && editorContent) {
+                textColorInput.addEventListener('change', (e) => {
+                    document.execCommand('foreColor', false, e.target.value);
+                    editorContent.focus();
+                });
+            }
+
+            // Highlight
+            if (highlightBtn && editorContent) {
+                highlightBtn.addEventListener('click', () => {
+                    const color = prompt('Enter highlight color (e.g., yellow, #FFFF00):', 'yellow');
+                    if (color) {
+                        document.execCommand('backColor', false, color);
+                    }
+                    editorContent.focus();
+                });
+            }
+
+            // Justify alignment
+            if (alignJustifyBtn && editorContent) {
+                alignJustifyBtn.addEventListener('click', () => {
+                    document.execCommand('justifyFull', false, null);
+                    editorContent.focus();
+                });
+            }
+
+            // Bullets
+            if (bulletsBtn && editorContent) {
+                bulletsBtn.addEventListener('click', () => {
+                    document.execCommand('insertUnorderedList', false, null);
+                    editorContent.focus();
+                });
+            }
+
+            // Numbering
+            if (numberingBtn && editorContent) {
+                numberingBtn.addEventListener('click', () => {
+                    document.execCommand('insertOrderedList', false, null);
+                    editorContent.focus();
+                });
+            }
+
+            // Indent decrease
+            if (indentDecreaseBtn && editorContent) {
+                indentDecreaseBtn.addEventListener('click', () => {
+                    document.execCommand('outdent', false, null);
+                    editorContent.focus();
+                });
+            }
+
+            // Indent increase
+            if (indentIncreaseBtn && editorContent) {
+                indentIncreaseBtn.addEventListener('click', () => {
+                    document.execCommand('indent', false, null);
+                    editorContent.focus();
+                });
+            }
+
+            // Heading style
+            if (headingSelect && editorContent) {
+                headingSelect.addEventListener('change', (e) => {
+                    const heading = e.target.value;
+                    if (heading) {
+                        document.execCommand('formatBlock', false, `<${heading}>`);
+                    } else {
+                        document.execCommand('formatBlock', false, '<p>');
+                    }
+                    editorContent.focus();
+                });
+            }
+
+            // Store currently selected table
+            let currentSelectedTable = null;
+            
+            // Table editing functions
+            function setupTableEditing(table) {
+                if (!table) return;
+                table.className = 'word-table';
+                
+                // Add click handler to show table toolbar
+                table.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    showTableToolbar(table);
+                });
+                
+                // Add cell selection
+                const cells = table.querySelectorAll('td, th');
+                cells.forEach(cell => {
+                    // Regular click - single select (unless Ctrl/Shift is held)
+                    cell.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        if (!e.ctrlKey && !e.metaKey && !e.shiftKey) {
+                            // Clear previous selection if not multi-selecting
+                            cells.forEach(c => c.classList.remove('table-cell-selected'));
+                            // Select current cell
+                            cell.classList.add('table-cell-selected');
+                        }
+                        showTableToolbar(table);
+                    });
+                    
+                    // Ctrl+Click or Cmd+Click for multi-select toggle
+                    cell.addEventListener('mousedown', (e) => {
+                        if (e.ctrlKey || e.metaKey) {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            cell.classList.toggle('table-cell-selected');
+                            showTableToolbar(table);
+                        } else if (e.shiftKey) {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            // Select range from last selected cell to current
+                            const allCells = Array.from(table.querySelectorAll('td, th'));
+                            const selectedCells = Array.from(table.querySelectorAll('.table-cell-selected'));
+                            const lastSelected = selectedCells[selectedCells.length - 1];
+                            
+                            if (lastSelected && lastSelected !== cell) {
+                                const startIndex = allCells.indexOf(lastSelected);
+                                const endIndex = allCells.indexOf(cell);
+                                const minIndex = Math.min(startIndex, endIndex);
+                                const maxIndex = Math.max(startIndex, endIndex);
+                                
+                                // Select all cells in range
+                                for (let i = minIndex; i <= maxIndex; i++) {
+                                    allCells[i].classList.add('table-cell-selected');
+                                }
+                            } else {
+                                cell.classList.add('table-cell-selected');
+                            }
+                            showTableToolbar(table);
+                        }
+                    });
+                });
+            }
+            
+            // Show table toolbar when table is selected
+            function showTableToolbar(table) {
+                const tableToolbar = document.getElementById('wordTableToolbar');
+                if (tableToolbar) {
+                    tableToolbar.style.display = 'flex';
+                    currentSelectedTable = table;
+                }
+            }
+            
+            // Hide table toolbar
+            function hideTableToolbar() {
+                const tableToolbar = document.getElementById('wordTableToolbar');
+                if (tableToolbar) {
+                    tableToolbar.style.display = 'none';
+                }
+                currentSelectedTable = null;
+            }
+            
+            // Get selected cell
+            function getSelectedCell() {
+                if (!currentSelectedTable) return null;
+                const selected = currentSelectedTable.querySelector('.table-cell-selected');
+                return selected;
+            }
+            
+            // Get selected cells (for merge operations)
+            function getSelectedCells() {
+                if (!currentSelectedTable) return [];
+                return Array.from(currentSelectedTable.querySelectorAll('.table-cell-selected'));
+            }
+            
+            // Insert table
+            if (insertTableBtn && editorContent) {
+                insertTableBtn.addEventListener('click', () => {
+                    const rows = prompt('Number of rows:', '3');
+                    const cols = prompt('Number of columns:', '3');
+                    if (rows && cols) {
+                        const table = document.createElement('table');
+                        table.className = 'word-table';
+                        table.style.border = '1px solid #000';
+                        table.style.borderCollapse = 'collapse';
+                        table.style.width = '100%';
+                        table.style.margin = '10px 0';
+                        table.contentEditable = 'true';
+                        for (let i = 0; i < parseInt(rows); i++) {
+                            const tr = document.createElement('tr');
+                            for (let j = 0; j < parseInt(cols); j++) {
+                                const td = document.createElement('td');
+                                td.style.border = '1px solid #000';
+                                td.style.padding = '8px';
+                                td.style.minWidth = '50px';
+                                td.innerHTML = '&nbsp;';
+                                tr.appendChild(td);
+                            }
+                            table.appendChild(tr);
+                        }
+                        const selection = window.getSelection();
+                        if (selection.rangeCount > 0) {
+                            selection.getRangeAt(0).insertNode(table);
+                        } else {
+                            editorContent.appendChild(table);
+                        }
+                        setupTableEditing(table);
+                        editorContent.focus();
+                    }
+                });
+            }
+            
+            // Table operation handlers
+            const tableInsertRowAbove = document.getElementById('wordTableInsertRowAbove');
+            const tableInsertRowBelow = document.getElementById('wordTableInsertRowBelow');
+            const tableDeleteRow = document.getElementById('wordTableDeleteRow');
+            const tableInsertColumnLeft = document.getElementById('wordTableInsertColumnLeft');
+            const tableInsertColumnRight = document.getElementById('wordTableInsertColumnRight');
+            const tableDeleteColumn = document.getElementById('wordTableDeleteColumn');
+            const tableMergeCells = document.getElementById('wordTableMergeCells');
+            const tableSplitCells = document.getElementById('wordTableSplitCells');
+            const tableDeleteTable = document.getElementById('wordTableDeleteTable');
+            
+            // Insert row above
+            if (tableInsertRowAbove) {
+                tableInsertRowAbove.addEventListener('click', () => {
+                    const cell = getSelectedCell();
+                    if (cell && currentSelectedTable) {
+                        const row = cell.parentElement;
+                        const newRow = row.cloneNode(true);
+                        // Clear cell contents
+                        newRow.querySelectorAll('td, th').forEach(td => {
+                            td.innerHTML = '&nbsp;';
+                            td.classList.remove('table-cell-selected');
+                            td.removeAttribute('rowspan');
+                            td.removeAttribute('colspan');
+                        });
+                        row.parentElement.insertBefore(newRow, row);
+                        setupTableEditing(currentSelectedTable);
+                        editorContent.focus();
+                    }
+                });
+            }
+            
+            // Insert row below
+            if (tableInsertRowBelow) {
+                tableInsertRowBelow.addEventListener('click', () => {
+                    const cell = getSelectedCell();
+                    if (cell && currentSelectedTable) {
+                        const row = cell.parentElement;
+                        const newRow = row.cloneNode(true);
+                        // Clear cell contents
+                        newRow.querySelectorAll('td, th').forEach(td => {
+                            td.innerHTML = '&nbsp;';
+                            td.classList.remove('table-cell-selected');
+                            td.removeAttribute('rowspan');
+                            td.removeAttribute('colspan');
+                        });
+                        row.parentElement.insertBefore(newRow, row.nextSibling);
+                        setupTableEditing(currentSelectedTable);
+                        editorContent.focus();
+                    }
+                });
+            }
+            
+            // Delete row
+            if (tableDeleteRow) {
+                tableDeleteRow.addEventListener('click', () => {
+                    const cell = getSelectedCell();
+                    if (cell && currentSelectedTable) {
+                        const row = cell.parentElement;
+                        if (currentSelectedTable.rows.length > 1) {
+                            row.remove();
+                            setupTableEditing(currentSelectedTable);
+                            editorContent.focus();
+                        } else {
+                            alert('Cannot delete the last row. Delete the table instead.');
+                        }
+                    }
+                });
+            }
+            
+            // Insert column left
+            if (tableInsertColumnLeft) {
+                tableInsertColumnLeft.addEventListener('click', () => {
+                    const cell = getSelectedCell();
+                    if (cell && currentSelectedTable) {
+                        const cellIndex = Array.from(cell.parentElement.cells).indexOf(cell);
+                        const rows = currentSelectedTable.rows;
+                        for (let i = 0; i < rows.length; i++) {
+                            const newCell = cell.cloneNode(true);
+                            newCell.innerHTML = '&nbsp;';
+                            newCell.classList.remove('table-cell-selected');
+                            newCell.removeAttribute('rowspan');
+                            newCell.removeAttribute('colspan');
+                            rows[i].insertBefore(newCell, rows[i].cells[cellIndex]);
+                        }
+                        setupTableEditing(currentSelectedTable);
+                        editorContent.focus();
+                    }
+                });
+            }
+            
+            // Insert column right
+            if (tableInsertColumnRight) {
+                tableInsertColumnRight.addEventListener('click', () => {
+                    const cell = getSelectedCell();
+                    if (cell && currentSelectedTable) {
+                        const cellIndex = Array.from(cell.parentElement.cells).indexOf(cell);
+                        const rows = currentSelectedTable.rows;
+                        for (let i = 0; i < rows.length; i++) {
+                            const newCell = cell.cloneNode(true);
+                            newCell.innerHTML = '&nbsp;';
+                            newCell.classList.remove('table-cell-selected');
+                            newCell.removeAttribute('rowspan');
+                            newCell.removeAttribute('colspan');
+                            if (rows[i].cells[cellIndex + 1]) {
+                                rows[i].insertBefore(newCell, rows[i].cells[cellIndex + 1]);
+                            } else {
+                                rows[i].appendChild(newCell);
+                            }
+                        }
+                        setupTableEditing(currentSelectedTable);
+                        editorContent.focus();
+                    }
+                });
+            }
+            
+            // Delete column
+            if (tableDeleteColumn) {
+                tableDeleteColumn.addEventListener('click', () => {
+                    const cell = getSelectedCell();
+                    if (cell && currentSelectedTable) {
+                        const cellIndex = Array.from(cell.parentElement.cells).indexOf(cell);
+                        const rows = currentSelectedTable.rows;
+                        if (rows[0].cells.length > 1) {
+                            for (let i = 0; i < rows.length; i++) {
+                                if (rows[i].cells[cellIndex]) {
+                                    rows[i].cells[cellIndex].remove();
+                                }
+                            }
+                            setupTableEditing(currentSelectedTable);
+                            editorContent.focus();
+                        } else {
+                            alert('Cannot delete the last column. Delete the table instead.');
+                        }
+                    }
+                });
+            }
+            
+            // Merge cells
+            if (tableMergeCells) {
+                tableMergeCells.addEventListener('click', () => {
+                    const selectedCells = getSelectedCells();
+                    console.log('Selected cells for merge:', selectedCells.length);
+                    
+                    if (selectedCells.length < 2) {
+                        alert('Please select at least 2 cells to merge.\n\nTip: Click a cell, then Ctrl+Click (or Cmd+Click on Mac) on additional cells to select multiple cells.');
+                        return;
+                    }
+                    
+                    if (!currentSelectedTable) {
+                        alert('No table selected. Please click on a table cell first.');
+                        return;
+                    }
+                    
+                    try {
+                        // Sort cells by row and column position
+                        const rows = Array.from(currentSelectedTable.rows);
+                        const sortedCells = selectedCells.sort((a, b) => {
+                            const rowA = rows.indexOf(a.parentElement);
+                            const rowB = rows.indexOf(b.parentElement);
+                            if (rowA !== rowB) return rowA - rowB;
+                            const colA = Array.from(a.parentElement.cells).indexOf(a);
+                            const colB = Array.from(b.parentElement.cells).indexOf(b);
+                            return colA - colB;
+                        });
+                        
+                        // Get the first cell (top-left) - this will be the merged cell
+                        const firstCell = sortedCells[0];
+                        const firstRow = firstCell.parentElement;
+                        
+                        // Collect content from all selected cells
+                        let mergedContent = '';
+                        sortedCells.forEach((cell, index) => {
+                            const content = cell.innerHTML.trim();
+                            if (content && content !== '&nbsp;' && content !== '') {
+                                if (mergedContent) mergedContent += ' ';
+                                mergedContent += content;
+                            }
+                        });
+                        if (!mergedContent) mergedContent = '&nbsp;';
+                        
+                        // Calculate rowspan and colspan
+                        const rowIndices = sortedCells.map(c => rows.indexOf(c.parentElement));
+                        const minRow = Math.min(...rowIndices);
+                        const maxRow = Math.max(...rowIndices);
+                        const rowspan = maxRow - minRow + 1;
+                        
+                        const colIndices = sortedCells.map(c => {
+                            const rowCells = Array.from(c.parentElement.cells);
+                            return rowCells.indexOf(c);
+                        });
+                        const minCol = Math.min(...colIndices);
+                        const maxCol = Math.max(...colIndices);
+                        const colspan = maxCol - minCol + 1;
+                        
+                        console.log(`Merging ${selectedCells.length} cells: rowspan=${rowspan}, colspan=${colspan}`);
+                        
+                        // Store which cells to remove (all except first)
+                        const cellsToRemove = sortedCells.slice(1);
+                        
+                        // Set merged cell properties BEFORE removing other cells
+                        firstCell.innerHTML = mergedContent;
+                        firstCell.setAttribute('rowspan', rowspan);
+                        firstCell.setAttribute('colspan', colspan);
+                        firstCell.rowSpan = rowspan;
+                        firstCell.colSpan = colspan;
+                        
+                        // Remove other selected cells in reverse order to avoid index issues
+                        cellsToRemove.reverse().forEach(cell => {
+                            try {
+                                // Check if cell still exists and is not the first cell
+                                if (cell && cell !== firstCell && cell.parentElement) {
+                                    // Check if cell is not already covered by rowspan/colspan
+                                    const cellRow = cell.parentElement;
+                                    const cellColIndex = Array.from(cellRow.cells).indexOf(cell);
+                                    
+                                    // Only remove if it's a direct child and not already merged
+                                    if (cellRow.contains(cell) && cellColIndex !== -1) {
+                                        cell.remove();
+                                    }
+                                }
+                            } catch (e) {
+                                console.warn('Could not remove cell:', e);
+                            }
+                        });
+                        
+                        // Clear all selections and re-select the merged cell
+                        currentSelectedTable.querySelectorAll('.table-cell-selected').forEach(c => {
+                            c.classList.remove('table-cell-selected');
+                        });
+                        firstCell.classList.add('table-cell-selected');
+                        
+                        // Re-setup table editing to refresh event handlers
+                        setupTableEditing(currentSelectedTable);
+                        editorContent.focus();
+                        
+                        console.log('Merge completed successfully');
+                    } catch (error) {
+                        console.error('Error merging cells:', error);
+                        alert('Error merging cells: ' + error.message);
+                    }
+                });
+            }
+            
+            // Split cells
+            if (tableSplitCells) {
+                tableSplitCells.addEventListener('click', () => {
+                    const cell = getSelectedCell();
+                    if (cell && currentSelectedTable) {
+                        const rowspan = cell.rowSpan || 1;
+                        const colspan = cell.colSpan || 1;
+                        
+                        if (rowspan === 1 && colspan === 1) {
+                            alert('This cell is not merged. Select a merged cell to split.');
+                            return;
+                        }
+                        
+                        const rows = parseInt(prompt('Number of rows after split:', rowspan.toString())) || rowspan;
+                        const cols = parseInt(prompt('Number of columns after split:', colspan.toString())) || colspan;
+                        
+                        const cellContent = cell.innerHTML;
+                        const row = cell.parentElement;
+                        const cellIndex = Array.from(row.cells).indexOf(cell);
+                        
+                        // Remove the merged cell
+                        cell.remove();
+                        
+                        // Create new cells
+                        for (let r = 0; r < rows; r++) {
+                            let currentRow = row;
+                            if (r > 0) {
+                                // Create new row if needed
+                                currentRow = row.cloneNode(true);
+                                currentRow.querySelectorAll('td, th').forEach(td => {
+                                    td.innerHTML = '&nbsp;';
+                                    td.classList.remove('table-cell-selected');
+                                    td.removeAttribute('rowspan');
+                                    td.removeAttribute('colspan');
+                                });
+                                row.parentElement.insertBefore(currentRow, row.nextSibling);
+                            }
+                            
+                            for (let c = 0; c < cols; c++) {
+                                const newCell = document.createElement('td');
+                                newCell.style.border = '1px solid #000';
+                                newCell.style.padding = '8px';
+                                newCell.style.minWidth = '50px';
+                                if (r === 0 && c === 0) {
+                                    newCell.innerHTML = cellContent;
+                                } else {
+                                    newCell.innerHTML = '&nbsp;';
+                                }
+                                if (c === 0) {
+                                    currentRow.insertBefore(newCell, currentRow.cells[cellIndex + c] || null);
+                                } else {
+                                    const prevCell = currentRow.cells[cellIndex + c - 1];
+                                    if (prevCell) {
+                                        currentRow.insertBefore(newCell, prevCell.nextSibling);
+                                    } else {
+                                        currentRow.appendChild(newCell);
+                                    }
+                                }
+                            }
+                        }
+                        
+                        setupTableEditing(currentSelectedTable);
+                        editorContent.focus();
+                    }
+                });
+            }
+            
+            // Delete table
+            if (tableDeleteTable) {
+                tableDeleteTable.addEventListener('click', () => {
+                    if (currentSelectedTable && confirm('Are you sure you want to delete this table?')) {
+                        currentSelectedTable.remove();
+                        hideTableToolbar();
+                        editorContent.focus();
+                    }
+                });
+            }
+            
+            // Hide table toolbar when clicking outside
+            if (editorContent) {
+                editorContent.addEventListener('click', (e) => {
+                    if (e.target.tagName !== 'TD' && e.target.tagName !== 'TH' && e.target.tagName !== 'TABLE' && !e.target.closest('table')) {
+                        hideTableToolbar();
+                    }
+                });
+            }
+            
+            // Setup table editing for existing tables
+            if (editorContent) {
+                const existingTables = editorContent.querySelectorAll('table');
+                existingTables.forEach(table => {
+                    setupTableEditing(table);
+                });
+            }
+
+            // Insert image
+            if (insertImageBtn && editorContent) {
+                insertImageBtn.addEventListener('click', () => {
+                    const url = prompt('Enter image URL:', '');
+                    if (url) {
+                        const img = document.createElement('img');
+                        img.src = url;
+                        img.style.maxWidth = '100%';
+                        img.style.height = 'auto';
+                        const selection = window.getSelection();
+                        if (selection.rangeCount > 0) {
+                            selection.getRangeAt(0).insertNode(img);
+                        } else {
+                            editorContent.appendChild(img);
+                        }
+                        editorContent.focus();
+                    }
+                });
+            }
+
+            // Insert hyperlink
+            if (insertLinkBtn && editorContent) {
+                insertLinkBtn.addEventListener('click', () => {
+                    const url = prompt('Enter URL:', 'https://');
+                    const text = prompt('Enter link text:', '');
+                    if (url && text) {
+                        const link = document.createElement('a');
+                        link.href = url;
+                        link.textContent = text;
+                        link.target = '_blank';
+                        const selection = window.getSelection();
+                        if (selection.rangeCount > 0) {
+                            selection.getRangeAt(0).insertNode(link);
+                        } else {
+                            editorContent.appendChild(link);
+                        }
+                        editorContent.focus();
+                    }
+                });
+            }
+
+            // Insert page break
+            if (insertPageBreakBtn && editorContent) {
+                insertPageBreakBtn.addEventListener('click', () => {
+                    const pageBreak = document.createElement('div');
+                    pageBreak.style.pageBreakAfter = 'always';
+                    pageBreak.style.borderTop = '2px dashed #ccc';
+                    pageBreak.style.margin = '20px 0';
+                    pageBreak.innerHTML = '<br>';
+                    const selection = window.getSelection();
+                    if (selection.rangeCount > 0) {
+                        selection.getRangeAt(0).insertNode(pageBreak);
+                    } else {
+                        editorContent.appendChild(pageBreak);
+                    }
+                    editorContent.focus();
+                });
+            }
+
+            // Find & Replace
+            if (findReplaceBtn && editorContent) {
+                findReplaceBtn.addEventListener('click', () => {
+                    const find = prompt('Find:', '');
+                    if (find) {
+                        const replace = prompt('Replace with:', '');
+                        const content = editorContent.innerHTML;
+                        editorContent.innerHTML = content.replace(new RegExp(find, 'gi'), replace || '');
+                        editorContent.focus();
+                    }
+                });
+            }
+
+            // Word count
+            if (wordCountBtn && editorContent) {
+                wordCountBtn.addEventListener('click', () => {
+                    const text = editorContent.innerText || editorContent.textContent || '';
+                    const words = text.trim().split(/\s+/).filter(w => w.length > 0);
+                    const chars = text.length;
+                    const charsNoSpaces = text.replace(/\s/g, '').length;
+                    alert(`Word Count:\n\nWords: ${words.length}\nCharacters (with spaces): ${chars}\nCharacters (no spaces): ${charsNoSpaces}`);
+                });
+            }
+
+            // Page setup
+            if (pageSetupBtn && editorContent) {
+                pageSetupBtn.addEventListener('click', () => {
+                    alert('Page Setup:\n\nThis feature will be implemented with backend API integration.\n\nYou can configure:\n- Page size (A4, Letter, etc.)\n- Margins\n- Orientation (Portrait/Landscape)');
+                });
+            }
+
+            // New document
+            if (newDocBtn) {
+                newDocBtn.addEventListener('click', async () => {
+                    if (confirm('Create a new document? Unsaved changes will be lost.')) {
+                        const timestamp = new Date().toISOString().replace(/[:.]/g, '-').substring(0, 19);
+                        const defaultPath = await getDefaultDocumentsPath();
+                        const filePath = `${defaultPath}\\document_${timestamp}.docx`;
+                        openWordEditor(filePath, 'New Document', '');
+                    }
+                });
+            }
+
+            // Open document
+            if (openDocBtn) {
+                openDocBtn.addEventListener('click', () => {
+                    const wordOpenModal = document.getElementById('wordOpenModal');
+                    if (wordOpenModal) {
+                        wordOpenModal.style.display = 'flex';
+                    }
+                });
+            }
+
             // Keyboard shortcuts
             if (editorContent) {
                 editorContent.addEventListener('keydown', (e) => {
-                    // Ctrl+S to save - show Save As dialog
+                    // Ctrl+S to save
                     if (e.ctrlKey && e.key === 's') {
                         e.preventDefault();
                         showSaveAsDialog();
+                    }
+                    // Ctrl+B for bold
+                    if (e.ctrlKey && e.key === 'b') {
+                        e.preventDefault();
+                        document.execCommand('bold', false, null);
+                    }
+                    // Ctrl+I for italic
+                    if (e.ctrlKey && e.key === 'i') {
+                        e.preventDefault();
+                        document.execCommand('italic', false, null);
+                    }
+                    // Ctrl+U for underline
+                    if (e.ctrlKey && e.key === 'u') {
+                        e.preventDefault();
+                        document.execCommand('underline', false, null);
                     }
                 });
             }
@@ -2548,9 +3321,19 @@
             // Get HTML content to preserve formatting
             const htmlContent = editorContent.innerHTML || '';
             
+            // Debug: Log the content being saved
+            console.log('=== SAVE DEBUG ===');
+            console.log('HTML content length:', htmlContent.length);
+            console.log('HTML content preview (first 500 chars):', htmlContent.substring(0, 500));
+            console.log('Editor element:', editorContent);
+            console.log('Editor innerHTML length:', editorContent.innerHTML ? editorContent.innerHTML.length : 0);
+            
             // Check if content is empty
             const textContent = editorContent.innerText || editorContent.textContent || '';
-            if (!textContent.trim()) {
+            console.log('Text content length:', textContent.length);
+            console.log('Text content preview:', textContent.substring(0, 200));
+            
+            if (!textContent.trim() && !htmlContent.trim()) {
                 alert('Document is empty. Please add some content before saving.');
                 const saveBtn = document.getElementById('wordEditorSave');
                 if (saveBtn) {
@@ -2558,6 +3341,15 @@
                     saveBtn.textContent = '💾 Save';
                 }
                 return;
+            }
+            
+            // Ensure we have HTML content - use text content as fallback if needed
+            let contentToSave = htmlContent;
+            if (!htmlContent || htmlContent.trim() === '' || htmlContent.trim() === '<br>') {
+                console.warn('Warning: HTML content is empty or minimal, using text content instead');
+                // If HTML is empty but text exists, create a simple paragraph
+                contentToSave = `<p>${textContent.replace(/\n/g, '</p><p>')}</p>`;
+                console.log('Using fallback HTML:', contentToSave);
             }
             
             const saveBtn = document.getElementById('wordEditorSave');
@@ -2569,7 +3361,11 @@
 
             try {
                 // Save HTML content with formatting preserved
-                console.log('Sending save request with file_path:', filePath);
+                console.log('=== SENDING SAVE REQUEST ===');
+                console.log('File path:', filePath);
+                console.log('Content to save length:', contentToSave.length);
+                console.log('Content to save preview:', contentToSave.substring(0, 300));
+                
                 const saveResponse = await fetch('http://localhost:8000/api/word/save-html', {
                     method: 'POST',
                     headers: {
@@ -2577,9 +3373,12 @@
                     },
                     body: JSON.stringify({
                         file_path: filePath,
-                        html_content: htmlContent
+                        html_content: contentToSave
                     })
                 });
+                
+                console.log('Save response status:', saveResponse.status);
+                console.log('Save response ok:', saveResponse.ok);
 
                 if (!saveResponse.ok) {
                     let errorMessage = `HTTP ${saveResponse.status}: Failed to save document`;

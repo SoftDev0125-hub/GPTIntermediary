@@ -17,6 +17,7 @@ try:
     from docx.shared import Pt, RGBColor, Inches
     from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING
     from docx.enum.style import WD_STYLE_TYPE
+    from docx.enum.text import WD_COLOR_INDEX
     from docx.oxml.ns import qn
     HAS_DOCX = True
 except ImportError:
@@ -758,7 +759,11 @@ class WordService:
             import re
             
             # Log the HTML content for debugging (first 500 chars)
-            logger.info(f"Saving HTML content to {file_path}, HTML length: {len(html_content)}, preview: {html_content[:500]}")
+            logger.info(f"Saving HTML content to {file_path}, HTML length: {len(html_content)}")
+            logger.debug(f"HTML preview (first 1000 chars): {html_content[:1000]}")
+            # Check if HTML contains tables
+            if '<table' in html_content.lower():
+                logger.info("HTML contains table(s), will parse with table support")
             
             # Normalize the file path
             original_path = file_path
@@ -796,6 +801,9 @@ class WordService:
                     self.doc = doc
                     self.current_para = None
                     self.current_run = None
+                    self.current_table = None
+                    self.current_row = None
+                    self.current_cell = None
                     
                 def handle_starttag(self, tag, attrs):
                     attrs_dict = dict(attrs)
@@ -835,6 +843,108 @@ class WordService:
                         if self.current_run is None:
                             self.current_run = self.current_para.add_run()
                         self.current_run.underline = True
+                    
+                    elif tag == 's' or tag == 'strike':
+                        # Strikethrough
+                        if self.current_para is None:
+                            self.current_para = self.doc.add_paragraph()
+                        if self.current_run is None:
+                            self.current_run = self.current_para.add_run()
+                        self.current_run.font.strike = True
+                    
+                    elif tag == 'sub':
+                        # Subscript
+                        if self.current_para is None:
+                            self.current_para = self.doc.add_paragraph()
+                        if self.current_run is None:
+                            self.current_run = self.current_para.add_run()
+                        self.current_run.font.subscript = True
+                    
+                    elif tag == 'sup':
+                        # Superscript
+                        if self.current_para is None:
+                            self.current_para = self.doc.add_paragraph()
+                        if self.current_run is None:
+                            self.current_run = self.current_para.add_run()
+                        self.current_run.font.superscript = True
+                    
+                    elif tag == 'a':
+                        # Hyperlink
+                        href = attrs_dict.get('href', '')
+                        if self.current_para is None:
+                            self.current_para = self.doc.add_paragraph()
+                        if self.current_run is None:
+                            self.current_run = self.current_para.add_run()
+                        # Store href for later use (python-docx hyperlinks need special handling)
+                        self.current_run._hyperlink_url = href
+                    
+                    elif tag == 'ul' or tag == 'ol':
+                        # Lists - handled in handle_data
+                        if self.current_para is None:
+                            self.current_para = self.doc.add_paragraph()
+                        self.current_run = None
+                    
+                    elif tag == 'li':
+                        # List item
+                        if self.current_para is None:
+                            self.current_para = self.doc.add_paragraph()
+                        self.current_run = None
+                    
+                    elif tag == 'table':
+                        # Table - create new table (we'll add rows dynamically)
+                        self.current_table = self.doc.add_table(rows=0, cols=0)
+                        self.current_table.style = 'Light Grid Accent 1'
+                        self.current_row = None
+                        self.current_cell = None
+                        self.current_para = None
+                        self.current_run = None
+                        self.table_cells_info = []  # Store cell info for post-processing
+                        self.current_row_index = -1
+                        self.current_cell_index = -1
+                    
+                    elif tag == 'tr':
+                        # Table row
+                        if self.current_table:
+                            self.current_row = self.current_table.add_row()
+                            self.current_row_index += 1
+                            self.current_cell_index = -1
+                            self.current_cell = None
+                            self.current_para = None
+                            self.current_run = None
+                    
+                    elif tag == 'td' or tag == 'th':
+                        # Table cell
+                        if self.current_row:
+                            # Get colspan and rowspan from attributes
+                            try:
+                                colspan = int(attrs_dict.get('colspan', 1))
+                            except:
+                                colspan = 1
+                            try:
+                                rowspan = int(attrs_dict.get('rowspan', 1))
+                            except:
+                                rowspan = 1
+                            
+                            # Add cell to row
+                            self.current_cell = self.current_row.add_cell()
+                            self.current_cell_index += 1
+                            
+                            # Store cell info for later merging
+                            cell_info = {
+                                'cell': self.current_cell,
+                                'row': self.current_row_index,
+                                'col': self.current_cell_index,
+                                'colspan': colspan,
+                                'rowspan': rowspan
+                            }
+                            self.table_cells_info.append(cell_info)
+                            
+                            # Get paragraph from cell
+                            self.current_para = self.current_cell.paragraphs[0]
+                            self.current_run = None
+                            
+                            # If colspan > 1, we need to add placeholder cells that will be merged
+                            # But we'll handle merging after all cells are added
                     
                     elif tag in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']:
                         # Heading
@@ -880,6 +990,29 @@ class WordService:
                                         rgb = RGBColor(int(rgb_match.group(1)), int(rgb_match.group(2)), int(rgb_match.group(3)))
                                         self.current_run.font.color.rgb = rgb
                             
+                            # Parse background-color (highlight) - python-docx uses WD_COLOR_INDEX
+                            bg_color_match = re.search(r'background-color:\s*(#[0-9a-fA-F]{6}|rgb\([^)]+\)|\w+)', style)
+                            if bg_color_match:
+                                bg_color_str = bg_color_match.group(1)
+                                try:
+                                    # Map common colors to WD_COLOR_INDEX
+                                    color_map = {
+                                        'yellow': WD_COLOR_INDEX.YELLOW,
+                                        'green': WD_COLOR_INDEX.BRIGHT_GREEN,
+                                        'blue': WD_COLOR_INDEX.BLUE,
+                                        'red': WD_COLOR_INDEX.RED,
+                                        'cyan': WD_COLOR_INDEX.TURQUOISE,
+                                        'magenta': WD_COLOR_INDEX.PINK,
+                                        'lightgray': WD_COLOR_INDEX.GRAY_25,
+                                        'gray': WD_COLOR_INDEX.GRAY_50,
+                                    }
+                                    if bg_color_str.lower() in color_map:
+                                        self.current_run.font.highlight_color = color_map[bg_color_str.lower()]
+                                    elif bg_color_str.lower() == 'yellow' or '#ffff00' in bg_color_str.lower():
+                                        self.current_run.font.highlight_color = WD_COLOR_INDEX.YELLOW
+                                except:
+                                    pass
+                            
                             # Parse text-align
                             align_match = re.search(r'text-align:\s*(\w+)', style)
                             if align_match and self.current_para:
@@ -924,13 +1057,114 @@ class WordService:
                                 self.current_run.font.color.rgb = rgb
                 
                 def handle_endtag(self, tag):
-                    if tag in ['p', 'div', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6']:
+                    if tag in ['p', 'div', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'li', 'ul', 'ol']:
                         # End paragraph
                         self.current_para = None
                         self.current_run = None
-                    elif tag in ['strong', 'b', 'em', 'i', 'u', 'span', 'font']:
+                    elif tag in ['strong', 'b', 'em', 'i', 'u', 's', 'strike', 'sub', 'sup', 'span', 'font', 'a']:
                         # End run - create new run for next text
                         self.current_run = None
+                    elif tag == 'td' or tag == 'th':
+                        # End table cell
+                        self.current_cell = None
+                        self.current_para = None
+                        self.current_run = None
+                    elif tag == 'tr':
+                        # End table row
+                        self.current_row = None
+                        self.current_cell = None
+                        self.current_para = None
+                        self.current_run = None
+                    elif tag == 'table':
+                        # End table - process colspan and rowspan merges
+                        if self.current_table and hasattr(self, 'table_cells_info'):
+                            try:
+                                # Process merges: first handle colspan, then rowspan
+                                rows = list(self.current_table.rows)
+                                
+                                # Build a map of cells by position
+                                cell_map = {}
+                                for info in self.table_cells_info:
+                                    row_idx = info['row']
+                                    col_idx = info['col']
+                                    if row_idx < len(rows):
+                                        row = rows[row_idx]
+                                        if col_idx < len(row.cells):
+                                            cell_map[(row_idx, col_idx)] = {
+                                                'cell': row.cells[col_idx],
+                                                'colspan': info['colspan'],
+                                                'rowspan': info['rowspan']
+                                            }
+                                
+                                # Process merges - sort by row then column to process in order
+                                sorted_cells = sorted(cell_map.items(), key=lambda x: (x[0][0], x[0][1]))
+                                
+                                for (row_idx, col_idx), cell_data in sorted_cells:
+                                    cell = cell_data['cell']
+                                    colspan = cell_data['colspan']
+                                    rowspan = cell_data['rowspan']
+                                    
+                                    # Skip if cell has already been merged (removed from row)
+                                    try:
+                                        # Verify cell still exists in the row
+                                        if row_idx >= len(rows) or col_idx >= len(rows[row_idx].cells):
+                                            continue
+                                        if rows[row_idx].cells[col_idx] != cell:
+                                            continue
+                                    except:
+                                        continue
+                                    
+                                    # Handle colspan (merge cells horizontally)
+                                    if colspan > 1:
+                                        try:
+                                            for c in range(1, colspan):
+                                                merge_col = col_idx + c
+                                                if merge_col < len(rows[row_idx].cells):
+                                                    next_cell = rows[row_idx].cells[merge_col]
+                                                    try:
+                                                        cell.merge(next_cell)
+                                                        logger.debug(f"Merged colspan: ({row_idx}, {col_idx}) with ({row_idx}, {merge_col})")
+                                                    except Exception as merge_err:
+                                                        # Cell might already be merged
+                                                        logger.debug(f"Could not merge colspan: {merge_err}")
+                                        except Exception as e:
+                                            logger.warning(f"Error merging colspan for cell at ({row_idx}, {col_idx}): {e}")
+                                    
+                                    # Handle rowspan (merge cells vertically)
+                                    if rowspan > 1:
+                                        try:
+                                            for r in range(1, rowspan):
+                                                merge_row_idx = row_idx + r
+                                                if merge_row_idx < len(rows):
+                                                    merge_row = rows[merge_row_idx]
+                                                    # Find cell in same column (accounting for previous horizontal merges)
+                                                    merge_col = col_idx
+                                                    if merge_col < len(merge_row.cells):
+                                                        cell_to_merge = merge_row.cells[merge_col]
+                                                        try:
+                                                            cell.merge(cell_to_merge)
+                                                            logger.debug(f"Merged rowspan: ({row_idx}, {col_idx}) with ({merge_row_idx}, {merge_col})")
+                                                        except Exception as merge_err:
+                                                            # Cell might already be merged
+                                                            logger.debug(f"Could not merge rowspan: {merge_err}")
+                                        except Exception as e:
+                                            logger.warning(f"Error merging rowspan for cell at ({row_idx}, {col_idx}): {e}")
+                                
+                                # Clean up
+                                if hasattr(self, 'table_cells_info'):
+                                    del self.table_cells_info
+                            except Exception as e:
+                                logger.error(f"Error processing table merges: {e}")
+                                import traceback
+                                logger.error(traceback.format_exc())
+                        
+                        self.current_table = None
+                        self.current_row = None
+                        self.current_cell = None
+                        self.current_para = None
+                        self.current_run = None
+                        self.current_row_index = -1
+                        self.current_cell_index = -1
                 
                 def handle_data(self, data):
                     # Add text to current run
