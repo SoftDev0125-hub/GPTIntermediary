@@ -17,6 +17,7 @@ try:
     from docx.shared import Pt, RGBColor, Inches
     from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING
     from docx.enum.style import WD_STYLE_TYPE
+    from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT
     from docx.enum.text import WD_COLOR_INDEX
     from docx.oxml.ns import qn
     HAS_DOCX = True
@@ -38,12 +39,18 @@ class WordService:
     
     def _get_default_documents_dir(self) -> str:
         """Get the default documents directory for the OS"""
-        if self.os_type == "Windows":
-            return os.path.join(os.path.expanduser("~"), "Documents")
-        elif self.os_type == "Darwin":
-            return os.path.join(os.path.expanduser("~"), "Documents")
-        else:
-            return os.path.join(os.path.expanduser("~"), "Documents")
+        # Use the current working directory instead of C: drive
+        # This avoids creating files in C: drive
+        current_dir = os.getcwd()
+        # If current directory is on C: drive, use D: drive instead
+        if current_dir.startswith('C:') or current_dir.startswith('c:'):
+            # Use D: drive Documents folder
+            if os.path.exists('D:\\Documents'):
+                return 'D:\\Documents'
+            # Or use D: drive root
+            return 'D:\\'
+        # Otherwise, use current directory
+        return current_dir
     
     async def initialize(self):
         """Initialize the Word service"""
@@ -760,10 +767,20 @@ class WordService:
             
             # Log the HTML content for debugging (first 500 chars)
             logger.info(f"Saving HTML content to {file_path}, HTML length: {len(html_content)}")
-            logger.debug(f"HTML preview (first 1000 chars): {html_content[:1000]}")
+            logger.debug(f"HTML preview (first 2000 chars): {html_content[:2000]}")
             # Check if HTML contains tables
             if '<table' in html_content.lower():
                 logger.info("HTML contains table(s), will parse with table support")
+                # Count tables
+                table_count = html_content.lower().count('<table')
+                logger.info(f"Found {table_count} table(s) in HTML")
+                # Extract table HTML for debugging
+                import re
+                table_matches = re.findall(r'<table[^>]*>.*?</table>', html_content, re.DOTALL | re.IGNORECASE)
+                for i, table_html in enumerate(table_matches[:3]):  # Log first 3 tables
+                    logger.debug(f"Table {i+1} HTML (first 500 chars): {table_html[:500]}")
+            else:
+                logger.warning("HTML does NOT contain any <table> tags!")
             
             # Normalize the file path
             original_path = file_path
@@ -804,25 +821,56 @@ class WordService:
                     self.current_table = None
                     self.current_row = None
                     self.current_cell = None
+                    self.table_cells_info = []
+                    self.current_row_index = -1
+                    self.current_cell_index = -1
+                    self.in_table = False
                     
                 def handle_starttag(self, tag, attrs):
                     attrs_dict = dict(attrs)
                     
-                    if tag in ['p', 'div', 'br']:
+                    if tag in ['p', 'div']:
                         # Start new paragraph
-                        if tag == 'br' and self.current_para:
-                            # Just add line break
+                        # If we're inside a table cell, use the cell's paragraph instead of creating a new one
+                        if self.current_cell:
+                            # Inside a cell, just ensure we have a paragraph
+                            if self.current_para is None:
+                                self.current_para = self.current_cell.paragraphs[0]
+                            # Reset run so new content creates a new run
+                            self.current_run = None
+                        else:
+                            # Create a new paragraph in the document
+                            self.current_para = self.doc.add_paragraph()
+                            self.current_run = None
+                    
+                    elif tag == 'br':
+                        # Line break
+                        if self.current_cell:
+                            # Inside a cell
+                            if self.current_para is None:
+                                self.current_para = self.current_cell.paragraphs[0]
+                            if self.current_run:
+                                self.current_run.add_break()
+                            else:
+                                self.current_para.add_run().add_break()
+                        elif self.current_para:
+                            # In a paragraph, add break
                             if self.current_run:
                                 self.current_run.add_break()
                             else:
                                 self.current_para.add_run().add_break()
                         else:
+                            # No paragraph context, create one with a break
                             self.current_para = self.doc.add_paragraph()
+                            self.current_para.add_run().add_break()
                             self.current_run = None
                     
                     elif tag == 'strong' or tag == 'b':
                         # Bold
-                        if self.current_para is None:
+                        if self.current_cell:
+                            if self.current_para is None:
+                                self.current_para = self.current_cell.paragraphs[0]
+                        elif self.current_para is None:
                             self.current_para = self.doc.add_paragraph()
                         if self.current_run is None:
                             self.current_run = self.current_para.add_run()
@@ -830,7 +878,10 @@ class WordService:
                     
                     elif tag == 'em' or tag == 'i':
                         # Italic
-                        if self.current_para is None:
+                        if self.current_cell:
+                            if self.current_para is None:
+                                self.current_para = self.current_cell.paragraphs[0]
+                        elif self.current_para is None:
                             self.current_para = self.doc.add_paragraph()
                         if self.current_run is None:
                             self.current_run = self.current_para.add_run()
@@ -838,7 +889,10 @@ class WordService:
                     
                     elif tag == 'u':
                         # Underline
-                        if self.current_para is None:
+                        if self.current_cell:
+                            if self.current_para is None:
+                                self.current_para = self.current_cell.paragraphs[0]
+                        elif self.current_para is None:
                             self.current_para = self.doc.add_paragraph()
                         if self.current_run is None:
                             self.current_run = self.current_para.add_run()
@@ -846,7 +900,10 @@ class WordService:
                     
                     elif tag == 's' or tag == 'strike':
                         # Strikethrough
-                        if self.current_para is None:
+                        if self.current_cell:
+                            if self.current_para is None:
+                                self.current_para = self.current_cell.paragraphs[0]
+                        elif self.current_para is None:
                             self.current_para = self.doc.add_paragraph()
                         if self.current_run is None:
                             self.current_run = self.current_para.add_run()
@@ -854,7 +911,10 @@ class WordService:
                     
                     elif tag == 'sub':
                         # Subscript
-                        if self.current_para is None:
+                        if self.current_cell:
+                            if self.current_para is None:
+                                self.current_para = self.current_cell.paragraphs[0]
+                        elif self.current_para is None:
                             self.current_para = self.doc.add_paragraph()
                         if self.current_run is None:
                             self.current_run = self.current_para.add_run()
@@ -862,7 +922,10 @@ class WordService:
                     
                     elif tag == 'sup':
                         # Superscript
-                        if self.current_para is None:
+                        if self.current_cell:
+                            if self.current_para is None:
+                                self.current_para = self.current_cell.paragraphs[0]
+                        elif self.current_para is None:
                             self.current_para = self.doc.add_paragraph()
                         if self.current_run is None:
                             self.current_run = self.current_para.add_run()
@@ -871,7 +934,10 @@ class WordService:
                     elif tag == 'a':
                         # Hyperlink
                         href = attrs_dict.get('href', '')
-                        if self.current_para is None:
+                        if self.current_cell:
+                            if self.current_para is None:
+                                self.current_para = self.current_cell.paragraphs[0]
+                        elif self.current_para is None:
                             self.current_para = self.doc.add_paragraph()
                         if self.current_run is None:
                             self.current_run = self.current_para.add_run()
@@ -892,8 +958,53 @@ class WordService:
                     
                     elif tag == 'table':
                         # Table - create new table (we'll add rows dynamically)
+                        logger.info("=== PARSING TABLE ===")
+                        logger.info(f"Table attributes: {attrs_dict}")
+                        self.in_table = True
                         self.current_table = self.doc.add_table(rows=0, cols=0)
+                        # Default style - will be overridden if HTML has style attribute
                         self.current_table.style = 'Light Grid Accent 1'
+                        
+                        # Parse table attributes and styles
+                        table_style = attrs_dict.get('style', '')
+                        table_class = attrs_dict.get('class', '')
+                        logger.info(f"Table style: {table_style}, class: {table_class}")
+                        
+                        # Store table formatting info for later application
+                        self.table_format_info = {
+                            'style': table_style,
+                            'class': table_class,
+                            'border': attrs_dict.get('border', ''),
+                            'cellpadding': attrs_dict.get('cellpadding', ''),
+                            'cellspacing': attrs_dict.get('cellspacing', ''),
+                            'width': attrs_dict.get('width', '')
+                        }
+                        
+                        # Apply table width if specified
+                        if 'width' in attrs_dict:
+                            try:
+                                width_str = attrs_dict['width']
+                                if width_str.endswith('%'):
+                                    # Percentage width - convert to inches (assuming 6.5" page width)
+                                    width_pct = float(width_str.rstrip('%'))
+                                    from docx.shared import Inches
+                                    self.current_table.autofit = False
+                                    # Set approximate width based on percentage
+                                    self.current_table._element.tblPr.append(
+                                        self.current_table._element._new_tblPr_child('w:tblW', {
+                                            'w:w': str(int(width_pct * 50)),  # 50 = 0.5pt per 1%
+                                            'w:type': 'pct'
+                                        })
+                                    )
+                                elif width_str.endswith('px'):
+                                    # Pixel width - approximate conversion
+                                    width_px = float(width_str.rstrip('px'))
+                                    from docx.shared import Inches
+                                    width_inches = width_px / 96  # 96 DPI
+                                    self.current_table.columns[0].width = Inches(width_inches) if len(self.current_table.columns) > 0 else None
+                            except:
+                                pass
+                        
                         self.current_row = None
                         self.current_cell = None
                         self.current_para = None
@@ -905,12 +1016,15 @@ class WordService:
                     elif tag == 'tr':
                         # Table row
                         if self.current_table:
+                            logger.debug(f"Adding table row {self.current_row_index + 1}")
                             self.current_row = self.current_table.add_row()
                             self.current_row_index += 1
                             self.current_cell_index = -1
                             self.current_cell = None
                             self.current_para = None
                             self.current_run = None
+                        else:
+                            logger.warning("Encountered <tr> tag but no current_table exists!")
                     
                     elif tag == 'td' or tag == 'th':
                         # Table cell
@@ -925,9 +1039,70 @@ class WordService:
                             except:
                                 rowspan = 1
                             
+                            logger.debug(f"Adding cell at row {self.current_row_index}, col {self.current_cell_index + 1}, colspan={colspan}, rowspan={rowspan}")
+                            
                             # Add cell to row
                             self.current_cell = self.current_row.add_cell()
                             self.current_cell_index += 1
+                            
+                            # Parse and apply cell styles
+                            cell_style = attrs_dict.get('style', '')
+                            
+                            # Get paragraph from cell first (needed for alignment and content)
+                            self.current_para = self.current_cell.paragraphs[0]
+                            self.current_run = None
+                            
+                            # Apply cell background color
+                            bg_color_match = re.search(r'background-color:\s*(#[0-9a-fA-F]{6}|rgb\([^)]+\)|\w+)', cell_style)
+                            if bg_color_match:
+                                try:
+                                    bg_color_str = bg_color_match.group(1)
+                                    if bg_color_str.startswith('#'):
+                                        color_hex = bg_color_str.lstrip('#')
+                                        # Set cell shading
+                                        shading_elm = parse_xml(
+                                            r'<w:shd {} w:fill="{}" w:val="clear"/>'.format(nsdecls('w'), color_hex)
+                                        )
+                                        tc_pr = self.current_cell._element.tcPr
+                                        if tc_pr is None:
+                                            tc_pr = self.current_cell._element._add_tcPr()
+                                        existing_shd = tc_pr.find(qn('w:shd'))
+                                        if existing_shd is not None:
+                                            tc_pr.remove(existing_shd)
+                                        tc_pr.append(shading_elm)
+                                except Exception as e:
+                                    logger.debug(f"Could not apply cell background color: {e}")
+                            
+                            # Apply cell text alignment
+                            align_match = re.search(r'text-align:\s*(\w+)', cell_style)
+                            if align_match:
+                                align = align_match.group(1).lower()
+                                from docx.enum.text import WD_ALIGN_PARAGRAPH
+                                align_map = {
+                                    "left": WD_ALIGN_PARAGRAPH.LEFT,
+                                    "center": WD_ALIGN_PARAGRAPH.CENTER,
+                                    "right": WD_ALIGN_PARAGRAPH.RIGHT,
+                                    "justify": WD_ALIGN_PARAGRAPH.JUSTIFY
+                                }
+                                if align in align_map:
+                                    self.current_para.alignment = align_map[align]
+                            
+                            # Apply vertical alignment
+                            vertical_align_match = re.search(r'vertical-align:\s*(\w+)', cell_style)
+                            if vertical_align_match:
+                                try:
+                                    v_align = vertical_align_match.group(1).lower()
+                                    from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT
+                                    v_align_map = {
+                                        "top": WD_CELL_VERTICAL_ALIGNMENT.TOP,
+                                        "middle": WD_CELL_VERTICAL_ALIGNMENT.CENTER,
+                                        "center": WD_CELL_VERTICAL_ALIGNMENT.CENTER,
+                                        "bottom": WD_CELL_VERTICAL_ALIGNMENT.BOTTOM
+                                    }
+                                    if v_align in v_align_map:
+                                        self.current_cell.vertical_alignment = v_align_map[v_align]
+                                except:
+                                    pass
                             
                             # Store cell info for later merging
                             cell_info = {
@@ -935,16 +1110,12 @@ class WordService:
                                 'row': self.current_row_index,
                                 'col': self.current_cell_index,
                                 'colspan': colspan,
-                                'rowspan': rowspan
+                                'rowspan': rowspan,
+                                'style': cell_style
                             }
                             self.table_cells_info.append(cell_info)
-                            
-                            # Get paragraph from cell
-                            self.current_para = self.current_cell.paragraphs[0]
-                            self.current_run = None
-                            
-                            # If colspan > 1, we need to add placeholder cells that will be merged
-                            # But we'll handle merging after all cells are added
+                        else:
+                            logger.warning(f"Encountered <{tag}> tag but no current_row exists!")
                     
                     elif tag in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']:
                         # Heading
@@ -954,10 +1125,17 @@ class WordService:
                     
                     elif tag == 'span' or tag == 'font':
                         # Handle inline styles
-                        if self.current_para is None:
-                            self.current_para = self.doc.add_paragraph()
-                        if self.current_run is None:
-                            self.current_run = self.current_para.add_run()
+                        # If we're in a table cell, use the cell's paragraph
+                        if self.current_cell:
+                            if self.current_para is None:
+                                self.current_para = self.current_cell.paragraphs[0]
+                            if self.current_run is None:
+                                self.current_run = self.current_para.add_run()
+                        else:
+                            if self.current_para is None:
+                                self.current_para = self.doc.add_paragraph()
+                            if self.current_run is None:
+                                self.current_run = self.current_para.add_run()
                         
                         # Parse style attribute
                         style = attrs_dict.get('style', '')
@@ -1076,7 +1254,44 @@ class WordService:
                         self.current_para = None
                         self.current_run = None
                     elif tag == 'table':
-                        # End table - process colspan and rowspan merges
+                        # End table - apply table formatting and process merges
+                        if self.current_table:
+                            # Apply table borders and formatting if specified
+                            if hasattr(self, 'table_format_info'):
+                                format_info = self.table_format_info
+                                # Check if border is specified in style or attribute
+                                border_specified = False
+                                if format_info.get('border') or 'border' in format_info.get('style', ''):
+                                    border_specified = True
+                                
+                                # Apply borders to all cells if border is specified
+                                if border_specified:
+                                    try:
+                                        from docx.oxml import parse_xml
+                                        # Set table borders
+                                        tbl_borders = parse_xml(
+                                            r'<w:tblBorders {}>'
+                                            r'<w:top w:val="single" w:sz="4" w:space="0" w:color="000000"/>'
+                                            r'<w:left w:val="single" w:sz="4" w:space="0" w:color="000000"/>'
+                                            r'<w:bottom w:val="single" w:sz="4" w:space="0" w:color="000000"/>'
+                                            r'<w:right w:val="single" w:sz="4" w:space="0" w:color="000000"/>'
+                                            r'<w:insideH w:val="single" w:sz="4" w:space="0" w:color="000000"/>'
+                                            r'<w:insideV w:val="single" w:sz="4" w:space="0" w:color="000000"/>'
+                                            r'</w:tblBorders>'.format(nsdecls('w'))
+                                        )
+                                        tbl_pr = self.current_table._element.tblPr
+                                        existing_borders = tbl_pr.find(qn('w:tblBorders'))
+                                        if existing_borders is not None:
+                                            tbl_pr.remove(existing_borders)
+                                        tbl_pr.append(tbl_borders)
+                                    except Exception as e:
+                                        logger.debug(f"Could not apply table borders: {e}")
+                                
+                                # Clean up format info
+                                if hasattr(self, 'table_format_info'):
+                                    delattr(self, 'table_format_info')
+                        
+                        # Process colspan and rowspan merges
                         if self.current_table and hasattr(self, 'table_cells_info'):
                             try:
                                 # Process merges: first handle colspan, then rowspan
@@ -1158,6 +1373,7 @@ class WordService:
                                 import traceback
                                 logger.error(traceback.format_exc())
                         
+                        self.in_table = False
                         self.current_table = None
                         self.current_row = None
                         self.current_cell = None
@@ -1165,6 +1381,8 @@ class WordService:
                         self.current_run = None
                         self.current_row_index = -1
                         self.current_cell_index = -1
+                        if hasattr(self, 'table_cells_info'):
+                            self.table_cells_info = []
                 
                 def handle_data(self, data):
                     # Add text to current run
@@ -1173,23 +1391,63 @@ class WordService:
                         import html
                         data = html.unescape(data)
                         
-                        if data.strip() or (self.current_run and len(self.current_run.text) == 0):
+                        # Process all data - ensure we have a paragraph and run before adding text
+                        # If we're in a table cell, always add content (even whitespace)
+                        if self.current_cell:
+                            # Ensure we have a paragraph in the cell
                             if self.current_para is None:
-                                self.current_para = self.doc.add_paragraph()
+                                self.current_para = self.current_cell.paragraphs[0]
+                            # Ensure we have a run
                             if self.current_run is None:
                                 self.current_run = self.current_para.add_run()
-                            self.current_run.add_text(data)
+                            # Add data - replace &nbsp; with regular space for better compatibility
+                            text_to_add = data.replace('\xa0', ' ')  # Replace non-breaking space with regular space
+                            # Always add text if we have a run (even if it's whitespace)
+                            self.current_run.add_text(text_to_add)
+                        # If we have a paragraph context, add the data
+                        elif self.current_para:
+                            # Ensure we have a run
+                            if self.current_run is None:
+                                self.current_run = self.current_para.add_run()
+                            text_to_add = data.replace('\xa0', ' ')
+                            # Add text (even whitespace to preserve formatting)
+                            self.current_run.add_text(text_to_add)
+                        # If we have non-whitespace data and no context, create a paragraph
+                        elif data.strip():
+                            # Create paragraph and run for new content
+                            self.current_para = self.doc.add_paragraph()
+                            self.current_run = self.current_para.add_run()
+                            text_to_add = data.replace('\xa0', ' ')
+                            self.current_run.add_text(text_to_add)
+                        # For pure whitespace with no context, we can skip it
+                        # But if we're in the middle of parsing, we might want to preserve it
+                        # For now, skip only if we truly have no context
+                        else:
+                            # Skip pure whitespace with no context
+                            return
                     except Exception as e:
                         logger.warning(f"Error handling data in HTML parser: {e}")
+                        import traceback
+                        logger.warning(traceback.format_exc())
                         # Try to add text anyway
-                        if self.current_para is None:
-                            self.current_para = self.doc.add_paragraph()
-                        if self.current_run is None:
-                            self.current_run = self.current_para.add_run()
-                        try:
-                            self.current_run.add_text(str(data))
-                        except:
-                            pass
+                        if self.current_cell:
+                            try:
+                                if self.current_para is None:
+                                    self.current_para = self.current_cell.paragraphs[0]
+                                if self.current_run is None:
+                                    self.current_run = self.current_para.add_run()
+                                self.current_run.add_text(str(data))
+                            except Exception as e2:
+                                logger.warning(f"Failed to add text to cell: {e2}")
+                        else:
+                            try:
+                                if self.current_para is None:
+                                    self.current_para = self.doc.add_paragraph()
+                                if self.current_run is None:
+                                    self.current_run = self.current_para.add_run()
+                                self.current_run.add_text(str(data))
+                            except Exception as e2:
+                                logger.warning(f"Failed to add text to paragraph: {e2}")
             
             # Handle empty or minimal content
             if not html_content or not html_content.strip():
@@ -1204,35 +1462,172 @@ class WordService:
                     cleaned_html = re.sub(r'<script[^>]*>.*?</script>', '', html_content, flags=re.DOTALL | re.IGNORECASE)
                     cleaned_html = re.sub(r'<style[^>]*>.*?</style>', '', cleaned_html, flags=re.DOTALL | re.IGNORECASE)
                     
+                    # Check for tables in HTML before parsing
+                    table_count_in_html = len(re.findall(r'<table[^>]*>', cleaned_html, re.IGNORECASE))
+                    logger.info(f"Found {table_count_in_html} table(s) in HTML content")
+                    
+                    # Log cleaned HTML for debugging
+                    logger.info(f"Cleaned HTML length: {len(cleaned_html)}")
+                    if len(cleaned_html) < 1000:
+                        logger.debug(f"Full cleaned HTML: {cleaned_html}")
+                    else:
+                        logger.debug(f"Cleaned HTML preview (first 1000 chars): {cleaned_html[:1000]}")
+                        # Also log table sections specifically
+                        table_matches = re.findall(r'<table[^>]*>.*?</table>', cleaned_html, re.DOTALL | re.IGNORECASE)
+                        for idx, table_html in enumerate(table_matches):
+                            logger.debug(f"Table {idx + 1} HTML (first 500 chars): {table_html[:500]}")
+                    
+                    logger.info("Starting HTML parsing...")
                     parser.feed(cleaned_html)
                     parser.close()  # Ensure parser is closed
+                    logger.info("HTML parsing completed")
+                    
+                    # Log parsing results
+                    logger.info(f"Parsing complete. Document has {len(doc.paragraphs)} paragraphs and {len(doc.tables)} tables")
+                    
+                    # Verify tables were created correctly
+                    if len(doc.tables) > 0:
+                        logger.info(f"=== TABLE VERIFICATION ===")
+                        for idx, table in enumerate(doc.tables):
+                            logger.info(f"Table {idx + 1}: {len(table.rows)} rows, {len(table.columns) if table.rows else 0} columns")
+                            for row_idx, row in enumerate(table.rows):
+                                logger.info(f"  Row {row_idx + 1}: {len(row.cells)} cells")
+                                for cell_idx, cell in enumerate(row.cells):
+                                    cell_text = ' '.join([para.text for para in cell.paragraphs])
+                                    logger.debug(f"    Cell ({row_idx}, {cell_idx}): '{cell_text[:50]}...' (length: {len(cell_text)})")
+                    
+                    # Check if we actually got content
+                    total_text = sum(len(p.text) for p in doc.paragraphs)
+                    # Also check text in table cells
+                    table_text = 0
+                    for table in doc.tables:
+                        for row in table.rows:
+                            for cell in row.cells:
+                                for para in cell.paragraphs:
+                                    table_text += len(para.text)
+                    total_content = total_text + table_text
+                    logger.info(f"Total text content: {total_text} chars in paragraphs, {table_text} chars in tables, {total_content} total")
+                    
+                    if total_content == 0:
+                        logger.error("WARNING: No content was parsed from HTML! Document will be empty.")
+                        # IMPORTANT: If we have tables in HTML but no tables were created, don't use plain text fallback
+                        # as it would destroy the table structure. Instead, log the error and let the user know.
+                        if table_count_in_html > 0:
+                            logger.error("CRITICAL: Tables were detected in HTML but parsing failed completely!")
+                            logger.error("The document will be empty. This is a parser error that needs to be fixed.")
+                            # Add an error message paragraph so the document isn't completely empty
+                            doc.add_paragraph(f"ERROR: Table content could not be parsed. {table_count_in_html} table(s) were detected in the HTML but could not be converted to Word format.")
+                        else:
+                            # Only use plain text fallback if there were no tables
+                            logger.warning("No tables detected, using plain text fallback")
+                            import html
+                            plain_text = html.unescape(cleaned_html)
+                            # Remove HTML tags but preserve structure hints
+                            plain_text = re.sub(r'<[^>]+>', ' ', plain_text)
+                            # Clean up multiple spaces
+                            plain_text = re.sub(r'\s+', ' ', plain_text).strip()
+                            if plain_text:
+                                logger.warning(f"Adding fallback plain text: {plain_text[:100]}...")
+                                # Split by common separators and add as paragraphs
+                                lines = plain_text.split('\n')
+                                for line in lines:
+                                    if line.strip():
+                                        doc.add_paragraph(line.strip())
+                                # If no lines, add the whole text
+                                if len(doc.paragraphs) == 0:
+                                    doc.add_paragraph(plain_text)
+                    
+                    if len(doc.tables) == 0 and table_count_in_html > 0:
+                        logger.error(f"CRITICAL ERROR: HTML contained {table_count_in_html} table(s) but NO tables were created in the Word document!")
+                        logger.error("This means table parsing failed. The document will contain only text, not table structures.")
+                        logger.error("Please check the HTML structure and parser logic.")
+                    elif len(doc.tables) > 0 and table_count_in_html > 0:
+                        logger.info(f"SUCCESS: Created {len(doc.tables)} table(s) from {table_count_in_html} table(s) in HTML")
                 except Exception as parse_error:
-                    logger.warning(f"HTML parsing error (trying fallback): {parse_error}")
+                    logger.error(f"HTML parsing error: {parse_error}")
                     import traceback
-                    logger.warning(traceback.format_exc())
-                    # Fallback: try to extract plain text and save
-                    import html
-                    plain_text = html.unescape(html_content)
-                    # Remove HTML tags
-                    plain_text = re.sub(r'<[^>]+>', '', plain_text)
-                    if plain_text.strip():
-                        doc.add_paragraph(plain_text.strip())
+                    logger.error(traceback.format_exc())
+                    
+                    # Check if we have tables in the document despite the error
+                    if len(doc.tables) > 0:
+                        logger.info(f"Despite parsing error, {len(doc.tables)} table(s) were created. Continuing with saved tables...")
+                    elif '<table' in html_content.lower():
+                        logger.error("CRITICAL: HTML contained tables but parsing failed and no tables were created!")
+                        logger.error("This will result in table content being lost. Check the error above.")
+                        # Don't fall back to plain text - that would lose the table structure
+                        # Instead, try to preserve what we can - at least save the document with what we have
+                        logger.warning("Attempting to preserve table structure...")
+                        # Add a note about the parsing error
+                        doc.add_paragraph("Note: Table content could not be parsed correctly. Please check the logs.")
                     else:
-                        doc.add_paragraph()
+                        # Only fall back to plain text if there were no tables expected
+                        logger.warning("No tables in HTML, falling back to plain text extraction")
+                        import html
+                        plain_text = html.unescape(html_content)
+                        # Remove HTML tags
+                        plain_text = re.sub(r'<[^>]+>', '', plain_text)
+                        if plain_text.strip():
+                            doc.add_paragraph(plain_text.strip())
+                        else:
+                            doc.add_paragraph()
+                    
+                    # Continue with save even if parsing had errors (unless it's a critical error)
+                    logger.info("Continuing with save despite parsing errors...")
             
             # Ensure at least one paragraph exists
             if len(doc.paragraphs) == 0:
                 doc.add_paragraph()
             
             # Save document
-            doc.save(file_path)
-            
-            logger.info(f"Saved HTML content to Word document: {file_path}")
-            return {
-                "success": True,
-                "file_path": file_path,
-                "message": f"Document saved successfully at {file_path}"
-            }
+            try:
+                logger.info(f"Attempting to save document to: {file_path}")
+                logger.info(f"Document has {len(doc.paragraphs)} paragraphs and {len(doc.tables)} tables")
+                doc.save(file_path)
+                logger.info(f"Successfully saved HTML content to Word document: {file_path}")
+                
+                # Verify file was created
+                if os.path.exists(file_path):
+                    file_size = os.path.getsize(file_path)
+                    logger.info(f"File verified: {file_path} ({file_size} bytes)")
+                else:
+                    logger.error(f"File was not created at {file_path}")
+                    return {
+                        "success": False,
+                        "error": f"File was not created at {file_path}"
+                    }
+                
+                return {
+                    "success": True,
+                    "file_path": file_path,
+                    "message": f"Document saved successfully at {file_path}"
+                }
+            except PermissionError as pe:
+                error_msg = f"Permission denied: Cannot save to '{file_path}'. "
+                error_msg += "You may not have write permissions for this location. "
+                error_msg += "Try saving to your Documents folder instead."
+                logger.error(f"Permission error saving to {file_path}: {pe}")
+                return {
+                    "success": False,
+                    "error": error_msg
+                }
+            except OSError as ose:
+                if ose.errno == 13:  # Permission denied
+                    error_msg = f"Permission denied: Cannot save to '{file_path}'. "
+                    error_msg += "You may not have write permissions for this location. "
+                    error_msg += "Try saving to your Documents folder instead."
+                    logger.error(f"Permission error saving to {file_path}: {ose}")
+                    return {
+                        "success": False,
+                        "error": error_msg
+                    }
+                else:
+                    logger.error(f"OS error saving HTML content: {ose}")
+                    import traceback
+                    logger.error(traceback.format_exc())
+                    return {
+                        "success": False,
+                        "error": f"Error saving file: {str(ose)}"
+                    }
         except Exception as e:
             logger.error(f"Error saving HTML content: {e}")
             import traceback

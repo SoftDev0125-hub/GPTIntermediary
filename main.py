@@ -44,8 +44,7 @@ from models.schemas import (
     FindReplaceRequest,
     PageSetupRequest,
     SaveWordDocumentRequest,
-    SaveWordHTMLRequest,
-    WordDocumentInfoResponse
+    SaveWordHTMLRequest
 )
 from pydantic import BaseModel
 
@@ -932,10 +931,13 @@ async def save_word_html(request: SaveWordHTMLRequest):
         if result["success"]:
             return OperationResponse(
                 success=True,
-                message=result.get("message", "Document saved successfully")
+                message=result.get("message", "Document saved successfully"),
+                data={"file_path": result.get("file_path")}
             )
         else:
-            raise HTTPException(status_code=500, detail=result.get("error", "Failed to save document"))
+            error_msg = result.get("error", "Failed to save document")
+            logger.error(f"Save failed: {error_msg}")
+            raise HTTPException(status_code=500, detail=error_msg)
     except HTTPException:
         raise
     except Exception as e:
@@ -974,45 +976,6 @@ async def save_word_document(request: SaveWordDocumentRequest):
     except Exception as e:
         logger.error(f"Error saving Word document: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/api/word/info", response_model=WordDocumentInfoResponse)
-async def get_word_document_info(request: OpenWordDocumentRequest):
-    """
-    Get information about a Word document
-    
-    Args:
-        request: Document path
-    
-    Returns:
-        Document information
-    """
-    try:
-        logger.info(f"Getting info for Word document: {request.file_path}")
-        result = await word_service.get_document_info(request.file_path)
-        
-        if result.get("success"):
-            return WordDocumentInfoResponse(
-                success=True,
-                file_path=result.get("file_path"),
-                file_size=result.get("file_size"),
-                paragraph_count=result.get("paragraph_count"),
-                table_count=result.get("table_count"),
-                section_count=result.get("section_count"),
-                preview=result.get("preview"),
-                message="Document information retrieved successfully"
-            )
-        else:
-            return WordDocumentInfoResponse(
-                success=False,
-                error=result.get("error", "Failed to get document info")
-            )
-    except Exception as e:
-        logger.error(f"Error getting Word document info: {str(e)}")
-        return WordDocumentInfoResponse(
-            success=False,
-            error=str(e)
-        )
 
 
 def validate_and_resolve_path(path: str, must_exist: bool = True) -> str:
@@ -1147,17 +1110,19 @@ async def list_directory(path: str = None):
         import os
         from pathlib import Path
         
-        # Default to user's Documents folder if no path provided
+        # Default to D:\Documents instead of C:\Users\pc\Documents
         if not path:
-            home_dir = os.path.expanduser("~")
-            documents_path = os.path.join(home_dir, "Documents")
-            # If Documents doesn't exist, try to create it or use home directory
-            if not os.path.exists(documents_path):
+            # Prefer D: drive Documents folder
+            if os.path.exists('D:\\Documents'):
+                documents_path = 'D:\\Documents'
+            else:
+                # Try to create D:\Documents
                 try:
-                    os.makedirs(documents_path, exist_ok=True)
+                    os.makedirs('D:\\Documents', exist_ok=True)
+                    documents_path = 'D:\\Documents'
                 except (OSError, PermissionError) as e:
-                    logger.warning(f"Could not create Documents folder: {e}, using home directory")
-                    documents_path = home_dir
+                    logger.warning(f"Could not create D:\\Documents: {e}, using D: drive root")
+                    documents_path = 'D:\\'
             path = documents_path
         
         # Validate and resolve path
@@ -1210,7 +1175,7 @@ async def list_directory(path: str = None):
                 "success": True,
                 "path": path,
                 "parent_path": parent_path,
-                "home_path": os.path.expanduser("~"),  # Add home path for Quick Access
+                "home_path": "D:\\Documents",  # Use D: drive instead of C: drive
                 "items": items
             }
         except PermissionError:
@@ -1315,6 +1280,122 @@ except Exception as e:
     except Exception as e:
         logger.error(f"Error in select_folder: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to show folder picker: {str(e)}")
+
+
+@app.get("/api/word/select-file")
+async def select_file(initial_path: str = None):
+    """
+    Open native Windows file picker dialog using a subprocess
+    
+    Args:
+        initial_path: Optional initial folder/file path to start from
+    
+    Returns:
+        Selected file path or None if cancelled
+    """
+    try:
+        if platform.system() != "Windows":
+            raise HTTPException(status_code=400, detail="File picker is only available on Windows")
+        
+        import subprocess
+        import json
+        import tempfile
+        
+        # Create a temporary Python script to show the file picker
+        script_content = """import tkinter as tk
+from tkinter import filedialog
+import sys
+import json
+import os
+
+try:
+    root = tk.Tk()
+    root.withdraw()  # Hide the main window
+    root.attributes('-topmost', True)  # Bring to front
+    
+    initial_path = sys.argv[1] if len(sys.argv) > 1 and sys.argv[1] != 'None' else None
+    
+    # Determine initial directory
+    if initial_path:
+        if os.path.exists(initial_path):
+            if os.path.isdir(initial_path):
+                initial_dir = initial_path
+            else:
+                initial_dir = os.path.dirname(initial_path)
+        else:
+            initial_dir = None
+    else:
+        initial_dir = None
+    
+    if initial_dir and os.path.exists(initial_dir):
+        file_path = filedialog.askopenfilename(
+            initialdir=initial_dir,
+            title="Select Word Document",
+            filetypes=[("Word Documents", "*.docx"), ("All Files", "*.*")]
+        )
+    else:
+        file_path = filedialog.askopenfilename(
+            title="Select Word Document",
+            filetypes=[("Word Documents", "*.docx"), ("All Files", "*.*")]
+        )
+    
+    result = {
+        "success": file_path is not None and file_path != "",
+        "file_path": file_path if file_path else None,
+        "cancelled": file_path is None or file_path == ""
+    }
+    
+    print(json.dumps(result))
+    root.destroy()
+except Exception as e:
+    result = {
+        "success": False,
+        "error": str(e)
+    }
+    print(json.dumps(result))
+    sys.exit(1)
+"""
+        
+        # Write script to temp file
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False, encoding='utf-8') as f:
+            f.write(script_content)
+            script_path = f.name
+        
+        try:
+            # Run the script
+            cmd = [sys.executable, script_path]
+            if initial_path:
+                cmd.append(initial_path)
+            else:
+                cmd.append('None')
+            
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=300,  # 5 minute timeout
+                creationflags=subprocess.CREATE_NO_WINDOW if platform.system() == "Windows" else 0
+            )
+            
+            if result.returncode == 0 and result.stdout:
+                data = json.loads(result.stdout.strip())
+                return data
+            else:
+                error_msg = result.stderr or "Unknown error"
+                raise Exception(f"File picker script failed: {error_msg}")
+                
+        finally:
+            # Clean up temp file
+            try:
+                os.unlink(script_path)
+            except:
+                pass
+                
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in select_file: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to show file picker: {str(e)}")
 
 
 @app.get("/api/chatgpt/functions")
