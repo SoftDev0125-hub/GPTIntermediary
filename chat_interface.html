@@ -3483,6 +3483,14 @@
                             <span style="color: rgba(255, 255, 255, 0.7); margin-left: 16px;" id="excelCellInfo">Ready</span>
                         </div>
                         
+                        <div class="excel-formula-bar">
+                            <div class="excel-formula-bar-cell-ref" id="excelFormulaBarCellRef"></div>
+                            <div class="excel-formula-bar-input-container">
+                                <span class="excel-formula-bar-fx">fx</span>
+                                <input type="text" class="excel-formula-bar-input" id="excelFormulaBarInput" placeholder="Enter value or formula (e.g., =SUM(A1:A10))">
+                            </div>
+                        </div>
+                        
                         <div class="excel-grid-container" id="excelGridContainer">
                             ${renderExcelGrid(currentExcelSpreadsheet.data[currentExcelSpreadsheet.activeSheet])}
                         </div>
@@ -3533,7 +3541,21 @@
                 html += `<div class="excel-cell excel-row-header">${row + 1}</div>`; // Row number
                 for (let col = 0; col < cols; col++) {
                     const value = data[row][col] || '';
-                    html += `<div class="excel-cell excel-data-cell" data-row="${row}" data-col="${col}" contenteditable="true">${escapeHtml(value)}</div>`;
+                    let displayValue = value;
+                    let formulaAttr = '';
+                    
+                    // If it's a formula, evaluate it for display
+                    if (typeof value === 'string' && value.startsWith('=')) {
+                        try {
+                            displayValue = evaluateFormula(value, row, col);
+                            formulaAttr = ` data-formula="${escapeHtml(value)}"`;
+                        } catch (error) {
+                            displayValue = '#ERROR!';
+                            formulaAttr = ` data-formula="${escapeHtml(value)}"`;
+                        }
+                    }
+                    
+                    html += `<div class="excel-cell excel-data-cell" data-row="${row}" data-col="${col}" contenteditable="true"${formulaAttr}>${escapeHtml(String(displayValue))}</div>`;
                 }
                 html += '</div>';
             }
@@ -3603,49 +3625,253 @@
 
         function attachExcelCellListeners() {
             const cells = document.querySelectorAll('.excel-data-cell');
+            const formulaBarInput = document.getElementById('excelFormulaBarInput');
+            const formulaBarCellRef = document.getElementById('excelFormulaBarCellRef');
+            
             cells.forEach(cell => {
                 cell.addEventListener('focus', function() {
-                    const row = this.getAttribute('data-row');
-                    const col = this.getAttribute('data-col');
+                    const row = parseInt(this.getAttribute('data-row'));
+                    const col = parseInt(this.getAttribute('data-col'));
+                    const cellRef = `${getColumnLetter(col)}${row + 1}`;
+                    
                     const cellInfo = document.getElementById('excelCellInfo');
                     if (cellInfo) {
-                        cellInfo.textContent = `Cell: ${getColumnLetter(parseInt(col))}${parseInt(row) + 1}`;
+                        cellInfo.textContent = `Cell: ${cellRef}`;
                     }
+                    
+                    // Update formula bar
+                    if (formulaBarCellRef) {
+                        formulaBarCellRef.textContent = cellRef;
+                    }
+                    if (formulaBarInput) {
+                        const rawValue = currentExcelSpreadsheet.data[currentExcelSpreadsheet.activeSheet][row][col];
+                        formulaBarInput.value = rawValue || '';
+                    }
+                    
                     this.classList.add('excel-cell-selected');
+                    
+                    // Check if we need to expand the grid
+                    const sheetData = currentExcelSpreadsheet.data[currentExcelSpreadsheet.activeSheet];
+                    const currentRows = sheetData.length;
+                    const currentCols = sheetData[0]?.length || 0;
+                    
+                    let needsExpansion = false;
+                    
+                    // If in last column (or beyond), add more columns
+                    if (col >= currentCols - 1) {
+                        const columnsToAdd = 5; // Add 5 columns at a time
+                        for (let i = 0; i < sheetData.length; i++) {
+                            for (let j = 0; j < columnsToAdd; j++) {
+                                sheetData[i].push('');
+                            }
+                        }
+                        needsExpansion = true;
+                    }
+                    
+                    // If in last row (or beyond), add more rows
+                    if (row >= currentRows - 1) {
+                        const rowsToAdd = 10; // Add 10 rows at a time
+                        const newCols = sheetData[0]?.length || currentCols;
+                        for (let i = 0; i < rowsToAdd; i++) {
+                            sheetData.push(Array(newCols).fill(''));
+                        }
+                        needsExpansion = true;
+                    }
+                    
+                    // Re-render grid if expanded
+                    if (needsExpansion) {
+                        const gridContainer = document.getElementById('excelGridContainer');
+                        if (gridContainer) {
+                            gridContainer.innerHTML = renderExcelGrid(sheetData);
+                            attachExcelCellListeners();
+                            // Re-focus the cell that was clicked
+                            const newCell = document.querySelector(`[data-row="${row}"][data-col="${col}"]`);
+                            if (newCell) {
+                                setTimeout(() => newCell.focus(), 10);
+                            }
+                        }
+                    }
                 });
                 
                 cell.addEventListener('blur', function() {
                     const row = parseInt(this.getAttribute('data-row'));
                     const col = parseInt(this.getAttribute('data-col'));
-                    const value = this.textContent;
+                    let value = this.textContent.trim();
                     
                     // Update data
                     if (!currentExcelSpreadsheet.data[currentExcelSpreadsheet.activeSheet]) {
                         currentExcelSpreadsheet.data[currentExcelSpreadsheet.activeSheet] = Array(30).fill().map(() => Array(15).fill(''));
                     }
-                    currentExcelSpreadsheet.data[currentExcelSpreadsheet.activeSheet][row][col] = value;
+                    
+                    // If it's a formula, evaluate it
+                    if (value.startsWith('=')) {
+                        try {
+                            const result = evaluateFormula(value, row, col);
+                            this.textContent = result;
+                            this.setAttribute('data-formula', value);
+                            currentExcelSpreadsheet.data[currentExcelSpreadsheet.activeSheet][row][col] = value; // Store formula
+                        } catch (error) {
+                            this.textContent = '#ERROR!';
+                            currentExcelSpreadsheet.data[currentExcelSpreadsheet.activeSheet][row][col] = value;
+                        }
+                    } else {
+                        currentExcelSpreadsheet.data[currentExcelSpreadsheet.activeSheet][row][col] = value;
+                        this.removeAttribute('data-formula');
+                    }
                     
                     this.classList.remove('excel-cell-selected');
                 });
                 
                 cell.addEventListener('keydown', function(e) {
+                    const row = parseInt(this.getAttribute('data-row'));
+                    const col = parseInt(this.getAttribute('data-col'));
+                    let nextCell = null;
+                    
+                    // Handle Enter key
                     if (e.key === 'Enter' && !e.shiftKey) {
                         e.preventDefault();
-                        // Move to next row
-                        const row = parseInt(this.getAttribute('data-row'));
-                        const col = parseInt(this.getAttribute('data-col'));
-                        const nextCell = document.querySelector(`[data-row="${row + 1}"][data-col="${col}"]`);
+                        this.blur();
+                        
+                        // Check if we need to expand rows
+                        const sheetData = currentExcelSpreadsheet.data[currentExcelSpreadsheet.activeSheet];
+                        if (row >= sheetData.length - 1) {
+                            const rowsToAdd = 10;
+                            const newCols = sheetData[0]?.length || 15;
+                            for (let i = 0; i < rowsToAdd; i++) {
+                                sheetData.push(Array(newCols).fill(''));
+                            }
+                            const gridContainer = document.getElementById('excelGridContainer');
+                            if (gridContainer) {
+                                gridContainer.innerHTML = renderExcelGrid(sheetData);
+                                attachExcelCellListeners();
+                            }
+                        }
+                        
+                        // Move to next row (down)
+                        nextCell = document.querySelector(`[data-row="${row + 1}"][data-col="${col}"]`);
                         if (nextCell) nextCell.focus();
-                    } else if (e.key === 'Tab') {
+                        return;
+                    }
+                    
+                    // Handle Tab key
+                    if (e.key === 'Tab') {
                         e.preventDefault();
-                        // Move to next column
-                        const row = parseInt(this.getAttribute('data-row'));
-                        const col = parseInt(this.getAttribute('data-col'));
-                        const nextCell = document.querySelector(`[data-row="${row}"][data-col="${col + 1}"]`);
+                        this.blur();
+                        
+                        // Check if we need to expand columns
+                        const sheetData = currentExcelSpreadsheet.data[currentExcelSpreadsheet.activeSheet];
+                        const currentCols = sheetData[0]?.length || 0;
+                        if (col >= currentCols - 1) {
+                            const columnsToAdd = 5;
+                            for (let i = 0; i < sheetData.length; i++) {
+                                for (let j = 0; j < columnsToAdd; j++) {
+                                    sheetData[i].push('');
+                                }
+                            }
+                            const gridContainer = document.getElementById('excelGridContainer');
+                            if (gridContainer) {
+                                gridContainer.innerHTML = renderExcelGrid(sheetData);
+                                attachExcelCellListeners();
+                            }
+                        }
+                        
+                        // Move to next column (right)
+                        nextCell = document.querySelector(`[data-row="${row}"][data-col="${col + 1}"]`);
                         if (nextCell) nextCell.focus();
+                        return;
+                    }
+                    
+                    // Handle Arrow keys
+                    if (e.key === 'ArrowUp') {
+                        // Don't move up if already in row 1 (row index 0)
+                        if (row === 0) {
+                            return;
+                        }
+                        e.preventDefault();
+                        this.blur();
+                        nextCell = document.querySelector(`[data-row="${row - 1}"][data-col="${col}"]`);
+                        if (nextCell) nextCell.focus();
+                        return;
+                    }
+                    
+                    if (e.key === 'ArrowDown') {
+                        e.preventDefault();
+                        this.blur();
+                        
+                        // Check if we need to expand rows
+                        const sheetData = currentExcelSpreadsheet.data[currentExcelSpreadsheet.activeSheet];
+                        if (row >= sheetData.length - 1) {
+                            const rowsToAdd = 10;
+                            const newCols = sheetData[0]?.length || 15;
+                            for (let i = 0; i < rowsToAdd; i++) {
+                                sheetData.push(Array(newCols).fill(''));
+                            }
+                            const gridContainer = document.getElementById('excelGridContainer');
+                            if (gridContainer) {
+                                gridContainer.innerHTML = renderExcelGrid(sheetData);
+                                attachExcelCellListeners();
+                            }
+                        }
+                        
+                        nextCell = document.querySelector(`[data-row="${row + 1}"][data-col="${col}"]`);
+                        if (nextCell) nextCell.focus();
+                        return;
+                    }
+                    
+                    if (e.key === 'ArrowLeft') {
+                        // Don't move left if already in column A (col index 0)
+                        if (col === 0) {
+                            return;
+                        }
+                        e.preventDefault();
+                        this.blur();
+                        nextCell = document.querySelector(`[data-row="${row}"][data-col="${col - 1}"]`);
+                        if (nextCell) nextCell.focus();
+                        return;
+                    }
+                    
+                    if (e.key === 'ArrowRight') {
+                        e.preventDefault();
+                        this.blur();
+                        
+                        // Check if we need to expand columns
+                        const sheetData = currentExcelSpreadsheet.data[currentExcelSpreadsheet.activeSheet];
+                        const currentCols = sheetData[0]?.length || 0;
+                        if (col >= currentCols - 1) {
+                            const columnsToAdd = 5;
+                            for (let i = 0; i < sheetData.length; i++) {
+                                for (let j = 0; j < columnsToAdd; j++) {
+                                    sheetData[i].push('');
+                                }
+                            }
+                            const gridContainer = document.getElementById('excelGridContainer');
+                            if (gridContainer) {
+                                gridContainer.innerHTML = renderExcelGrid(sheetData);
+                                attachExcelCellListeners();
+                            }
+                        }
+                        
+                        nextCell = document.querySelector(`[data-row="${row}"][data-col="${col + 1}"]`);
+                        if (nextCell) nextCell.focus();
+                        return;
                     }
                 });
             });
+            
+            // Formula bar input handler
+            if (formulaBarInput) {
+                formulaBarInput.addEventListener('keydown', function(e) {
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        const activeCell = document.querySelector('.excel-data-cell.excel-cell-selected');
+                        if (activeCell) {
+                            activeCell.textContent = this.value;
+                            activeCell.blur(); // This will trigger evaluation
+                            activeCell.focus();
+                        }
+                    }
+                });
+            }
         }
 
         function attachExcelSheetTabListeners() {
@@ -3912,18 +4138,327 @@
             cells.forEach(cell => {
                 const row = parseInt(cell.getAttribute('data-row'));
                 const col = parseInt(cell.getAttribute('data-col'));
-                const value = cell.textContent.trim();
+                const formula = cell.getAttribute('data-formula');
+                const value = formula || cell.textContent.trim();
                 
                 // Ensure the sheet data array exists
                 if (!currentExcelSpreadsheet.data[currentExcelSpreadsheet.activeSheet]) {
                     currentExcelSpreadsheet.data[currentExcelSpreadsheet.activeSheet] = Array(30).fill().map(() => Array(15).fill(''));
                 }
                 
-                // Update the value
+                // Update the value (store formula if exists, otherwise value)
                 if (currentExcelSpreadsheet.data[currentExcelSpreadsheet.activeSheet][row]) {
                     currentExcelSpreadsheet.data[currentExcelSpreadsheet.activeSheet][row][col] = value;
                 }
             });
+        }
+
+        function evaluateFormula(formula, currentRow, currentCol) {
+            // Remove leading =
+            let originalFormula = formula;
+            formula = formula.substring(1).trim();
+            
+            // Store original case for text functions
+            const upperFormula = formula.toUpperCase();
+            
+            // Handle special functions first (before cell reference replacement)
+            // CONCATENATE, CONCAT, TEXTJOIN
+            if (upperFormula.includes('CONCATENATE(') || upperFormula.includes('CONCAT(')) {
+                return evaluateConcatenate(formula);
+            }
+            
+            // LEN, UPPER, LOWER, TRIM, LEFT, RIGHT, MID
+            if (upperFormula.match(/\b(LEN|UPPER|LOWER|TRIM|LEFT|RIGHT|MID)\(/)) {
+                return evaluateTextFunction(formula);
+            }
+            
+            // TODAY, NOW
+            if (upperFormula === 'TODAY()') {
+                return new Date().toLocaleDateString();
+            }
+            if (upperFormula === 'NOW()') {
+                return new Date().toLocaleString();
+            }
+            
+            // ROUND, ROUNDUP, ROUNDDOWN
+            if (upperFormula.match(/\b(ROUND|ROUNDUP|ROUNDDOWN)\(/)) {
+                return evaluateRoundFunction(formula);
+            }
+            
+            // Handle cell references (e.g., A1, B2) - replace with values
+            formula = formula.replace(/([A-Z]+)(\d+)/gi, (match, col, row) => {
+                const colIndex = columnLetterToIndex(col.toUpperCase());
+                const rowIndex = parseInt(row) - 1;
+                const value = getCellValue(rowIndex, colIndex);
+                // Return quoted string if it's text, otherwise number
+                return isNaN(value) ? `"${value}"` : (value || '0');
+            });
+            
+            // Handle range functions
+            if (upperFormula.match(/\b(SUM|AVERAGE|COUNT|COUNTA|MAX|MIN|PRODUCT)\(/)) {
+                return evaluateRangeFunction(formula.toUpperCase());
+            }
+            
+            // Handle IF function
+            if (upperFormula.includes('IF(')) {
+                return evaluateIfFunction(formula);
+            }
+            
+            // Handle AND, OR, NOT
+            if (upperFormula.match(/\b(AND|OR|NOT)\(/)) {
+                return evaluateLogicalFunction(formula.toUpperCase());
+            }
+            
+            // Evaluate mathematical expression
+            try {
+                // Replace Excel operators with JavaScript operators
+                formula = formula.replace(/\^/g, '**'); // Power
+                formula = formula.replace(/&/g, '+'); // Concatenation
+                
+                // Evaluate the expression
+                const result = Function('"use strict"; return (' + formula + ')')();
+                return isNaN(result) ? result : (Math.round(result * 100000000) / 100000000); // Round to 8 decimals
+            } catch (error) {
+                console.error('Formula evaluation error:', error, 'Formula:', originalFormula);
+                return '#ERROR!';
+            }
+        }
+
+        function evaluateRangeFunction(formula) {
+            // Extract function name and range
+            const match = formula.match(/(SUM|AVERAGE|COUNT|COUNTA|MAX|MIN|PRODUCT)\(([A-Z]+\d+):([A-Z]+\d+)\)/);
+            if (!match) return '#REF!';
+            
+            const [, func, startCell, endCell] = match;
+            const values = getRangeValues(startCell, endCell);
+            const allValues = getRangeValues(startCell, endCell, true); // Include text for COUNTA
+            
+            if (func === 'COUNTA') {
+                return allValues.length;
+            }
+            
+            if (values.length === 0) return func === 'COUNT' ? 0 : '#DIV/0!';
+            
+            switch (func) {
+                case 'SUM':
+                    return values.reduce((sum, val) => sum + val, 0);
+                case 'AVERAGE':
+                    return values.reduce((sum, val) => sum + val, 0) / values.length;
+                case 'COUNT':
+                    return values.length;
+                case 'MAX':
+                    return Math.max(...values);
+                case 'MIN':
+                    return Math.min(...values);
+                case 'PRODUCT':
+                    return values.reduce((product, val) => product * val, 1);
+                default:
+                    return '#NAME?';
+            }
+        }
+
+        function evaluateConcatenate(formula) {
+            const match = formula.match(/(?:CONCATENATE|CONCAT)\((.+)\)/i);
+            if (!match) return '#VALUE!';
+            
+            const args = match[1].split(',').map(arg => arg.trim().replace(/^"|"$/g, ''));
+            return args.join('');
+        }
+
+        function evaluateTextFunction(formula) {
+            const upperFormula = formula.toUpperCase();
+            
+            // LEN(text)
+            let match = upperFormula.match(/LEN\((.+)\)/);
+            if (match) {
+                const text = match[1].replace(/^"|"$/g, '');
+                return text.length;
+            }
+            
+            // UPPER(text)
+            match = upperFormula.match(/UPPER\((.+)\)/);
+            if (match) {
+                const text = match[1].replace(/^"|"$/g, '');
+                return text.toUpperCase();
+            }
+            
+            // LOWER(text)
+            match = upperFormula.match(/LOWER\((.+)\)/);
+            if (match) {
+                const text = match[1].replace(/^"|"$/g, '');
+                return text.toLowerCase();
+            }
+            
+            // TRIM(text)
+            match = upperFormula.match(/TRIM\((.+)\)/);
+            if (match) {
+                const text = match[1].replace(/^"|"$/g, '');
+                return text.trim();
+            }
+            
+            // LEFT(text, num_chars)
+            match = upperFormula.match(/LEFT\((.+),(\d+)\)/);
+            if (match) {
+                const text = match[1].replace(/^"|"$/g, '');
+                const num = parseInt(match[2]);
+                return text.substring(0, num);
+            }
+            
+            // RIGHT(text, num_chars)
+            match = upperFormula.match(/RIGHT\((.+),(\d+)\)/);
+            if (match) {
+                const text = match[1].replace(/^"|"$/g, '');
+                const num = parseInt(match[2]);
+                return text.substring(text.length - num);
+            }
+            
+            // MID(text, start, num_chars)
+            match = upperFormula.match(/MID\((.+),(\d+),(\d+)\)/);
+            if (match) {
+                const text = match[1].replace(/^"|"$/g, '');
+                const start = parseInt(match[2]) - 1; // Excel is 1-indexed
+                const num = parseInt(match[3]);
+                return text.substring(start, start + num);
+            }
+            
+            return '#VALUE!';
+        }
+
+        function evaluateRoundFunction(formula) {
+            const upperFormula = formula.toUpperCase();
+            
+            // ROUND(number, num_digits)
+            let match = upperFormula.match(/ROUND\((.+),(\d+)\)/);
+            if (match) {
+                const num = parseFloat(match[1]);
+                const digits = parseInt(match[2]);
+                return Math.round(num * Math.pow(10, digits)) / Math.pow(10, digits);
+            }
+            
+            // ROUNDUP(number, num_digits)
+            match = upperFormula.match(/ROUNDUP\((.+),(\d+)\)/);
+            if (match) {
+                const num = parseFloat(match[1]);
+                const digits = parseInt(match[2]);
+                return Math.ceil(num * Math.pow(10, digits)) / Math.pow(10, digits);
+            }
+            
+            // ROUNDDOWN(number, num_digits)
+            match = upperFormula.match(/ROUNDDOWN\((.+),(\d+)\)/);
+            if (match) {
+                const num = parseFloat(match[1]);
+                const digits = parseInt(match[2]);
+                return Math.floor(num * Math.pow(10, digits)) / Math.pow(10, digits);
+            }
+            
+            return '#VALUE!';
+        }
+
+        function evaluateLogicalFunction(formula) {
+            // AND(logical1, logical2, ...)
+            let match = formula.match(/AND\((.+)\)/);
+            if (match) {
+                const args = match[1].split(',').map(arg => {
+                    try {
+                        return Function('"use strict"; return (' + arg.trim() + ')')();
+                    } catch {
+                        return false;
+                    }
+                });
+                return args.every(val => val) ? 'TRUE' : 'FALSE';
+            }
+            
+            // OR(logical1, logical2, ...)
+            match = formula.match(/OR\((.+)\)/);
+            if (match) {
+                const args = match[1].split(',').map(arg => {
+                    try {
+                        return Function('"use strict"; return (' + arg.trim() + ')')();
+                    } catch {
+                        return false;
+                    }
+                });
+                return args.some(val => val) ? 'TRUE' : 'FALSE';
+            }
+            
+            // NOT(logical)
+            match = formula.match(/NOT\((.+)\)/);
+            if (match) {
+                try {
+                    const result = Function('"use strict"; return (' + match[1].trim() + ')')();
+                    return !result ? 'TRUE' : 'FALSE';
+                } catch {
+                    return '#VALUE!';
+                }
+            }
+            
+            return '#VALUE!';
+        }
+
+        function evaluateIfFunction(formula) {
+            // Simple IF(condition, true_value, false_value)
+            const match = formula.match(/IF\((.+),(.+),(.+)\)/);
+            if (!match) return '#VALUE!';
+            
+            const [, condition, trueVal, falseVal] = match;
+            
+            try {
+                const conditionResult = Function('"use strict"; return (' + condition + ')')();
+                return conditionResult ? trueVal.trim() : falseVal.trim();
+            } catch (error) {
+                return '#ERROR!';
+            }
+        }
+
+        function getRangeValues(startCell, endCell, includeText = false) {
+            const startMatch = startCell.match(/([A-Z]+)(\d+)/);
+            const endMatch = endCell.match(/([A-Z]+)(\d+)/);
+            
+            if (!startMatch || !endMatch) return [];
+            
+            const startCol = columnLetterToIndex(startMatch[1]);
+            const startRow = parseInt(startMatch[2]) - 1;
+            const endCol = columnLetterToIndex(endMatch[1]);
+            const endRow = parseInt(endMatch[2]) - 1;
+            
+            const values = [];
+            for (let row = startRow; row <= endRow; row++) {
+                for (let col = startCol; col <= endCol; col++) {
+                    const value = getCellValue(row, col);
+                    if (value !== '') {
+                        if (includeText) {
+                            values.push(value);
+                        } else if (!isNaN(value)) {
+                            values.push(parseFloat(value));
+                        }
+                    }
+                }
+            }
+            
+            return values;
+        }
+
+        function getCellValue(row, col) {
+            const sheetData = currentExcelSpreadsheet.data[currentExcelSpreadsheet.activeSheet];
+            if (!sheetData || !sheetData[row] || !sheetData[row][col]) return '';
+            
+            const value = sheetData[row][col];
+            
+            // If it's a formula, get the displayed value from the cell
+            if (typeof value === 'string' && value.startsWith('=')) {
+                const cell = document.querySelector(`[data-row="${row}"][data-col="${col}"]`);
+                return cell ? cell.textContent.trim() : '';
+            }
+            
+            return value;
+        }
+
+        function columnLetterToIndex(letter) {
+            let index = 0;
+            for (let i = 0; i < letter.length; i++) {
+                index = index * 26 + (letter.charCodeAt(i) - 64);
+            }
+            return index - 1;
         }
 
         function handleExcelKeyboard(e) {

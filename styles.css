@@ -2200,6 +2200,57 @@ body::before {
     font-size: 13px;
 }
 
+.excel-formula-bar {
+    display: flex;
+    align-items: center;
+    padding: 8px 12px;
+    background: rgba(30, 41, 59, 0.8);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    gap: 12px;
+}
+
+.excel-formula-bar-cell-ref {
+    min-width: 60px;
+    padding: 6px 12px;
+    background: rgba(255, 255, 255, 0.1);
+    color: white;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 4px;
+    font-size: 13px;
+    font-weight: 600;
+    text-align: center;
+}
+
+.excel-formula-bar-input-container {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    background: white;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.excel-formula-bar-fx {
+    padding: 6px 12px;
+    background: rgba(99, 102, 241, 0.1);
+    color: #6366f1;
+    font-weight: 700;
+    font-style: italic;
+    font-size: 14px;
+    border-right: 1px solid #e0e0e0;
+}
+
+.excel-formula-bar-input {
+    flex: 1;
+    padding: 6px 12px;
+    border: none;
+    outline: none;
+    font-size: 13px;
+    font-family: 'Consolas', 'Monaco', monospace;
+    color: #1e293b;
+}
+
 .excel-grid-container {
     flex: 1;
     overflow: auto;
