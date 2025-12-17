@@ -3,7 +3,7 @@ ChatGPT Backend/Broker - Main Application Entry Point
 Handles email operations, app launching, and other automation tasks
 """
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 from pydantic import BaseModel
@@ -12,6 +12,8 @@ import logging
 import os
 import platform
 import sys
+from sqlalchemy.orm import Session
+from datetime import datetime
 
 from services.email_service import EmailService
 from services.app_launcher import AppLauncher
@@ -19,6 +21,17 @@ from services.telegram_service import TelegramService
 from services.slack_service import SlackService
 from services.word_service import WordService
 from services.excel_service import ExcelService
+
+# Database imports
+try:
+    from database import get_db, init_db, SessionLocal
+    from models import User, Conversation, Message, UserPreference, ExcelFile, SystemLog
+    DATABASE_AVAILABLE = True
+except ImportError as e:
+    print(f"⚠️ Database modules not available: {e}")
+    print("⚠️ Install required packages: pip install sqlalchemy psycopg2-binary alembic")
+    DATABASE_AVAILABLE = False
+    get_db = None
 from models.schemas import (
     SendEmailRequest, 
     EmailReplyRequest, 
@@ -79,6 +92,21 @@ app = FastAPI(
     description="Backend service for ChatGPT to handle emails and app launching",
     version="1.0.0"
 )
+
+# Database startup event
+@app.on_event("startup")
+async def startup_event():
+    """Initialize database on application startup"""
+    if DATABASE_AVAILABLE:
+        try:
+            logger.info("🗄️ Initializing database...")
+            init_db()
+            logger.info("✅ Database initialized successfully!")
+        except Exception as e:
+            logger.warning(f"⚠️ Database initialization failed: {e}")
+            logger.warning("⚠️ App will continue without database functionality")
+    else:
+        logger.warning("⚠️ Database not available - install requirements: pip install sqlalchemy psycopg2-binary alembic")
 
 # Configure CORS - Allow all origins including file:// (null origin)
 # Using wildcard with allow_credentials=False to support null origin
@@ -1774,6 +1802,255 @@ async def get_chatgpt_functions():
     from config.chatgpt_functions import CHATGPT_FUNCTIONS
     return CHATGPT_FUNCTIONS
 
+
+# ============================================================================
+# DATABASE API ENDPOINTS
+# ============================================================================
+
+@app.post("/api/db/conversations")
+async def create_conversation(
+    user_id: int,
+    title: Optional[str] = None,
+    model: str = "gpt-4",
+    system_prompt: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    """Create a new conversation"""
+    if not DATABASE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Database not available")
+    
+    try:
+        conversation = Conversation(
+            user_id=user_id,
+            title=title,
+            model=model,
+            system_prompt=system_prompt
+        )
+        db.add(conversation)
+        db.commit()
+        db.refresh(conversation)
+        
+        return {
+            "success": True,
+            "conversation_id": conversation.id,
+            "created_at": conversation.created_at.isoformat()
+        }
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error creating conversation: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/db/messages")
+async def save_message(
+    conversation_id: int,
+    role: str,
+    content: str,
+    tokens: Optional[int] = None,
+    cost: Optional[float] = None,
+    db: Session = Depends(get_db)
+):
+    """Save a message to a conversation"""
+    if not DATABASE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Database not available")
+    
+    try:
+        message = Message(
+            conversation_id=conversation_id,
+            role=role,
+            content=content,
+            tokens=tokens,
+            cost=cost
+        )
+        db.add(message)
+        db.commit()
+        db.refresh(message)
+        
+        return {
+            "success": True,
+            "message_id": message.id,
+            "created_at": message.created_at.isoformat()
+        }
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error saving message: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/db/conversations/{conversation_id}/messages")
+async def get_conversation_messages(
+    conversation_id: int,
+    limit: Optional[int] = 100,
+    db: Session = Depends(get_db)
+):
+    """Get all messages in a conversation"""
+    if not DATABASE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Database not available")
+    
+    try:
+        messages = db.query(Message).filter(
+            Message.conversation_id == conversation_id
+        ).order_by(Message.created_at).limit(limit).all()
+        
+        return {
+            "success": True,
+            "conversation_id": conversation_id,
+            "messages": [
+                {
+                    "id": msg.id,
+                    "role": msg.role,
+                    "content": msg.content,
+                    "tokens": msg.tokens,
+                    "cost": msg.cost,
+                    "created_at": msg.created_at.isoformat()
+                }
+                for msg in messages
+            ]
+        }
+    except Exception as e:
+        logger.error(f"Error getting messages: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/db/users/{user_id}/conversations")
+async def get_user_conversations(
+    user_id: int,
+    archived: bool = False,
+    limit: Optional[int] = 50,
+    db: Session = Depends(get_db)
+):
+    """Get all conversations for a user"""
+    if not DATABASE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Database not available")
+    
+    try:
+        conversations = db.query(Conversation).filter(
+            Conversation.user_id == user_id,
+            Conversation.is_archived == archived
+        ).order_by(Conversation.updated_at.desc()).limit(limit).all()
+        
+        return {
+            "success": True,
+            "user_id": user_id,
+            "conversations": [
+                {
+                    "id": conv.id,
+                    "title": conv.title,
+                    "model": conv.model,
+                    "created_at": conv.created_at.isoformat(),
+                    "updated_at": conv.updated_at.isoformat() if conv.updated_at else None,
+                    "message_count": len(conv.messages)
+                }
+                for conv in conversations
+            ]
+        }
+    except Exception as e:
+        logger.error(f"Error getting conversations: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/db/excel/log")
+async def log_excel_file_opened(
+    user_id: int,
+    file_path: str,
+    file_name: str,
+    sheet_names: List[str],
+    db: Session = Depends(get_db)
+):
+    """Log when an Excel file is opened"""
+    if not DATABASE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Database not available")
+    
+    try:
+        # Check if file already exists in database
+        excel_file = db.query(ExcelFile).filter(
+            ExcelFile.user_id == user_id,
+            ExcelFile.file_path == file_path
+        ).first()
+        
+        if excel_file:
+            # Update existing record
+            excel_file.last_opened = datetime.now()
+            excel_file.sheet_names = sheet_names
+        else:
+            # Create new record
+            excel_file = ExcelFile(
+                user_id=user_id,
+                file_path=file_path,
+                file_name=file_name,
+                sheet_names=sheet_names,
+                last_opened=datetime.now()
+            )
+            db.add(excel_file)
+        
+        db.commit()
+        db.refresh(excel_file)
+        
+        return {
+            "success": True,
+            "file_id": excel_file.id
+        }
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error logging Excel file: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/db/excel/recent")
+async def get_recent_excel_files(
+    user_id: int,
+    limit: int = 10,
+    db: Session = Depends(get_db)
+):
+    """Get recently opened Excel files for a user"""
+    if not DATABASE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Database not available")
+    
+    try:
+        files = db.query(ExcelFile).filter(
+            ExcelFile.user_id == user_id
+        ).order_by(ExcelFile.last_opened.desc()).limit(limit).all()
+        
+        return {
+            "success": True,
+            "files": [
+                {
+                    "id": f.id,
+                    "file_name": f.file_name,
+                    "file_path": f.file_path,
+                    "sheet_names": f.sheet_names,
+                    "last_opened": f.last_opened.isoformat() if f.last_opened else None
+                }
+                for f in files
+            ]
+        }
+    except Exception as e:
+        logger.error(f"Error getting recent files: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/db/health")
+async def database_health_check():
+    """Check if database connection is healthy"""
+    if not DATABASE_AVAILABLE:
+        return {
+            "status": "unavailable",
+            "message": "Database modules not installed"
+        }
+    
+    try:
+        from database import engine
+        # Try to connect to database
+        with engine.connect() as conn:
+            return {
+                "status": "healthy",
+                "message": "Database connection successful"
+            }
+    except Exception as e:
+        return {
+            "status": "unhealthy",
+            "message": str(e)
+        }
 
 
 if __name__ == "__main__":
