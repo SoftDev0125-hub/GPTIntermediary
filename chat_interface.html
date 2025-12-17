@@ -3459,10 +3459,19 @@
         let selectedFunction = null;
 
         function openExcelEditor(filePath, sheets, activeSheet, sheetData) {
+            console.log('📊 openExcelEditor called with:');
+            console.log('  - filePath:', filePath);
+            console.log('  - sheets:', sheets);
+            console.log('  - activeSheet:', activeSheet);
+            console.log('  - sheetData keys:', sheetData ? Object.keys(sheetData) : 'N/A');
+            console.log('  - sheetData structure:', sheetData);
+            
             currentExcelSpreadsheet.filePath = filePath;
             currentExcelSpreadsheet.sheets = sheets || ['Sheet1'];
             currentExcelSpreadsheet.activeSheet = activeSheet || 'Sheet1';
             currentExcelSpreadsheet.data = sheetData || { 'Sheet1': Array(30).fill().map(() => Array(15).fill('')) };
+            
+            console.log('📊 currentExcelSpreadsheet.data keys:', Object.keys(currentExcelSpreadsheet.data));
             
             if (excelSpreadsheetArea) {
                 const fileName = filePath.split('\\').pop() || filePath.split('/').pop() || 'Spreadsheet';
@@ -4418,10 +4427,17 @@
         }
 
         function switchExcelSheet(sheetName) {
+            console.log(`🔄 Switching to sheet: ${sheetName}`);
+            console.log('Available sheets in data:', Object.keys(currentExcelSpreadsheet.data));
+            console.log('Has sheet data?', !!currentExcelSpreadsheet.data[sheetName]);
+            
             currentExcelSpreadsheet.activeSheet = sheetName;
             
             if (!currentExcelSpreadsheet.data[sheetName]) {
+                console.log(`⚠️ No data for ${sheetName}, creating empty sheet`);
                 currentExcelSpreadsheet.data[sheetName] = Array(30).fill().map(() => Array(15).fill(''));
+            } else {
+                console.log(`✅ Found ${currentExcelSpreadsheet.data[sheetName].length} rows for ${sheetName}`);
             }
             
             const gridContainer = document.getElementById('excelGridContainer');
@@ -6139,10 +6155,39 @@
                         if (excelOpenFilePath) excelOpenFilePath.value = '';
                         
                         // Transform the data from backend format to frontend format
-                        let transformedData = null;
-                        if (data.data && Array.isArray(data.data)) {
-                            // Backend sends: [[{value: "x", ...}, ...], ...]
-                            // Frontend needs: {SheetName: [["x", ...], ...]}
+                        let transformedData = {};
+                        
+                        console.log('📦 Processing backend data...');
+                        console.log('Has all_sheets_data?', !!data.all_sheets_data);
+                        console.log('all_sheets_data keys:', data.all_sheets_data ? Object.keys(data.all_sheets_data) : 'N/A');
+                        
+                        // Check if we have all sheets data (new format)
+                        if (data.all_sheets_data && typeof data.all_sheets_data === 'object') {
+                            console.log('✅ Loading all sheets from all_sheets_data');
+                            
+                            // Transform each sheet's data
+                            for (const [sheetName, sheetData] of Object.entries(data.all_sheets_data)) {
+                                console.log(`Processing sheet: ${sheetName}, rows: ${sheetData.length}`);
+                                
+                                if (Array.isArray(sheetData)) {
+                                    transformedData[sheetName] = sheetData.map(row => {
+                                        return row.map(cell => {
+                                            // Extract just the value or formula
+                                            if (cell && typeof cell === 'object') {
+                                                return cell.formula || cell.value || '';
+                                            }
+                                            return cell || '';
+                                        });
+                                    });
+                                    console.log(`✅ Transformed ${sheetName}: ${transformedData[sheetName].length} rows`);
+                                }
+                            }
+                            
+                            console.log('✅ All sheets loaded:', Object.keys(transformedData));
+                        }
+                        // Fallback to old format (single sheet data)
+                        else if (data.data && Array.isArray(data.data)) {
+                            console.log('Loading single sheet from data field (backward compatibility)');
                             
                             const sheetData = data.data.map(row => {
                                 return row.map(cell => {
@@ -6154,8 +6199,6 @@
                                 });
                             });
                             
-                            // Create the sheet data structure
-                            transformedData = {};
                             const activeSheet = data.active_sheet || data.sheets?.[0] || 'Sheet1';
                             transformedData[activeSheet] = sheetData;
                             
@@ -6167,9 +6210,9 @@
                                     }
                                 });
                             }
-                            
-                            console.log('Transformed data structure:', transformedData);
                         }
+                        
+                        console.log('Transformed data structure:', transformedData);
                         
                         // Open the spreadsheet in the editor
                         openExcelEditor(

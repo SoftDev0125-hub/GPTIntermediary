@@ -107,70 +107,81 @@ class ExcelService:
             # Get all sheet names
             sheet_names = wb.sheetnames
             
-            # Get data from active sheet
-            ws = wb.active
-            data = []
+            # Get active sheet name
+            active_sheet_name = wb.active.title
             
-            # Read all rows (limit to first 1000 rows for performance)
-            for row_idx, row in enumerate(ws.iter_rows(max_row=1000, values_only=False), start=1):
-                row_data = []
-                for cell in row:
-                    # Helper function to convert RGB to string
-                    def rgb_to_string(rgb_obj):
-                        if rgb_obj is None:
-                            return None
-                        try:
-                            # RGB object might be a string already or have a value
-                            if isinstance(rgb_obj, str):
-                                return rgb_obj
-                            # Try to access as indexed (tuple-like)
-                            if hasattr(rgb_obj, '__iter__') and not isinstance(rgb_obj, str):
-                                try:
-                                    return f"{rgb_obj[0]:02X}{rgb_obj[1]:02X}{rgb_obj[2]:02X}"
-                                except:
-                                    pass
-                            # Convert to string as fallback
-                            return str(rgb_obj) if rgb_obj else None
-                        except:
-                            return None
-                    
-                    # Safely get color values
-                    font_color = None
-                    if cell.font and cell.font.color:
-                        try:
-                            font_color = rgb_to_string(cell.font.color.rgb)
-                        except:
-                            pass
-                    
-                    bg_color = None
-                    if cell.fill and hasattr(cell.fill, 'fgColor') and cell.fill.fgColor:
-                        try:
-                            bg_color = rgb_to_string(cell.fill.fgColor.rgb)
-                        except:
-                            pass
-                    
-                    cell_data = {
-                        "value": cell.value,
-                        "formatted_value": str(cell.value) if cell.value is not None else "",
-                        "formula": cell.value if isinstance(cell.value, str) and cell.value.startswith('=') else None,
-                        "style": {
-                            "bold": cell.font.bold if cell.font else False,
-                            "italic": cell.font.italic if cell.font else False,
-                            "color": font_color,
-                            "bg_color": bg_color
+            # Load data from ALL sheets
+            all_sheets_data = {}
+            
+            for sheet_name in sheet_names:
+                ws = wb[sheet_name]
+                data = []
+                
+                # Read all rows (limit to first 1000 rows for performance)
+                for row_idx, row in enumerate(ws.iter_rows(max_row=1000, values_only=False), start=1):
+                    row_data = []
+                    for cell in row:
+                        # Helper function to convert RGB to string
+                        def rgb_to_string(rgb_obj):
+                            if rgb_obj is None:
+                                return None
+                            try:
+                                # RGB object might be a string already or have a value
+                                if isinstance(rgb_obj, str):
+                                    return rgb_obj
+                                # Try to access as indexed (tuple-like)
+                                if hasattr(rgb_obj, '__iter__') and not isinstance(rgb_obj, str):
+                                    try:
+                                        return f"{rgb_obj[0]:02X}{rgb_obj[1]:02X}{rgb_obj[2]:02X}"
+                                    except:
+                                        pass
+                                # Convert to string as fallback
+                                return str(rgb_obj) if rgb_obj else None
+                            except:
+                                return None
+                        
+                        # Safely get color values
+                        font_color = None
+                        if cell.font and cell.font.color:
+                            try:
+                                font_color = rgb_to_string(cell.font.color.rgb)
+                            except:
+                                pass
+                        
+                        bg_color = None
+                        if cell.fill and hasattr(cell.fill, 'fgColor') and cell.fill.fgColor:
+                            try:
+                                bg_color = rgb_to_string(cell.fill.fgColor.rgb)
+                            except:
+                                pass
+                        
+                        cell_data = {
+                            "value": cell.value,
+                            "formatted_value": str(cell.value) if cell.value is not None else "",
+                            "formula": cell.value if isinstance(cell.value, str) and cell.value.startswith('=') else None,
+                            "style": {
+                                "bold": cell.font.bold if cell.font else False,
+                                "italic": cell.font.italic if cell.font else False,
+                                "color": font_color,
+                                "bg_color": bg_color
+                            }
                         }
-                    }
-                    row_data.append(cell_data)
-                data.append(row_data)
+                        row_data.append(cell_data)
+                    data.append(row_data)
+                
+                # Store this sheet's data
+                all_sheets_data[sheet_name] = data
             
+            # Return all sheets data
             return {
                 "success": True,
                 "file_path": file_path,
                 "sheet_names": sheet_names,
-                "active_sheet": ws.title,
-                "data": data,
-                "rows": ws.max_row,
-                "columns": ws.max_column,
+                "active_sheet": active_sheet_name,
+                "all_sheets_data": all_sheets_data,  # All sheets
+                "data": all_sheets_data.get(active_sheet_name, []),  # Active sheet for backward compatibility
+                "rows": wb.active.max_row,
+                "columns": wb.active.max_column,
                 "message": "Spreadsheet opened successfully"
             }
         except Exception as e:

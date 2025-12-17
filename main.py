@@ -1079,6 +1079,7 @@ async def open_excel_spreadsheet(request: OpenExcelSpreadsheetRequest):
                 "sheets": result.get("sheet_names"),
                 "active_sheet": result.get("active_sheet"),
                 "data": result.get("data"),
+                "all_sheets_data": result.get("all_sheets_data"),  # Include ALL sheets data
                 "rows": result.get("rows"),
                 "columns": result.get("columns")
             }
