@@ -3,7 +3,7 @@ Chat Server - Connects OpenAI API with your backend
 This provides a ChatGPT-like experience with email and app control
 """
 
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 import openai
 import os
@@ -138,6 +138,15 @@ def call_backend_function(function_name, arguments):
         print(f"Backend error: {str(e)}")
         return {"error": str(e)}
 
+
+@app.route('/')
+def index():
+    """Serve the chat interface HTML"""
+    try:
+        html_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'chat_interface.html')
+        return send_file(html_path)
+    except Exception as e:
+        return f"Error loading chat interface: {str(e)}", 500
 
 @app.route('/health', methods=['GET'])
 def health():

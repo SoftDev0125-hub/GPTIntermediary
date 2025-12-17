@@ -115,6 +115,40 @@ class ExcelService:
             for row_idx, row in enumerate(ws.iter_rows(max_row=1000, values_only=False), start=1):
                 row_data = []
                 for cell in row:
+                    # Helper function to convert RGB to string
+                    def rgb_to_string(rgb_obj):
+                        if rgb_obj is None:
+                            return None
+                        try:
+                            # RGB object might be a string already or have a value
+                            if isinstance(rgb_obj, str):
+                                return rgb_obj
+                            # Try to access as indexed (tuple-like)
+                            if hasattr(rgb_obj, '__iter__') and not isinstance(rgb_obj, str):
+                                try:
+                                    return f"{rgb_obj[0]:02X}{rgb_obj[1]:02X}{rgb_obj[2]:02X}"
+                                except:
+                                    pass
+                            # Convert to string as fallback
+                            return str(rgb_obj) if rgb_obj else None
+                        except:
+                            return None
+                    
+                    # Safely get color values
+                    font_color = None
+                    if cell.font and cell.font.color:
+                        try:
+                            font_color = rgb_to_string(cell.font.color.rgb)
+                        except:
+                            pass
+                    
+                    bg_color = None
+                    if cell.fill and hasattr(cell.fill, 'fgColor') and cell.fill.fgColor:
+                        try:
+                            bg_color = rgb_to_string(cell.fill.fgColor.rgb)
+                        except:
+                            pass
+                    
                     cell_data = {
                         "value": cell.value,
                         "formatted_value": str(cell.value) if cell.value is not None else "",
@@ -122,8 +156,8 @@ class ExcelService:
                         "style": {
                             "bold": cell.font.bold if cell.font else False,
                             "italic": cell.font.italic if cell.font else False,
-                            "color": cell.font.color.rgb if cell.font and cell.font.color else None,
-                            "bg_color": cell.fill.fgColor.rgb if cell.fill else None
+                            "color": font_color,
+                            "bg_color": bg_color
                         }
                     }
                     row_data.append(cell_data)

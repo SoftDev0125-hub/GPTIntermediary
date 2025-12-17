@@ -80,14 +80,34 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Configure CORS
+# Configure CORS - Allow all origins including file:// (null origin)
+# Using wildcard with allow_credentials=False to support null origin
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure appropriately for production
-    allow_credentials=True,
+    allow_origins=["*"],  # Allows all origins including null
+    allow_credentials=False,  # Must be False when using wildcard origins
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
+
+# Additional middleware to handle null origin (file:// protocol) explicitly
+@app.middleware("http")
+async def cors_null_origin_handler(request, call_next):
+    """
+    Custom middleware to handle null origin (file:// protocol)
+    """
+    origin = request.headers.get("origin")
+    response = await call_next(request)
+    
+    # If origin is null or doesn't exist, add CORS headers
+    if origin is None or origin == "null":
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Methods"] = "*"
+        response.headers["Access-Control-Allow-Headers"] = "*"
+        response.headers["Access-Control-Expose-Headers"] = "*"
+    
+    return response
 
 # Initialize services
 email_service = EmailService()
@@ -1020,7 +1040,21 @@ async def create_excel_spreadsheet(request: CreateExcelSpreadsheetRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/excel/open", response_model=ExcelSpreadsheetResponse)
+# Add explicit OPTIONS handler for CORS preflight
+@app.options("/api/excel/open")
+async def excel_open_options():
+    """Handle CORS preflight for Excel open endpoint"""
+    from fastapi.responses import Response
+    return Response(
+        status_code=200,
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "POST, OPTIONS",
+            "Access-Control-Allow-Headers": "*",
+        }
+    )
+
+@app.post("/api/excel/open")
 async def open_excel_spreadsheet(request: OpenExcelSpreadsheetRequest):
     """
     Open an existing Excel spreadsheet
@@ -1031,8 +1065,62 @@ async def open_excel_spreadsheet(request: OpenExcelSpreadsheetRequest):
     Returns:
         Spreadsheet data and information
     """
+    from fastapi.responses import JSONResponse
+    
     try:
         logger.info(f"Opening Excel spreadsheet: {request.file_path}")
+        result = await excel_service.open_spreadsheet(request.file_path)
+        
+        if result.get("success"):
+            response_data = {
+                "success": True,
+                "message": result.get("message", "Spreadsheet opened successfully"),
+                "file_path": result.get("file_path"),
+                "sheets": result.get("sheet_names"),
+                "active_sheet": result.get("active_sheet"),
+                "data": result.get("data"),
+                "rows": result.get("rows"),
+                "columns": result.get("columns")
+            }
+            
+            # Return with explicit CORS headers
+            return JSONResponse(
+                content=response_data,
+                headers={
+                    "Access-Control-Allow-Origin": "*",
+                    "Access-Control-Allow-Methods": "POST, OPTIONS",
+                    "Access-Control-Allow-Headers": "*",
+                }
+            )
+        else:
+            return JSONResponse(
+                status_code=500,
+                content={"success": False, "error": result.get("error", "Failed to open spreadsheet")},
+                headers={
+                    "Access-Control-Allow-Origin": "*",
+                    "Access-Control-Allow-Methods": "POST, OPTIONS",
+                    "Access-Control-Allow-Headers": "*",
+                }
+            )
+    except Exception as e:
+        logger.error(f"Error opening Excel spreadsheet: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={"success": False, "error": str(e)},
+            headers={
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "POST, OPTIONS",
+                "Access-Control-Allow-Headers": "*",
+            }
+        )
+
+
+# Keep the old endpoint definition for backwards compatibility (will use the handler above)
+@app.post("/api/excel/open_old", response_model=ExcelSpreadsheetResponse)
+async def open_excel_spreadsheet_old(request: OpenExcelSpreadsheetRequest):
+    """Old endpoint - use /api/excel/open instead"""
+    try:
+        logger.info(f"Opening Excel spreadsheet (old endpoint): {request.file_path}")
         result = await excel_service.open_spreadsheet(request.file_path)
         
         if result.get("success"):
@@ -1454,6 +1542,109 @@ except Exception as e:
         logger.error(f"Error in select_folder: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to show folder picker: {str(e)}")
 
+
+@app.get("/api/excel/select-file")
+async def select_excel_file(initial_path: str = None):
+    """
+    Open native Windows file picker dialog for Excel files
+    
+    Args:
+        initial_path: Optional initial folder path to start from
+    
+    Returns:
+        Selected Excel file path or None if cancelled
+    """
+    try:
+        if platform.system() != "Windows":
+            raise HTTPException(status_code=400, detail="File picker is only available on Windows")
+        
+        import subprocess
+        import json
+        import tempfile
+        
+        # Create a temporary Python script to show the file picker for Excel files
+        script_content = """import tkinter as tk
+from tkinter import filedialog
+import sys
+import json
+import os
+
+try:
+    root = tk.Tk()
+    root.withdraw()  # Hide the main window
+    root.attributes('-topmost', True)  # Bring to front
+    
+    # Set initial directory if provided
+    initial_dir = sys.argv[1] if len(sys.argv) > 1 and os.path.isdir(sys.argv[1]) else os.path.expanduser('~')
+    
+    # Show file picker dialog for Excel files
+    file_path = filedialog.askopenfilename(
+        title="Select Excel Spreadsheet",
+        initialdir=initial_dir,
+        filetypes=[
+            ("Excel Files", "*.xlsx *.xls"),
+            ("Excel Workbook", "*.xlsx"),
+            ("Excel 97-2003", "*.xls"),
+            ("All Files", "*.*")
+        ]
+    )
+    
+    root.destroy()
+    
+    # Return result as JSON
+    if file_path:
+        print(json.dumps({"success": True, "file_path": file_path}))
+    else:
+        print(json.dumps({"success": False, "cancelled": True}))
+        
+except Exception as e:
+    print(json.dumps({"success": False, "error": str(e)}))
+    sys.exit(1)
+"""
+        
+        # Write script to temporary file
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+            f.write(script_content)
+            script_path = f.name
+        
+        try:
+            # Prepare initial path argument
+            args = [sys.executable, script_path]
+            if initial_path and os.path.isdir(initial_path):
+                args.append(initial_path)
+            elif initial_path:
+                # If file path provided, use its directory
+                parent_dir = os.path.dirname(initial_path)
+                if os.path.isdir(parent_dir):
+                    args.append(parent_dir)
+            
+            # Run the script
+            result = subprocess.run(
+                args,
+                capture_output=True,
+                text=True,
+                timeout=120  # 2 minute timeout
+            )
+            
+            # Parse the output
+            if result.stdout:
+                output = json.loads(result.stdout.strip())
+                return output
+            else:
+                return {"success": False, "error": "No output from file picker"}
+                
+        finally:
+            # Clean up temp file
+            try:
+                os.unlink(script_path)
+            except:
+                pass
+                
+    except subprocess.TimeoutExpired:
+        return {"success": False, "error": "File picker timed out"}
+    except Exception as e:
+        logger.error(f"Error in select_excel_file: {str(e)}")
+        return {"success": False, "error": str(e)}
 
 @app.get("/api/word/select-file")
 async def select_file(initial_path: str = None):

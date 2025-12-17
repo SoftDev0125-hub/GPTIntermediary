@@ -2238,7 +2238,14 @@ body::before {
     font-weight: 700;
     font-style: italic;
     font-size: 14px;
+    border: none;
     border-right: 1px solid #e0e0e0;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.excel-formula-bar-fx:hover {
+    background: rgba(99, 102, 241, 0.2);
 }
 
 .excel-formula-bar-input {
@@ -2338,6 +2345,27 @@ body::before {
     color: #1e293b !important;
 }
 
+.excel-cell-copied {
+    border: 2px dashed #10b981 !important;
+    animation: copiedBlink 1s ease-in-out infinite;
+}
+
+@keyframes copiedBlink {
+    0%, 100% { border-color: #10b981; }
+    50% { border-color: #34d399; }
+}
+
+.excel-cell-cut {
+    border: 2px dashed #ef4444 !important;
+    animation: cutBlink 1s ease-in-out infinite;
+    opacity: 0.6;
+}
+
+@keyframes cutBlink {
+    0%, 100% { border-color: #ef4444; }
+    50% { border-color: #f87171; }
+}
+
 .excel-sheet-tabs {
     display: flex;
     gap: 4px;
@@ -2369,6 +2397,181 @@ body::before {
     color: white;
     border-color: rgba(99, 102, 241, 0.5);
     font-weight: 600;
+}
+
+/* Excel Function Modal */
+.excel-function-modal {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 10000;
+    justify-content: center;
+    align-items: center;
+}
+
+.excel-function-modal-content {
+    background: rgba(30, 41, 59, 0.98);
+    border: 1px solid rgba(99, 102, 241, 0.5);
+    border-radius: 12px;
+    width: 90%;
+    max-width: 800px;
+    max-height: 80vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+.excel-function-modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 20px 24px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.excel-function-modal-header h3 {
+    color: white;
+    margin: 0;
+    font-size: 20px;
+}
+
+.excel-function-modal-body {
+    flex: 1;
+    padding: 20px 24px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.excel-function-search {
+    width: 100%;
+}
+
+.excel-function-search input {
+    width: 100%;
+    padding: 10px 16px;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 8px;
+    color: white;
+    font-size: 14px;
+}
+
+.excel-function-search input::placeholder {
+    color: rgba(255, 255, 255, 0.5);
+}
+
+.excel-function-categories {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.excel-function-category-btn {
+    padding: 8px 16px;
+    background: rgba(255, 255, 255, 0.1);
+    color: rgba(255, 255, 255, 0.8);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    transition: all 0.2s;
+}
+
+.excel-function-category-btn:hover {
+    background: rgba(99, 102, 241, 0.3);
+    border-color: rgba(99, 102, 241, 0.5);
+}
+
+.excel-function-category-btn.active {
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.8) 0%, rgba(168, 85, 247, 0.8) 100%);
+    color: white;
+    border-color: rgba(99, 102, 241, 0.5);
+    font-weight: 600;
+}
+
+.excel-function-list {
+    flex: 1;
+    max-height: 300px;
+    overflow-y: auto;
+    background: rgba(0, 0, 0, 0.2);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    padding: 8px;
+}
+
+.excel-function-item {
+    padding: 12px 16px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 6px;
+    margin-bottom: 8px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.excel-function-item:hover {
+    background: rgba(99, 102, 241, 0.2);
+    border-color: rgba(99, 102, 241, 0.5);
+}
+
+.excel-function-item.selected {
+    background: rgba(99, 102, 241, 0.3);
+    border-color: rgba(99, 102, 241, 0.7);
+}
+
+.excel-function-name {
+    color: #a5b4fc;
+    font-weight: 700;
+    font-size: 15px;
+    margin-bottom: 4px;
+}
+
+.excel-function-syntax {
+    color: rgba(255, 255, 255, 0.7);
+    font-size: 13px;
+    font-family: 'Consolas', 'Monaco', monospace;
+}
+
+.excel-function-description {
+    background: rgba(0, 0, 0, 0.2);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    padding: 16px;
+    color: white;
+}
+
+.excel-function-description h4 {
+    color: #a5b4fc;
+    margin: 0 0 12px 0;
+    font-size: 16px;
+}
+
+.excel-function-description p {
+    margin: 8px 0;
+    font-size: 13px;
+    line-height: 1.6;
+}
+
+.excel-function-description code {
+    background: rgba(99, 102, 241, 0.2);
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-family: 'Consolas', 'Monaco', monospace;
+    color: #c7d2fe;
+}
+
+.excel-function-modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+    padding: 16px 24px;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 .excel-modal {

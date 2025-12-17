@@ -225,10 +225,13 @@
                                 <label for="excelOpenFilePath">File Path:</label>
                                 <div style="display: flex; gap: 8px; align-items: center;">
                                     <input type="text" id="excelOpenFilePath" placeholder="D:\Documents\spreadsheet.xlsx" style="flex: 1;" />
-                                    <button type="button" id="excelOpenFilePathBrowse" class="btn btn-secondary" style="white-space: nowrap; padding: 8px 16px;">Browse</button>
+                                    <button type="button" id="excelOpenFilePathBrowse" class="btn btn-secondary" style="white-space: nowrap; padding: 8px 16px;">📁 Browse</button>
                                 </div>
                                 <input type="file" id="excelOpenFilePathInput" accept=".xlsx,.xls" style="display: none;" />
-                                <small>Enter the full path to the Excel spreadsheet you want to open</small>
+                                <small style="display: block; margin-top: 8px; color: #64748b;">
+                                    💡 Click Browse to select a file, or type the full path manually.<br>
+                                    Examples: <code style="color: #6366f1;">D:\Documents\data.xlsx</code> or <code style="color: #6366f1;">C:\Users\YourName\Desktop\report.xlsx</code>
+                                </small>
                             </div>
                         </div>
                         <div class="excel-modal-footer">
@@ -3424,6 +3427,37 @@
             data: {} // { sheetName: [[cell values]] }
         };
 
+        // Excel function library
+        const excelFunctions = [
+            { name: 'SUM', category: 'math', syntax: '=SUM(range)', description: 'Adds all the numbers in a range of cells.', example: '=SUM(A1:A10)' },
+            { name: 'AVERAGE', category: 'math', syntax: '=AVERAGE(range)', description: 'Returns the average (arithmetic mean) of the arguments.', example: '=AVERAGE(A1:A10)' },
+            { name: 'COUNT', category: 'math', syntax: '=COUNT(range)', description: 'Counts the number of cells that contain numbers.', example: '=COUNT(A1:A10)' },
+            { name: 'COUNTA', category: 'math', syntax: '=COUNTA(range)', description: 'Counts the number of cells that are not empty.', example: '=COUNTA(A1:A10)' },
+            { name: 'MAX', category: 'math', syntax: '=MAX(range)', description: 'Returns the largest value in a set of values.', example: '=MAX(A1:A10)' },
+            { name: 'MIN', category: 'math', syntax: '=MIN(range)', description: 'Returns the smallest value in a set of values.', example: '=MIN(A1:A10)' },
+            { name: 'PRODUCT', category: 'math', syntax: '=PRODUCT(range)', description: 'Multiplies all the numbers given as arguments.', example: '=PRODUCT(A1:A5)' },
+            { name: 'ROUND', category: 'math', syntax: '=ROUND(number, num_digits)', description: 'Rounds a number to a specified number of digits.', example: '=ROUND(A1, 2)' },
+            { name: 'ROUNDUP', category: 'math', syntax: '=ROUNDUP(number, num_digits)', description: 'Rounds a number up, away from zero.', example: '=ROUNDUP(A1, 2)' },
+            { name: 'ROUNDDOWN', category: 'math', syntax: '=ROUNDDOWN(number, num_digits)', description: 'Rounds a number down, toward zero.', example: '=ROUNDDOWN(A1, 2)' },
+            { name: 'CONCATENATE', category: 'text', syntax: '=CONCATENATE(text1, text2, ...)', description: 'Joins several text strings into one text string.', example: '=CONCATENATE(A1, " ", B1)' },
+            { name: 'CONCAT', category: 'text', syntax: '=CONCAT(text1, text2, ...)', description: 'Combines text from multiple ranges and/or strings.', example: '=CONCAT(A1, B1)' },
+            { name: 'LEN', category: 'text', syntax: '=LEN(text)', description: 'Returns the number of characters in a text string.', example: '=LEN(A1)' },
+            { name: 'UPPER', category: 'text', syntax: '=UPPER(text)', description: 'Converts text to uppercase.', example: '=UPPER(A1)' },
+            { name: 'LOWER', category: 'text', syntax: '=LOWER(text)', description: 'Converts text to lowercase.', example: '=LOWER(A1)' },
+            { name: 'TRIM', category: 'text', syntax: '=TRIM(text)', description: 'Removes all spaces from text except single spaces between words.', example: '=TRIM(A1)' },
+            { name: 'LEFT', category: 'text', syntax: '=LEFT(text, num_chars)', description: 'Returns the first character or characters in a text string.', example: '=LEFT(A1, 5)' },
+            { name: 'RIGHT', category: 'text', syntax: '=RIGHT(text, num_chars)', description: 'Returns the last character or characters in a text string.', example: '=RIGHT(A1, 5)' },
+            { name: 'MID', category: 'text', syntax: '=MID(text, start_num, num_chars)', description: 'Returns a specific number of characters from a text string.', example: '=MID(A1, 2, 5)' },
+            { name: 'IF', category: 'logical', syntax: '=IF(logical_test, value_if_true, value_if_false)', description: 'Returns one value if a condition is true and another value if it\'s false.', example: '=IF(A1>10, "High", "Low")' },
+            { name: 'AND', category: 'logical', syntax: '=AND(logical1, logical2, ...)', description: 'Returns TRUE if all arguments are TRUE.', example: '=AND(A1>0, B1<100)' },
+            { name: 'OR', category: 'logical', syntax: '=OR(logical1, logical2, ...)', description: 'Returns TRUE if any argument is TRUE.', example: '=OR(A1>0, B1>0)' },
+            { name: 'NOT', category: 'logical', syntax: '=NOT(logical)', description: 'Reverses the logic of its argument.', example: '=NOT(A1>0)' },
+            { name: 'TODAY', category: 'date', syntax: '=TODAY()', description: 'Returns the current date.', example: '=TODAY()' },
+            { name: 'NOW', category: 'date', syntax: '=NOW()', description: 'Returns the current date and time.', example: '=NOW()' }
+        ];
+
+        let selectedFunction = null;
+
         function openExcelEditor(filePath, sheets, activeSheet, sheetData) {
             currentExcelSpreadsheet.filePath = filePath;
             currentExcelSpreadsheet.sheets = sheets || ['Sheet1'];
@@ -3486,8 +3520,41 @@
                         <div class="excel-formula-bar">
                             <div class="excel-formula-bar-cell-ref" id="excelFormulaBarCellRef"></div>
                             <div class="excel-formula-bar-input-container">
-                                <span class="excel-formula-bar-fx">fx</span>
+                                <button class="excel-formula-bar-fx" id="excelFormulaBarFxButton" title="Insert Function">fx</button>
                                 <input type="text" class="excel-formula-bar-input" id="excelFormulaBarInput" placeholder="Enter value or formula (e.g., =SUM(A1:A10))">
+                            </div>
+                        </div>
+                        
+                        <!-- Function Helper Modal -->
+                        <div class="excel-function-modal" id="excelFunctionModal" style="display: none;">
+                            <div class="excel-function-modal-content">
+                                <div class="excel-function-modal-header">
+                                    <h3>Insert Function</h3>
+                                    <button class="excel-modal-close" id="excelFunctionModalClose">&times;</button>
+                                </div>
+                                <div class="excel-function-modal-body">
+                                    <div class="excel-function-search">
+                                        <input type="text" id="excelFunctionSearch" placeholder="Search functions..." />
+                                    </div>
+                                    <div class="excel-function-categories">
+                                        <button class="excel-function-category-btn active" data-category="all">All</button>
+                                        <button class="excel-function-category-btn" data-category="math">Math</button>
+                                        <button class="excel-function-category-btn" data-category="text">Text</button>
+                                        <button class="excel-function-category-btn" data-category="logical">Logical</button>
+                                        <button class="excel-function-category-btn" data-category="date">Date/Time</button>
+                                    </div>
+                                    <div class="excel-function-list" id="excelFunctionList">
+                                        <!-- Functions will be populated here -->
+                                    </div>
+                                    <div class="excel-function-description" id="excelFunctionDescription">
+                                        <h4>Function Description</h4>
+                                        <p>Select a function to see its description and syntax.</p>
+                                    </div>
+                                </div>
+                                <div class="excel-function-modal-footer">
+                                    <button class="btn btn-secondary" id="excelFunctionCancel">Cancel</button>
+                                    <button class="btn" id="excelFunctionInsert">Insert Function</button>
+                                </div>
                             </div>
                         </div>
                         
@@ -3509,6 +3576,9 @@
                 
                 // Attach event listeners to sheet tabs
                 attachExcelSheetTabListeners();
+                
+                // Recalculate all formulas to ensure dependencies are resolved
+                setTimeout(() => recalculateAllFormulas(), 10);
                 
                 // Handle keyboard shortcuts
                 document.addEventListener('keydown', handleExcelKeyboard);
@@ -3621,6 +3691,388 @@
                     }
                 });
             }
+            
+            // fx button - open function modal
+            const fxBtn = document.getElementById('excelFormulaBarFxButton');
+            if (fxBtn) {
+                fxBtn.addEventListener('click', () => {
+                    showFunctionModal();
+                });
+            }
+            
+            // Formatting buttons
+            const boldBtn = document.getElementById('excelEditorBold');
+            if (boldBtn) {
+                boldBtn.addEventListener('click', () => applyCellFormatting('fontWeight', 'bold'));
+            }
+            
+            const italicBtn = document.getElementById('excelEditorItalic');
+            if (italicBtn) {
+                italicBtn.addEventListener('click', () => applyCellFormatting('fontStyle', 'italic'));
+            }
+            
+            const underlineBtn = document.getElementById('excelEditorUnderline');
+            if (underlineBtn) {
+                underlineBtn.addEventListener('click', () => applyCellFormatting('textDecoration', 'underline'));
+            }
+            
+            // Alignment buttons
+            const alignLeftBtn = document.getElementById('excelEditorAlignLeft');
+            if (alignLeftBtn) {
+                alignLeftBtn.addEventListener('click', () => applyCellFormatting('textAlign', 'left'));
+            }
+            
+            const alignCenterBtn = document.getElementById('excelEditorAlignCenter');
+            if (alignCenterBtn) {
+                alignCenterBtn.addEventListener('click', () => applyCellFormatting('textAlign', 'center'));
+            }
+            
+            const alignRightBtn = document.getElementById('excelEditorAlignRight');
+            if (alignRightBtn) {
+                alignRightBtn.addEventListener('click', () => applyCellFormatting('textAlign', 'right'));
+            }
+            
+            // Font controls
+            const fontSizeSelect = document.getElementById('excelEditorFontSize');
+            if (fontSizeSelect) {
+                fontSizeSelect.addEventListener('change', function() {
+                    applyCellFormatting('fontSize', this.value + 'pt');
+                });
+            }
+            
+            const fontFamilySelect = document.getElementById('excelEditorFontFamily');
+            if (fontFamilySelect) {
+                fontFamilySelect.addEventListener('change', function() {
+                    applyCellFormatting('fontFamily', this.value);
+                });
+            }
+        }
+        
+        // Apply formatting to selected cells
+        function applyCellFormatting(property, value) {
+            const selectedCells = document.querySelectorAll('.excel-data-cell.excel-cell-selected');
+            if (selectedCells.length === 0) return;
+            
+            saveExcelState('Format Cells');
+            
+            selectedCells.forEach(cell => {
+                // Toggle formatting if it's already applied (for bold, italic, underline)
+                if (property === 'fontWeight' && cell.style.fontWeight === value) {
+                    cell.style.fontWeight = 'normal';
+                } else if (property === 'fontStyle' && cell.style.fontStyle === value) {
+                    cell.style.fontStyle = 'normal';
+                } else if (property === 'textDecoration' && cell.style.textDecoration === value) {
+                    cell.style.textDecoration = 'none';
+                } else {
+                    cell.style[property] = value;
+                }
+            });
+            
+            console.log('Applied formatting:', property, '=', value, 'to', selectedCells.length, 'cells');
+        }
+        
+        // Number formatting functions
+        function formatCurrency() {
+            const selectedCells = document.querySelectorAll('.excel-data-cell.excel-cell-selected');
+            if (selectedCells.length === 0) return;
+            
+            saveExcelState('Format as Currency');
+            
+            selectedCells.forEach(cell => {
+                const row = parseInt(cell.getAttribute('data-row'));
+                const col = parseInt(cell.getAttribute('data-col'));
+                const value = currentExcelSpreadsheet.data[currentExcelSpreadsheet.activeSheet][row][col];
+                
+                // Skip if it's a formula
+                if (typeof value === 'string' && value.startsWith('=')) return;
+                
+                const num = parseFloat(value);
+                if (!isNaN(num)) {
+                    const formatted = '$' + num.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+                    cell.textContent = formatted;
+                    cell.setAttribute('data-format', 'currency');
+                    cell.setAttribute('data-raw-value', value);
+                }
+            });
+            
+            console.log('Formatted as currency');
+        }
+        
+        function formatPercentage() {
+            const selectedCells = document.querySelectorAll('.excel-data-cell.excel-cell-selected');
+            if (selectedCells.length === 0) return;
+            
+            saveExcelState('Format as Percentage');
+            
+            selectedCells.forEach(cell => {
+                const row = parseInt(cell.getAttribute('data-row'));
+                const col = parseInt(cell.getAttribute('data-col'));
+                const value = currentExcelSpreadsheet.data[currentExcelSpreadsheet.activeSheet][row][col];
+                
+                // Skip if it's a formula
+                if (typeof value === 'string' && value.startsWith('=')) return;
+                
+                const num = parseFloat(value);
+                if (!isNaN(num)) {
+                    const formatted = (num * 100).toFixed(2) + '%';
+                    cell.textContent = formatted;
+                    cell.setAttribute('data-format', 'percentage');
+                    cell.setAttribute('data-raw-value', value);
+                }
+            });
+            
+            console.log('Formatted as percentage');
+        }
+        
+        function formatDecimals(decimals = 2) {
+            const selectedCells = document.querySelectorAll('.excel-data-cell.excel-cell-selected');
+            if (selectedCells.length === 0) return;
+            
+            saveExcelState('Format Decimals');
+            
+            selectedCells.forEach(cell => {
+                const row = parseInt(cell.getAttribute('data-row'));
+                const col = parseInt(cell.getAttribute('data-col'));
+                const value = currentExcelSpreadsheet.data[currentExcelSpreadsheet.activeSheet][row][col];
+                
+                // Skip if it's a formula
+                if (typeof value === 'string' && value.startsWith('=')) return;
+                
+                const num = parseFloat(value);
+                if (!isNaN(num)) {
+                    cell.textContent = num.toFixed(decimals);
+                    cell.setAttribute('data-format', 'decimal');
+                    cell.setAttribute('data-raw-value', value);
+                }
+            });
+            
+            console.log('Formatted with', decimals, 'decimals');
+        }
+        
+        function formatNumber() {
+            const selectedCells = document.querySelectorAll('.excel-data-cell.excel-cell-selected');
+            if (selectedCells.length === 0) return;
+            
+            saveExcelState('Format as Number');
+            
+            selectedCells.forEach(cell => {
+                const row = parseInt(cell.getAttribute('data-row'));
+                const col = parseInt(cell.getAttribute('data-col'));
+                const value = currentExcelSpreadsheet.data[currentExcelSpreadsheet.activeSheet][row][col];
+                
+                // Skip if it's a formula
+                if (typeof value === 'string' && value.startsWith('=')) return;
+                
+                const num = parseFloat(value);
+                if (!isNaN(num)) {
+                    const formatted = num.toLocaleString();
+                    cell.textContent = formatted;
+                    cell.setAttribute('data-format', 'number');
+                    cell.setAttribute('data-raw-value', value);
+                }
+            });
+            
+            console.log('Formatted as number');
+        }
+        
+        // Add keyboard shortcut for number formatting
+        function showFormatMenu() {
+            const menu = prompt('Format Options:\n1. Currency ($)\n2. Percentage (%)\n3. Number (1,000)\n4. Decimal (2 places)\n5. Decimal (4 places)\n6. Add All Borders\n7. Add Outer Border\n8. Remove Borders\n\nEnter option (1-8):');
+            
+            switch(menu) {
+                case '1':
+                    formatCurrency();
+                    break;
+                case '2':
+                    formatPercentage();
+                    break;
+                case '3':
+                    formatNumber();
+                    break;
+                case '4':
+                    formatDecimals(2);
+                    break;
+                case '5':
+                    formatDecimals(4);
+                    break;
+                case '6':
+                    addCellBorders('all');
+                    break;
+                case '7':
+                    addCellBorders('outer');
+                    break;
+                case '8':
+                    removeCellBorders();
+                    break;
+            }
+        }
+        
+        // Cell borders functionality
+        function addCellBorders(type = 'all') {
+            const selectedCells = document.querySelectorAll('.excel-data-cell.excel-cell-selected');
+            if (selectedCells.length === 0) return;
+            
+            saveExcelState('Add Cell Borders');
+            
+            if (type === 'all') {
+                selectedCells.forEach(cell => {
+                    cell.style.border = '2px solid #6366f1';
+                });
+            } else if (type === 'outer') {
+                // Get the range of selected cells
+                let minRow = Infinity, maxRow = -Infinity;
+                let minCol = Infinity, maxCol = -Infinity;
+                
+                selectedCells.forEach(cell => {
+                    const row = parseInt(cell.getAttribute('data-row'));
+                    const col = parseInt(cell.getAttribute('data-col'));
+                    minRow = Math.min(minRow, row);
+                    maxRow = Math.max(maxRow, row);
+                    minCol = Math.min(minCol, col);
+                    maxCol = Math.max(maxCol, col);
+                });
+                
+                // Apply outer borders
+                selectedCells.forEach(cell => {
+                    const row = parseInt(cell.getAttribute('data-row'));
+                    const col = parseInt(cell.getAttribute('data-col'));
+                    
+                    if (row === minRow) cell.style.borderTop = '2px solid #6366f1';
+                    if (row === maxRow) cell.style.borderBottom = '2px solid #6366f1';
+                    if (col === minCol) cell.style.borderLeft = '2px solid #6366f1';
+                    if (col === maxCol) cell.style.borderRight = '2px solid #6366f1';
+                });
+            }
+            
+            console.log('Added borders:', type);
+        }
+        
+        function removeCellBorders() {
+            const selectedCells = document.querySelectorAll('.excel-data-cell.excel-cell-selected');
+            if (selectedCells.length === 0) return;
+            
+            saveExcelState('Remove Cell Borders');
+            
+            selectedCells.forEach(cell => {
+                cell.style.border = '';
+                cell.style.borderTop = '';
+                cell.style.borderBottom = '';
+                cell.style.borderLeft = '';
+                cell.style.borderRight = '';
+            });
+            
+            console.log('Removed borders');
+        }
+
+        function showFunctionModal() {
+            const modal = document.getElementById('excelFunctionModal');
+            if (modal) {
+                modal.style.display = 'flex';
+                populateFunctionList('all');
+                
+                // Setup modal event listeners
+                setupFunctionModalListeners();
+            }
+        }
+
+        function setupFunctionModalListeners() {
+            // Close button
+            const closeBtn = document.getElementById('excelFunctionModalClose');
+            if (closeBtn) {
+                closeBtn.onclick = () => {
+                    document.getElementById('excelFunctionModal').style.display = 'none';
+                };
+            }
+            
+            // Cancel button
+            const cancelBtn = document.getElementById('excelFunctionCancel');
+            if (cancelBtn) {
+                cancelBtn.onclick = () => {
+                    document.getElementById('excelFunctionModal').style.display = 'none';
+                };
+            }
+            
+            // Insert button
+            const insertBtn = document.getElementById('excelFunctionInsert');
+            if (insertBtn) {
+                insertBtn.onclick = () => {
+                    if (selectedFunction) {
+                        const formulaInput = document.getElementById('excelFormulaBarInput');
+                        if (formulaInput) {
+                            formulaInput.value = selectedFunction.syntax;
+                            formulaInput.focus();
+                        }
+                        document.getElementById('excelFunctionModal').style.display = 'none';
+                    }
+                };
+            }
+            
+            // Category buttons
+            const categoryBtns = document.querySelectorAll('.excel-function-category-btn');
+            categoryBtns.forEach(btn => {
+                btn.onclick = function() {
+                    categoryBtns.forEach(b => b.classList.remove('active'));
+                    this.classList.add('active');
+                    const category = this.getAttribute('data-category');
+                    populateFunctionList(category);
+                };
+            });
+            
+            // Search input
+            const searchInput = document.getElementById('excelFunctionSearch');
+            if (searchInput) {
+                searchInput.oninput = function() {
+                    const searchTerm = this.value.toLowerCase();
+                    const filtered = excelFunctions.filter(f => 
+                        f.name.toLowerCase().includes(searchTerm) || 
+                        f.description.toLowerCase().includes(searchTerm)
+                    );
+                    renderFunctionList(filtered);
+                };
+            }
+        }
+
+        function populateFunctionList(category) {
+            const filtered = category === 'all' 
+                ? excelFunctions 
+                : excelFunctions.filter(f => f.category === category);
+            renderFunctionList(filtered);
+        }
+
+        function renderFunctionList(functions) {
+            const listContainer = document.getElementById('excelFunctionList');
+            if (!listContainer) return;
+            
+            listContainer.innerHTML = functions.map(func => `
+                <div class="excel-function-item" data-function="${func.name}">
+                    <div class="excel-function-name">${func.name}</div>
+                    <div class="excel-function-syntax">${func.syntax}</div>
+                </div>
+            `).join('');
+            
+            // Add click handlers
+            const items = listContainer.querySelectorAll('.excel-function-item');
+            items.forEach(item => {
+                item.onclick = function() {
+                    items.forEach(i => i.classList.remove('selected'));
+                    this.classList.add('selected');
+                    const funcName = this.getAttribute('data-function');
+                    selectedFunction = excelFunctions.find(f => f.name === funcName);
+                    showFunctionDescription(selectedFunction);
+                };
+            });
+        }
+
+        function showFunctionDescription(func) {
+            const descContainer = document.getElementById('excelFunctionDescription');
+            if (!descContainer || !func) return;
+            
+            descContainer.innerHTML = `
+                <h4>${func.name}</h4>
+                <p><strong>Syntax:</strong> ${func.syntax}</p>
+                <p><strong>Description:</strong> ${func.description}</p>
+                <p><strong>Example:</strong> <code>${func.example}</code></p>
+            `;
         }
 
         function attachExcelCellListeners() {
@@ -3629,6 +4081,70 @@
             const formulaBarCellRef = document.getElementById('excelFormulaBarCellRef');
             
             cells.forEach(cell => {
+                // Right-click context menu
+                cell.addEventListener('contextmenu', function(e) {
+                    e.preventDefault();
+                    const row = parseInt(this.getAttribute('data-row'));
+                    const col = parseInt(this.getAttribute('data-col'));
+                    showExcelContextMenu(e.clientX, e.clientY, row, col);
+                });
+                
+                // Mouse click handler for multi-selection
+                cell.addEventListener('mousedown', function(e) {
+                    const row = parseInt(this.getAttribute('data-row'));
+                    const col = parseInt(this.getAttribute('data-col'));
+                    
+                    if (e.shiftKey && excelSelection.start) {
+                        // Shift-click: select range
+                        e.preventDefault();
+                        
+                        const startRow = excelSelection.start.row;
+                        const startCol = excelSelection.start.col;
+                        const endRow = row;
+                        const endCol = col;
+                        
+                        // Clear previous selection
+                        document.querySelectorAll('.excel-cell-selected').forEach(c => {
+                            c.classList.remove('excel-cell-selected');
+                        });
+                        
+                        // Select all cells in range
+                        const minRow = Math.min(startRow, endRow);
+                        const maxRow = Math.max(startRow, endRow);
+                        const minCol = Math.min(startCol, endCol);
+                        const maxCol = Math.max(startCol, endCol);
+                        
+                        for (let r = minRow; r <= maxRow; r++) {
+                            for (let c = minCol; c <= maxCol; c++) {
+                                const rangeCell = document.querySelector(`[data-row="${r}"][data-col="${c}"]`);
+                                if (rangeCell) {
+                                    rangeCell.classList.add('excel-cell-selected');
+                                }
+                            }
+                        }
+                        
+                        excelSelection.end = { row, col };
+                    } else if (e.ctrlKey || e.metaKey) {
+                        // Ctrl-click: toggle selection
+                        e.preventDefault();
+                        this.classList.toggle('excel-cell-selected');
+                        
+                        if (!excelSelection.start) {
+                            excelSelection.start = { row, col };
+                        }
+                    } else {
+                        // Normal click: clear and select single cell
+                        if (!this.classList.contains('excel-cell-selected')) {
+                            document.querySelectorAll('.excel-cell-selected').forEach(c => {
+                                c.classList.remove('excel-cell-selected');
+                            });
+                        }
+                        
+                        excelSelection.start = { row, col };
+                        excelSelection.end = null;
+                    }
+                });
+                
                 cell.addEventListener('focus', function() {
                     const row = parseInt(this.getAttribute('data-row'));
                     const col = parseInt(this.getAttribute('data-col'));
@@ -3718,6 +4234,9 @@
                         currentExcelSpreadsheet.data[currentExcelSpreadsheet.activeSheet][row][col] = value;
                         this.removeAttribute('data-formula');
                     }
+                    
+                    // Recalculate all cells that depend on this cell
+                    recalculateDependentCells(row, col);
                     
                     this.classList.remove('excel-cell-selected');
                 });
@@ -3909,6 +4428,9 @@
             if (gridContainer) {
                 gridContainer.innerHTML = renderExcelGrid(currentExcelSpreadsheet.data[sheetName]);
                 attachExcelCellListeners();
+                
+                // Recalculate all formulas to ensure dependencies are resolved
+                setTimeout(() => recalculateAllFormulas(), 10);
             }
             
             updateSheetTabs();
@@ -4153,73 +4675,281 @@
             });
         }
 
+        // Extract cell references from a formula
+        function extractCellReferences(formula) {
+            const references = new Set();
+            if (!formula || !formula.startsWith('=')) return references;
+            
+            // Remove the leading =
+            const formulaText = formula.substring(1).toUpperCase();
+            
+            // Match individual cell references (e.g., A1, B2, AA10)
+            const cellRegex = /([A-Z]+)(\d+)(?![:\d])/g;
+            let match;
+            while ((match = cellRegex.exec(formulaText)) !== null) {
+                references.add(`${match[1]}${match[2]}`);
+            }
+            
+            // Match range references (e.g., A1:B10)
+            const rangeRegex = /([A-Z]+\d+):([A-Z]+\d+)/g;
+            while ((match = rangeRegex.exec(formulaText)) !== null) {
+                const startCell = match[1];
+                const endCell = match[2];
+                
+                // Parse start and end cells
+                const startMatch = startCell.match(/([A-Z]+)(\d+)/);
+                const endMatch = endCell.match(/([A-Z]+)(\d+)/);
+                
+                if (startMatch && endMatch) {
+                    const startCol = columnLetterToIndex(startMatch[1]);
+                    const startRow = parseInt(startMatch[2]) - 1;
+                    const endCol = columnLetterToIndex(endMatch[1]);
+                    const endRow = parseInt(endMatch[2]) - 1;
+                    
+                    // Add all cells in the range
+                    for (let r = startRow; r <= endRow; r++) {
+                        for (let c = startCol; c <= endCol; c++) {
+                            const colLetter = indexToColumnLetter(c);
+                            references.add(`${colLetter}${r + 1}`);
+                        }
+                    }
+                }
+            }
+            
+            return references;
+        }
+        
+        // Convert column index to letter (e.g., 0 -> A, 25 -> Z, 26 -> AA)
+        function indexToColumnLetter(index) {
+            let letter = '';
+            while (index >= 0) {
+                letter = String.fromCharCode(65 + (index % 26)) + letter;
+                index = Math.floor(index / 26) - 1;
+            }
+            return letter;
+        }
+        
+        // Find all cells that depend on the given cell
+        function findDependentCells(targetRow, targetCol) {
+            const dependents = [];
+            const targetCellRef = `${indexToColumnLetter(targetCol)}${targetRow + 1}`;
+            const sheetData = currentExcelSpreadsheet.data[currentExcelSpreadsheet.activeSheet];
+            
+            if (!sheetData) return dependents;
+            
+            // Check all cells in the sheet
+            for (let row = 0; row < sheetData.length; row++) {
+                for (let col = 0; col < sheetData[row].length; col++) {
+                    const cellValue = sheetData[row][col];
+                    
+                    // Skip if not a formula
+                    if (!cellValue || !cellValue.startsWith('=')) continue;
+                    
+                    // Check if this formula references the target cell
+                    const references = extractCellReferences(cellValue);
+                    if (references.has(targetCellRef)) {
+                        dependents.push({ row, col, formula: cellValue });
+                    }
+                }
+            }
+            
+            return dependents;
+        }
+        
+        // Recalculate all cells that depend on the changed cell
+        function recalculateDependentCells(changedRow, changedCol, visited = new Set()) {
+            // Create a unique key for this cell to prevent circular dependencies
+            const cellKey = `${changedRow},${changedCol}`;
+            if (visited.has(cellKey)) {
+                console.warn('Circular reference detected at', cellKey);
+                return;
+            }
+            visited.add(cellKey);
+            
+            // Find all cells that depend on this cell
+            const dependents = findDependentCells(changedRow, changedCol);
+            
+            // Recalculate each dependent cell
+            for (const dependent of dependents) {
+                const cell = document.querySelector(`[data-row="${dependent.row}"][data-col="${dependent.col}"]`);
+                if (cell && cell.hasAttribute('data-formula')) {
+                    const formula = cell.getAttribute('data-formula');
+                    
+                    try {
+                        const result = evaluateFormula(formula, dependent.row, dependent.col);
+                        cell.textContent = result;
+                        
+                        // Recursively recalculate cells that depend on this one
+                        recalculateDependentCells(dependent.row, dependent.col, visited);
+                    } catch (error) {
+                        console.error('Error recalculating cell', dependent.row, dependent.col, error);
+                        cell.textContent = '#ERROR!';
+                    }
+                }
+            }
+        }
+        
+        // Recalculate all formulas in the current sheet
+        // This is useful after loading a spreadsheet or switching sheets
+        function recalculateAllFormulas() {
+            const sheetData = currentExcelSpreadsheet.data[currentExcelSpreadsheet.activeSheet];
+            if (!sheetData) return;
+            
+            // Build a list of all cells with formulas
+            const formulaCells = [];
+            for (let row = 0; row < sheetData.length; row++) {
+                for (let col = 0; col < sheetData[row].length; col++) {
+                    const value = sheetData[row][col];
+                    if (value && typeof value === 'string' && value.startsWith('=')) {
+                        formulaCells.push({ row, col, formula: value });
+                    }
+                }
+            }
+            
+            // Calculate dependency depth for each formula (how many other formulas it depends on)
+            // This helps us evaluate them in the right order
+            const maxIterations = 10; // Prevent infinite loops
+            let iteration = 0;
+            let hasChanges = true;
+            
+            while (hasChanges && iteration < maxIterations) {
+                hasChanges = false;
+                iteration++;
+                
+                for (const formulaCell of formulaCells) {
+                    const cell = document.querySelector(`[data-row="${formulaCell.row}"][data-col="${formulaCell.col}"]`);
+                    if (cell) {
+                        try {
+                            const oldValue = cell.textContent;
+                            const newValue = evaluateFormula(formulaCell.formula, formulaCell.row, formulaCell.col);
+                            
+                            if (oldValue !== String(newValue)) {
+                                cell.textContent = newValue;
+                                hasChanges = true;
+                            }
+                        } catch (error) {
+                            cell.textContent = '#ERROR!';
+                        }
+                    }
+                }
+            }
+            
+            if (iteration >= maxIterations) {
+                console.warn('Recalculation stopped after', maxIterations, 'iterations. Possible circular reference.');
+            }
+        }
+
         function evaluateFormula(formula, currentRow, currentCol) {
-            // Remove leading =
-            let originalFormula = formula;
-            formula = formula.substring(1).trim();
-            
-            // Store original case for text functions
-            const upperFormula = formula.toUpperCase();
-            
-            // Handle special functions first (before cell reference replacement)
-            // CONCATENATE, CONCAT, TEXTJOIN
-            if (upperFormula.includes('CONCATENATE(') || upperFormula.includes('CONCAT(')) {
-                return evaluateConcatenate(formula);
-            }
-            
-            // LEN, UPPER, LOWER, TRIM, LEFT, RIGHT, MID
-            if (upperFormula.match(/\b(LEN|UPPER|LOWER|TRIM|LEFT|RIGHT|MID)\(/)) {
-                return evaluateTextFunction(formula);
-            }
-            
-            // TODAY, NOW
-            if (upperFormula === 'TODAY()') {
-                return new Date().toLocaleDateString();
-            }
-            if (upperFormula === 'NOW()') {
-                return new Date().toLocaleString();
-            }
-            
-            // ROUND, ROUNDUP, ROUNDDOWN
-            if (upperFormula.match(/\b(ROUND|ROUNDUP|ROUNDDOWN)\(/)) {
-                return evaluateRoundFunction(formula);
-            }
-            
-            // Handle cell references (e.g., A1, B2) - replace with values
-            formula = formula.replace(/([A-Z]+)(\d+)/gi, (match, col, row) => {
-                const colIndex = columnLetterToIndex(col.toUpperCase());
-                const rowIndex = parseInt(row) - 1;
-                const value = getCellValue(rowIndex, colIndex);
-                // Return quoted string if it's text, otherwise number
-                return isNaN(value) ? `"${value}"` : (value || '0');
-            });
-            
-            // Handle range functions
-            if (upperFormula.match(/\b(SUM|AVERAGE|COUNT|COUNTA|MAX|MIN|PRODUCT)\(/)) {
-                return evaluateRangeFunction(formula.toUpperCase());
-            }
-            
-            // Handle IF function
-            if (upperFormula.includes('IF(')) {
-                return evaluateIfFunction(formula);
-            }
-            
-            // Handle AND, OR, NOT
-            if (upperFormula.match(/\b(AND|OR|NOT)\(/)) {
-                return evaluateLogicalFunction(formula.toUpperCase());
-            }
-            
-            // Evaluate mathematical expression
             try {
+                // Remove leading =
+                let originalFormula = formula;
+                formula = formula.substring(1).trim();
+                
+                // Store original case for text functions
+                const upperFormula = formula.toUpperCase();
+                
+                console.log('Evaluating formula:', originalFormula);
+                
+                // TODAY, NOW - handle first (no parameters)
+                if (upperFormula === 'TODAY()') {
+                    return new Date().toLocaleDateString();
+                }
+                if (upperFormula === 'NOW()') {
+                    return new Date().toLocaleString();
+                }
+                
+                // Handle range functions BEFORE replacing cell references
+                if (upperFormula.match(/\b(SUM|AVERAGE|COUNT|COUNTA|MAX|MIN|PRODUCT)\(/)) {
+                    const result = evaluateRangeFunction(upperFormula);
+                    console.log('Range function result:', result);
+                    return result;
+                }
+                
+                // Handle text functions with cell references
+                if (upperFormula.match(/\b(LEN|UPPER|LOWER|TRIM)\(/)) {
+                    // Replace cell references first for text functions
+                    let textFormula = upperFormula.replace(/([A-Z]+)(\d+)/g, (match, col, row) => {
+                        const colIndex = columnLetterToIndex(col);
+                        const rowIndex = parseInt(row) - 1;
+                        const value = getCellValue(rowIndex, colIndex);
+                        return `"${value}"`;
+                    });
+                    return evaluateTextFunction(textFormula);
+                }
+                
+                // LEFT, RIGHT, MID with cell references
+                if (upperFormula.match(/\b(LEFT|RIGHT|MID)\(/)) {
+                    let textFormula = upperFormula.replace(/([A-Z]+)(\d+)(?![:\d])/g, (match, col, row) => {
+                        const colIndex = columnLetterToIndex(col);
+                        const rowIndex = parseInt(row) - 1;
+                        const value = getCellValue(rowIndex, colIndex);
+                        return `"${value}"`;
+                    });
+                    return evaluateTextFunction(textFormula);
+                }
+                
+                // CONCATENATE, CONCAT
+                if (upperFormula.includes('CONCATENATE(') || upperFormula.includes('CONCAT(')) {
+                    let concatFormula = upperFormula.replace(/([A-Z]+)(\d+)/g, (match, col, row) => {
+                        const colIndex = columnLetterToIndex(col);
+                        const rowIndex = parseInt(row) - 1;
+                        const value = getCellValue(rowIndex, colIndex);
+                        return `"${value}"`;
+                    });
+                    return evaluateConcatenate(concatFormula);
+                }
+                
+                // ROUND, ROUNDUP, ROUNDDOWN
+                if (upperFormula.match(/\b(ROUND|ROUNDUP|ROUNDDOWN)\(/)) {
+                    let roundFormula = upperFormula.replace(/([A-Z]+)(\d+)/g, (match, col, row) => {
+                        const colIndex = columnLetterToIndex(col);
+                        const rowIndex = parseInt(row) - 1;
+                        const value = getCellValue(rowIndex, colIndex);
+                        return value || '0';
+                    });
+                    return evaluateRoundFunction(roundFormula);
+                }
+                
+                // Handle IF function
+                if (upperFormula.includes('IF(')) {
+                    let ifFormula = upperFormula.replace(/([A-Z]+)(\d+)/g, (match, col, row) => {
+                        const colIndex = columnLetterToIndex(col);
+                        const rowIndex = parseInt(row) - 1;
+                        const value = getCellValue(rowIndex, colIndex);
+                        return isNaN(value) ? `"${value}"` : (value || '0');
+                    });
+                    return evaluateIfFunction(ifFormula);
+                }
+                
+                // Handle AND, OR, NOT
+                if (upperFormula.match(/\b(AND|OR|NOT)\(/)) {
+                    let logicalFormula = upperFormula.replace(/([A-Z]+)(\d+)/g, (match, col, row) => {
+                        const colIndex = columnLetterToIndex(col);
+                        const rowIndex = parseInt(row) - 1;
+                        const value = getCellValue(rowIndex, colIndex);
+                        return value || '0';
+                    });
+                    return evaluateLogicalFunction(logicalFormula);
+                }
+                
+                // Handle simple cell references and mathematical expressions
+                formula = upperFormula.replace(/([A-Z]+)(\d+)/g, (match, col, row) => {
+                    const colIndex = columnLetterToIndex(col);
+                    const rowIndex = parseInt(row) - 1;
+                    const value = getCellValue(rowIndex, colIndex);
+                    return value || '0';
+                });
+                
+                // Evaluate mathematical expression
                 // Replace Excel operators with JavaScript operators
                 formula = formula.replace(/\^/g, '**'); // Power
-                formula = formula.replace(/&/g, '+'); // Concatenation
                 
                 // Evaluate the expression
                 const result = Function('"use strict"; return (' + formula + ')')();
-                return isNaN(result) ? result : (Math.round(result * 100000000) / 100000000); // Round to 8 decimals
+                console.log('Math result:', result);
+                return isNaN(result) ? '#VALUE!' : (Math.round(result * 100000000) / 100000000);
             } catch (error) {
-                console.error('Formula evaluation error:', error, 'Formula:', originalFormula);
+                console.error('Formula evaluation error:', error, 'Formula:', formula);
                 return '#ERROR!';
             }
         }
@@ -4461,14 +5191,689 @@
             return index - 1;
         }
 
+        // Clipboard for Excel operations
+        let excelClipboard = {
+            data: [],
+            isCut: false,
+            sourceRange: null
+        };
+        
+        // Undo/Redo stacks
+        let excelUndoStack = [];
+        let excelRedoStack = [];
+        const MAX_UNDO_STACK = 50;
+        
+        // Multi-selection state
+        let excelSelection = {
+            start: null,
+            end: null,
+            cells: new Set()
+        };
+        
+        // Save state for undo/redo
+        function saveExcelState(description) {
+            const state = {
+                description: description,
+                sheet: currentExcelSpreadsheet.activeSheet,
+                data: JSON.parse(JSON.stringify(currentExcelSpreadsheet.data[currentExcelSpreadsheet.activeSheet]))
+            };
+            
+            excelUndoStack.push(state);
+            if (excelUndoStack.length > MAX_UNDO_STACK) {
+                excelUndoStack.shift();
+            }
+            
+            // Clear redo stack when a new action is performed
+            excelRedoStack = [];
+        }
+        
+        // Undo last action
+        function undoExcel() {
+            if (excelUndoStack.length === 0) {
+                console.log('Nothing to undo');
+                return;
+            }
+            
+            const currentState = {
+                description: 'Current state',
+                sheet: currentExcelSpreadsheet.activeSheet,
+                data: JSON.parse(JSON.stringify(currentExcelSpreadsheet.data[currentExcelSpreadsheet.activeSheet]))
+            };
+            excelRedoStack.push(currentState);
+            
+            const previousState = excelUndoStack.pop();
+            currentExcelSpreadsheet.data[previousState.sheet] = previousState.data;
+            
+            const gridContainer = document.getElementById('excelGridContainer');
+            if (gridContainer) {
+                gridContainer.innerHTML = renderExcelGrid(previousState.data);
+                attachExcelCellListeners();
+                setTimeout(() => recalculateAllFormulas(), 10);
+            }
+            
+            console.log('Undo:', previousState.description);
+        }
+        
+        // Redo last undone action
+        function redoExcel() {
+            if (excelRedoStack.length === 0) {
+                console.log('Nothing to redo');
+                return;
+            }
+            
+            const currentState = {
+                description: 'Current state',
+                sheet: currentExcelSpreadsheet.activeSheet,
+                data: JSON.parse(JSON.stringify(currentExcelSpreadsheet.data[currentExcelSpreadsheet.activeSheet]))
+            };
+            excelUndoStack.push(currentState);
+            
+            const nextState = excelRedoStack.pop();
+            currentExcelSpreadsheet.data[nextState.sheet] = nextState.data;
+            
+            const gridContainer = document.getElementById('excelGridContainer');
+            if (gridContainer) {
+                gridContainer.innerHTML = renderExcelGrid(nextState.data);
+                attachExcelCellListeners();
+                setTimeout(() => recalculateAllFormulas(), 10);
+            }
+            
+            console.log('Redo:', nextState.description);
+        }
+        
+        // Copy selected cells
+        function copyExcelCells() {
+            const selectedCells = document.querySelectorAll('.excel-data-cell.excel-cell-selected');
+            if (selectedCells.length === 0) return;
+            
+            excelClipboard.data = [];
+            excelClipboard.isCut = false;
+            
+            // Get the range of selected cells
+            let minRow = Infinity, maxRow = -Infinity;
+            let minCol = Infinity, maxCol = -Infinity;
+            
+            selectedCells.forEach(cell => {
+                const row = parseInt(cell.getAttribute('data-row'));
+                const col = parseInt(cell.getAttribute('data-col'));
+                minRow = Math.min(minRow, row);
+                maxRow = Math.max(maxRow, row);
+                minCol = Math.min(minCol, col);
+                maxCol = Math.max(maxCol, col);
+            });
+            
+            // Store the data in a 2D array
+            for (let r = minRow; r <= maxRow; r++) {
+                const rowData = [];
+                for (let c = minCol; c <= maxCol; c++) {
+                    const cell = document.querySelector(`[data-row="${r}"][data-col="${c}"]`);
+                    const formula = cell ? cell.getAttribute('data-formula') : null;
+                    const value = formula || (cell ? cell.textContent.trim() : '');
+                    rowData.push(value);
+                }
+                excelClipboard.data.push(rowData);
+            }
+            
+            excelClipboard.sourceRange = { minRow, maxRow, minCol, maxCol };
+            
+            // Visual feedback
+            document.querySelectorAll('.excel-cell-copied').forEach(cell => {
+                cell.classList.remove('excel-cell-copied');
+            });
+            selectedCells.forEach(cell => {
+                cell.classList.add('excel-cell-copied');
+            });
+            
+            console.log('Copied', selectedCells.length, 'cells');
+        }
+        
+        // Cut selected cells
+        function cutExcelCells() {
+            copyExcelCells();
+            excelClipboard.isCut = true;
+            
+            // Visual feedback for cut
+            document.querySelectorAll('.excel-cell-cut').forEach(cell => {
+                cell.classList.remove('excel-cell-cut');
+            });
+            document.querySelectorAll('.excel-cell-copied').forEach(cell => {
+                cell.classList.remove('excel-cell-copied');
+                cell.classList.add('excel-cell-cut');
+            });
+            
+            console.log('Cut', document.querySelectorAll('.excel-cell-cut').length, 'cells');
+        }
+        
+        // Paste cells
+        function pasteExcelCells() {
+            if (excelClipboard.data.length === 0) return;
+            
+            const activeCell = document.querySelector('.excel-data-cell.excel-cell-selected');
+            if (!activeCell) return;
+            
+            saveExcelState('Paste');
+            
+            const startRow = parseInt(activeCell.getAttribute('data-row'));
+            const startCol = parseInt(activeCell.getAttribute('data-col'));
+            const sheetData = currentExcelSpreadsheet.data[currentExcelSpreadsheet.activeSheet];
+            
+            // Paste the data
+            for (let r = 0; r < excelClipboard.data.length; r++) {
+                for (let c = 0; c < excelClipboard.data[r].length; c++) {
+                    const targetRow = startRow + r;
+                    const targetCol = startCol + c;
+                    
+                    // Expand sheet if necessary
+                    while (targetRow >= sheetData.length) {
+                        sheetData.push(Array(sheetData[0]?.length || 15).fill(''));
+                    }
+                    while (targetCol >= sheetData[0].length) {
+                        sheetData.forEach(row => row.push(''));
+                    }
+                    
+                    const value = excelClipboard.data[r][c];
+                    sheetData[targetRow][targetCol] = value;
+                    
+                    // Update the cell in the DOM
+                    const cell = document.querySelector(`[data-row="${targetRow}"][data-col="${targetCol}"]`);
+                    if (cell) {
+                        if (value.startsWith('=')) {
+                            try {
+                                const result = evaluateFormula(value, targetRow, targetCol);
+                                cell.textContent = result;
+                                cell.setAttribute('data-formula', value);
+                            } catch (error) {
+                                cell.textContent = '#ERROR!';
+                                cell.setAttribute('data-formula', value);
+                            }
+                        } else {
+                            cell.textContent = value;
+                            cell.removeAttribute('data-formula');
+                        }
+                    }
+                }
+            }
+            
+            // If it was cut, clear the source cells
+            if (excelClipboard.isCut) {
+                const { minRow, maxRow, minCol, maxCol } = excelClipboard.sourceRange;
+                for (let r = minRow; r <= maxRow; r++) {
+                    for (let c = minCol; c <= maxCol; c++) {
+                        sheetData[r][c] = '';
+                        const cell = document.querySelector(`[data-row="${r}"][data-col="${c}"]`);
+                        if (cell) {
+                            cell.textContent = '';
+                            cell.removeAttribute('data-formula');
+                        }
+                    }
+                }
+                excelClipboard.isCut = false;
+            }
+            
+            // Clear visual feedback
+            document.querySelectorAll('.excel-cell-copied, .excel-cell-cut').forEach(cell => {
+                cell.classList.remove('excel-cell-copied', 'excel-cell-cut');
+            });
+            
+            // Recalculate formulas
+            setTimeout(() => recalculateAllFormulas(), 10);
+            
+            // Re-render the grid if it expanded
+            const gridContainer = document.getElementById('excelGridContainer');
+            if (gridContainer) {
+                gridContainer.innerHTML = renderExcelGrid(sheetData);
+                attachExcelCellListeners();
+            }
+            
+            console.log('Pasted', excelClipboard.data.length * excelClipboard.data[0].length, 'cells');
+        }
+        
+        // Delete cell content
+        function deleteExcelCellContent() {
+            const selectedCells = document.querySelectorAll('.excel-data-cell.excel-cell-selected');
+            if (selectedCells.length === 0) return;
+            
+            saveExcelState('Delete');
+            
+            selectedCells.forEach(cell => {
+                const row = parseInt(cell.getAttribute('data-row'));
+                const col = parseInt(cell.getAttribute('data-col'));
+                
+                currentExcelSpreadsheet.data[currentExcelSpreadsheet.activeSheet][row][col] = '';
+                cell.textContent = '';
+                cell.removeAttribute('data-formula');
+                
+                // Recalculate dependent cells
+                recalculateDependentCells(row, col);
+            });
+            
+            console.log('Deleted content of', selectedCells.length, 'cells');
+        }
+        
+        // Fill down (Ctrl+D)
+        function fillDown() {
+            const selectedCells = Array.from(document.querySelectorAll('.excel-data-cell.excel-cell-selected'));
+            if (selectedCells.length < 2) return;
+            
+            saveExcelState('Fill Down');
+            
+            // Get the range
+            let minRow = Infinity, maxRow = -Infinity;
+            let minCol = Infinity, maxCol = -Infinity;
+            
+            selectedCells.forEach(cell => {
+                const row = parseInt(cell.getAttribute('data-row'));
+                const col = parseInt(cell.getAttribute('data-col'));
+                minRow = Math.min(minRow, row);
+                maxRow = Math.max(maxRow, row);
+                minCol = Math.min(minCol, col);
+                maxCol = Math.max(maxCol, col);
+            });
+            
+            const sheetData = currentExcelSpreadsheet.data[currentExcelSpreadsheet.activeSheet];
+            
+            // Fill down each column
+            for (let c = minCol; c <= maxCol; c++) {
+                const sourceValue = sheetData[minRow][c];
+                
+                for (let r = minRow + 1; r <= maxRow; r++) {
+                    sheetData[r][c] = sourceValue;
+                    
+                    const cell = document.querySelector(`[data-row="${r}"][data-col="${c}"]`);
+                    if (cell) {
+                        if (sourceValue.startsWith('=')) {
+                            try {
+                                const result = evaluateFormula(sourceValue, r, c);
+                                cell.textContent = result;
+                                cell.setAttribute('data-formula', sourceValue);
+                            } catch (error) {
+                                cell.textContent = '#ERROR!';
+                            }
+                        } else {
+                            cell.textContent = sourceValue;
+                            cell.removeAttribute('data-formula');
+                        }
+                    }
+                }
+            }
+            
+            setTimeout(() => recalculateAllFormulas(), 10);
+            console.log('Filled down');
+        }
+        
+        // Fill right (Ctrl+R)
+        function fillRight() {
+            const selectedCells = Array.from(document.querySelectorAll('.excel-data-cell.excel-cell-selected'));
+            if (selectedCells.length < 2) return;
+            
+            saveExcelState('Fill Right');
+            
+            // Get the range
+            let minRow = Infinity, maxRow = -Infinity;
+            let minCol = Infinity, maxCol = -Infinity;
+            
+            selectedCells.forEach(cell => {
+                const row = parseInt(cell.getAttribute('data-row'));
+                const col = parseInt(cell.getAttribute('data-col'));
+                minRow = Math.min(minRow, row);
+                maxRow = Math.max(maxRow, row);
+                minCol = Math.min(minCol, col);
+                maxCol = Math.max(maxCol, col);
+            });
+            
+            const sheetData = currentExcelSpreadsheet.data[currentExcelSpreadsheet.activeSheet];
+            
+            // Fill right each row
+            for (let r = minRow; r <= maxRow; r++) {
+                const sourceValue = sheetData[r][minCol];
+                
+                for (let c = minCol + 1; c <= maxCol; c++) {
+                    sheetData[r][c] = sourceValue;
+                    
+                    const cell = document.querySelector(`[data-row="${r}"][data-col="${c}"]`);
+                    if (cell) {
+                        if (sourceValue.startsWith('=')) {
+                            try {
+                                const result = evaluateFormula(sourceValue, r, c);
+                                cell.textContent = result;
+                                cell.setAttribute('data-formula', sourceValue);
+                            } catch (error) {
+                                cell.textContent = '#ERROR!';
+                            }
+                        } else {
+                            cell.textContent = sourceValue;
+                            cell.removeAttribute('data-formula');
+                        }
+                    }
+                }
+            }
+            
+            setTimeout(() => recalculateAllFormulas(), 10);
+            console.log('Filled right');
+        }
+        
+        // Select all cells
+        function selectAllCells() {
+            const cells = document.querySelectorAll('.excel-data-cell');
+            cells.forEach(cell => {
+                cell.classList.add('excel-cell-selected');
+            });
+            console.log('Selected all cells');
+        }
+        
+        // Find dialog
+        function openFindDialog() {
+            const searchTerm = prompt('Find:');
+            if (!searchTerm) return;
+            
+            const sheetData = currentExcelSpreadsheet.data[currentExcelSpreadsheet.activeSheet];
+            let found = false;
+            
+            for (let r = 0; r < sheetData.length; r++) {
+                for (let c = 0; c < sheetData[r].length; c++) {
+                    const value = String(sheetData[r][c]).toLowerCase();
+                    if (value.includes(searchTerm.toLowerCase())) {
+                        const cell = document.querySelector(`[data-row="${r}"][data-col="${c}"]`);
+                        if (cell) {
+                            // Clear previous selections
+                            document.querySelectorAll('.excel-cell-selected').forEach(c => {
+                                c.classList.remove('excel-cell-selected');
+                            });
+                            
+                            cell.classList.add('excel-cell-selected');
+                            cell.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                            cell.focus();
+                            found = true;
+                            return;
+                        }
+                    }
+                }
+            }
+            
+            if (!found) {
+                alert(`"${searchTerm}" not found`);
+            }
+        }
+        
+        // Show context menu
+        function showExcelContextMenu(x, y, row, col) {
+            // Remove existing context menu if any
+            const existingMenu = document.getElementById('excelContextMenu');
+            if (existingMenu) {
+                existingMenu.remove();
+            }
+            
+            const menu = document.createElement('div');
+            menu.id = 'excelContextMenu';
+            menu.style.position = 'fixed';
+            menu.style.left = x + 'px';
+            menu.style.top = y + 'px';
+            menu.style.background = 'rgba(30, 41, 59, 0.98)';
+            menu.style.border = '1px solid rgba(99, 102, 241, 0.3)';
+            menu.style.borderRadius = '8px';
+            menu.style.boxShadow = '0 4px 12px rgba(0, 0, 0, 0.3)';
+            menu.style.zIndex = '10000';
+            menu.style.minWidth = '200px';
+            menu.style.padding = '4px';
+            
+            const menuItems = [
+                { label: 'Insert Row Above', action: () => insertRowAbove(row) },
+                { label: 'Insert Row Below', action: () => insertRowBelow(row) },
+                { label: 'Delete Row', action: () => deleteRow(row) },
+                { label: '---', action: null },
+                { label: 'Insert Column Left', action: () => insertColumnLeft(col) },
+                { label: 'Insert Column Right', action: () => insertColumnRight(col) },
+                { label: 'Delete Column', action: () => deleteColumn(col) },
+                { label: '---', action: null },
+                { label: 'Sort Ascending', action: () => sortColumn(col, 'asc') },
+                { label: 'Sort Descending', action: () => sortColumn(col, 'desc') }
+            ];
+            
+            menuItems.forEach(item => {
+                if (item.label === '---') {
+                    const separator = document.createElement('div');
+                    separator.style.height = '1px';
+                    separator.style.background = 'rgba(255, 255, 255, 0.1)';
+                    separator.style.margin = '4px 0';
+                    menu.appendChild(separator);
+                } else {
+                    const menuItem = document.createElement('div');
+                    menuItem.textContent = item.label;
+                    menuItem.style.padding = '8px 12px';
+                    menuItem.style.cursor = 'pointer';
+                    menuItem.style.color = '#e2e8f0';
+                    menuItem.style.fontSize = '13px';
+                    menuItem.style.borderRadius = '4px';
+                    menuItem.style.transition = 'all 0.2s';
+                    
+                    menuItem.addEventListener('mouseenter', function() {
+                        this.style.background = 'rgba(99, 102, 241, 0.3)';
+                    });
+                    
+                    menuItem.addEventListener('mouseleave', function() {
+                        this.style.background = 'transparent';
+                    });
+                    
+                    menuItem.addEventListener('click', function() {
+                        item.action();
+                        menu.remove();
+                    });
+                    
+                    menu.appendChild(menuItem);
+                }
+            });
+            
+            document.body.appendChild(menu);
+            
+            // Close menu when clicking outside
+            setTimeout(() => {
+                document.addEventListener('click', function closeMenu() {
+                    menu.remove();
+                    document.removeEventListener('click', closeMenu);
+                }, 100);
+            });
+        }
+        
+        // Insert row above
+        function insertRowAbove(row) {
+            saveExcelState('Insert Row Above');
+            const sheetData = currentExcelSpreadsheet.data[currentExcelSpreadsheet.activeSheet];
+            const newRow = Array(sheetData[0].length).fill('');
+            sheetData.splice(row, 0, newRow);
+            refreshExcelGrid();
+            console.log('Inserted row above row', row + 1);
+        }
+        
+        // Insert row below
+        function insertRowBelow(row) {
+            saveExcelState('Insert Row Below');
+            const sheetData = currentExcelSpreadsheet.data[currentExcelSpreadsheet.activeSheet];
+            const newRow = Array(sheetData[0].length).fill('');
+            sheetData.splice(row + 1, 0, newRow);
+            refreshExcelGrid();
+            console.log('Inserted row below row', row + 1);
+        }
+        
+        // Delete row
+        function deleteRow(row) {
+            if (!confirm(`Delete row ${row + 1}?`)) return;
+            
+            saveExcelState('Delete Row');
+            const sheetData = currentExcelSpreadsheet.data[currentExcelSpreadsheet.activeSheet];
+            sheetData.splice(row, 1);
+            refreshExcelGrid();
+            console.log('Deleted row', row + 1);
+        }
+        
+        // Insert column left
+        function insertColumnLeft(col) {
+            saveExcelState('Insert Column Left');
+            const sheetData = currentExcelSpreadsheet.data[currentExcelSpreadsheet.activeSheet];
+            sheetData.forEach(row => row.splice(col, 0, ''));
+            refreshExcelGrid();
+            console.log('Inserted column left of', getColumnLetter(col));
+        }
+        
+        // Insert column right
+        function insertColumnRight(col) {
+            saveExcelState('Insert Column Right');
+            const sheetData = currentExcelSpreadsheet.data[currentExcelSpreadsheet.activeSheet];
+            sheetData.forEach(row => row.splice(col + 1, 0, ''));
+            refreshExcelGrid();
+            console.log('Inserted column right of', getColumnLetter(col));
+        }
+        
+        // Delete column
+        function deleteColumn(col) {
+            if (!confirm(`Delete column ${getColumnLetter(col)}?`)) return;
+            
+            saveExcelState('Delete Column');
+            const sheetData = currentExcelSpreadsheet.data[currentExcelSpreadsheet.activeSheet];
+            sheetData.forEach(row => row.splice(col, 1));
+            refreshExcelGrid();
+            console.log('Deleted column', getColumnLetter(col));
+        }
+        
+        // Sort column
+        function sortColumn(col, direction = 'asc') {
+            saveExcelState('Sort Column');
+            const sheetData = currentExcelSpreadsheet.data[currentExcelSpreadsheet.activeSheet];
+            
+            // Get all rows with data (skip header if needed)
+            const dataRows = sheetData.map((row, index) => ({ row, index }));
+            
+            // Sort the rows based on column value
+            dataRows.sort((a, b) => {
+                const aVal = a.row[col] || '';
+                const bVal = b.row[col] || '';
+                
+                // Try to parse as numbers
+                const aNum = parseFloat(aVal);
+                const bNum = parseFloat(bVal);
+                
+                if (!isNaN(aNum) && !isNaN(bNum)) {
+                    return direction === 'asc' ? aNum - bNum : bNum - aNum;
+                }
+                
+                // Sort as strings
+                const comparison = String(aVal).localeCompare(String(bVal));
+                return direction === 'asc' ? comparison : -comparison;
+            });
+            
+            // Update sheet data with sorted rows
+            currentExcelSpreadsheet.data[currentExcelSpreadsheet.activeSheet] = dataRows.map(item => item.row);
+            
+            refreshExcelGrid();
+            console.log('Sorted column', getColumnLetter(col), direction);
+        }
+        
+        // Refresh the Excel grid
+        function refreshExcelGrid() {
+            const sheetData = currentExcelSpreadsheet.data[currentExcelSpreadsheet.activeSheet];
+            const gridContainer = document.getElementById('excelGridContainer');
+            if (gridContainer) {
+                gridContainer.innerHTML = renderExcelGrid(sheetData);
+                attachExcelCellListeners();
+                setTimeout(() => recalculateAllFormulas(), 10);
+            }
+        }
+        
         function handleExcelKeyboard(e) {
+            const gridContainer = document.getElementById('excelGridContainer');
+            const activeCell = document.querySelector('.excel-data-cell.excel-cell-selected');
+            
+            if (!gridContainer) return;
+            
             // Save shortcut (Ctrl+S)
             if (e.ctrlKey && e.key === 's') {
-                const gridContainer = document.getElementById('excelGridContainer');
-                if (gridContainer && document.activeElement.classList.contains('excel-data-cell')) {
+                if (document.activeElement.classList.contains('excel-data-cell')) {
                     e.preventDefault();
                     saveExcelSpreadsheet();
                 }
+            }
+            
+            // Copy (Ctrl+C)
+            if (e.ctrlKey && e.key === 'c' && activeCell) {
+                e.preventDefault();
+                copyExcelCells();
+            }
+            
+            // Cut (Ctrl+X)
+            if (e.ctrlKey && e.key === 'x' && activeCell) {
+                e.preventDefault();
+                cutExcelCells();
+            }
+            
+            // Paste (Ctrl+V)
+            if (e.ctrlKey && e.key === 'v' && activeCell) {
+                e.preventDefault();
+                pasteExcelCells();
+            }
+            
+            // Undo (Ctrl+Z)
+            if (e.ctrlKey && e.key === 'z' && !e.shiftKey) {
+                e.preventDefault();
+                undoExcel();
+            }
+            
+            // Redo (Ctrl+Y or Ctrl+Shift+Z)
+            if ((e.ctrlKey && e.key === 'y') || (e.ctrlKey && e.shiftKey && e.key === 'z')) {
+                e.preventDefault();
+                redoExcel();
+            }
+            
+            // Delete cell content (Delete key)
+            if (e.key === 'Delete' && activeCell && !activeCell.isContentEditable) {
+                e.preventDefault();
+                deleteExcelCellContent();
+            }
+            
+            // Fill down (Ctrl+D)
+            if (e.ctrlKey && e.key === 'd' && activeCell) {
+                e.preventDefault();
+                fillDown();
+            }
+            
+            // Fill right (Ctrl+R)
+            if (e.ctrlKey && e.key === 'r' && activeCell) {
+                e.preventDefault();
+                fillRight();
+            }
+            
+            // Find (Ctrl+F)
+            if (e.ctrlKey && e.key === 'f') {
+                e.preventDefault();
+                openFindDialog();
+            }
+            
+            // Select All (Ctrl+A)
+            if (e.ctrlKey && e.key === 'a' && document.activeElement.classList.contains('excel-data-cell')) {
+                e.preventDefault();
+                selectAllCells();
+            }
+            
+            // Format Menu (Ctrl+Shift+F)
+            if (e.ctrlKey && e.shiftKey && e.key === 'F') {
+                e.preventDefault();
+                showFormatMenu();
+            }
+            
+            // Bold (Ctrl+B)
+            if (e.ctrlKey && e.key === 'b' && activeCell) {
+                e.preventDefault();
+                applyCellFormatting('fontWeight', 'bold');
+            }
+            
+            // Italic (Ctrl+I)
+            if (e.ctrlKey && e.key === 'i' && activeCell) {
+                e.preventDefault();
+                applyCellFormatting('fontStyle', 'italic');
+            }
+            
+            // Underline (Ctrl+U)
+            if (e.ctrlKey && e.key === 'u' && activeCell) {
+                e.preventDefault();
+                applyCellFormatting('textDecoration', 'underline');
             }
         }
 
@@ -4508,6 +5913,290 @@
                 } finally {
                     createExcelButton.disabled = false;
                     createExcelButton.textContent = 'Create Spreadsheet';
+                }
+            });
+        }
+        
+        // Excel Open Modal - Get all elements first
+        const excelOpenModal = document.getElementById('excelOpenModal');
+        const excelOpenModalClose = document.getElementById('excelOpenModalClose');
+        const excelOpenCancel = document.getElementById('excelOpenCancel');
+        const excelOpenSubmit = document.getElementById('excelOpenSubmit');
+        const excelOpenFilePath = document.getElementById('excelOpenFilePath');
+        const excelOpenFilePathBrowse = document.getElementById('excelOpenFilePathBrowse');
+        const excelOpenFileInput = document.getElementById('excelOpenFilePathInput');
+        
+        // Open spreadsheet button handler
+        if (openExcelButton) {
+            openExcelButton.addEventListener('click', () => {
+                if (excelOpenModal) {
+                    excelOpenModal.style.display = 'flex';
+                    console.log('Modal opened');
+                }
+            });
+        }
+        
+        // Close modal when clicking outside
+        if (excelOpenModal) {
+            excelOpenModal.addEventListener('click', (e) => {
+                if (e.target === excelOpenModal) {
+                    excelOpenModal.style.display = 'none';
+                    console.log('Modal closed (clicked outside)');
+                }
+            });
+        }
+        
+        // Close modal handlers
+        if (excelOpenModalClose) {
+            excelOpenModalClose.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                if (excelOpenModal) {
+                    excelOpenModal.style.display = 'none';
+                    console.log('Modal closed (X button)');
+                }
+            });
+        } else {
+            console.warn('X close button not found!');
+        }
+        
+        if (excelOpenCancel) {
+            excelOpenCancel.addEventListener('click', (e) => {
+                e.preventDefault();
+                if (excelOpenModal) {
+                    excelOpenModal.style.display = 'none';
+                    console.log('Modal closed (Cancel button)');
+                }
+            });
+        } else {
+            console.warn('Cancel button not found!');
+        }
+        
+        // Add Escape key support
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && excelOpenModal && excelOpenModal.style.display === 'flex') {
+                excelOpenModal.style.display = 'none';
+                console.log('Modal closed (Escape key)');
+            }
+        });
+        
+        // Browse button for open modal
+        console.log('Setting up browse button...');
+        console.log('Browse button element:', excelOpenFilePathBrowse);
+        console.log('File input element:', excelOpenFileInput);
+        
+        if (excelOpenFilePathBrowse && excelOpenFileInput) {
+            console.log('Both elements found, adding event listener');
+            
+            excelOpenFilePathBrowse.addEventListener('click', async (e) => {
+                console.log('Browse button clicked!');
+                e.preventDefault();
+                e.stopPropagation();
+                
+                // First, try using backend API to get full path via native dialog
+                try {
+                    console.log('Trying backend file picker API...');
+                    
+                    const defaultPath = await getDefaultDocumentsPath();
+                    const response = await fetch(`http://localhost:8000/api/excel/select-file?initial_path=${encodeURIComponent(defaultPath)}`);
+                    
+                    if (response.ok) {
+                        const result = await response.json();
+                        console.log('Backend response:', result);
+                        
+                        if (result.success && result.file_path) {
+                            // Got the full path from backend!
+                            if (excelOpenFilePath) {
+                                excelOpenFilePath.value = result.file_path;
+                                console.log('✅ Full path from backend:', result.file_path);
+                            }
+                            return; // Success, don't use HTML file input
+                        } else if (result.cancelled) {
+                            console.log('User cancelled file selection');
+                            return;
+                        }
+                    }
+                } catch (error) {
+                    console.warn('Backend file picker not available:', error.message);
+                }
+                
+                // Fallback: Use HTML file input
+                console.log('Falling back to HTML file input...');
+                excelOpenFileInput.click();
+            });
+        } else {
+            console.error('Elements not found!', {
+                browseButton: !!excelOpenFilePathBrowse,
+                fileInput: !!excelOpenFileInput
+            });
+        }
+        
+        if (excelOpenFileInput) {
+            console.log('Adding change listener to file input');
+            
+            // Handle file selection from Windows file picker
+            excelOpenFileInput.addEventListener('change', async (e) => {
+                console.log('File input change event fired');
+                console.log('Files:', e.target.files);
+                
+                const file = e.target.files[0];
+                if (file) {
+                    console.log('File selected:', file);
+                    console.log('File name:', file.name);
+                    console.log('File size:', file.size);
+                    console.log('File type:', file.type);
+                    console.log('File path:', file.path);
+                    console.log('File webkitRelativePath:', file.webkitRelativePath);
+                    
+                    // Try multiple ways to get the full path
+                    let fullPath = null;
+                    
+                    // Method 1: Direct path property (works in Electron, pywebview, etc.)
+                    if (file.path) {
+                        fullPath = file.path;
+                        console.log('✅ Got path from file.path:', fullPath);
+                    }
+                    // Method 2: webkitRelativePath
+                    else if (file.webkitRelativePath) {
+                        fullPath = file.webkitRelativePath;
+                        console.log('✅ Got path from webkitRelativePath:', fullPath);
+                    }
+                    // Method 3: Check if File System Access API is available
+                    else if (window.showOpenFilePicker) {
+                        console.log('File System Access API available but not used yet');
+                    }
+                    
+                    if (excelOpenFilePath) {
+                        if (fullPath) {
+                            // Full path is available
+                            excelOpenFilePath.value = fullPath;
+                            console.log('✅ File path set to input:', fullPath);
+                        } else {
+                            // Path not available - just show filename
+                            console.warn('⚠️ Full path not available');
+                            excelOpenFilePath.value = file.name;
+                            console.log('ℹ️ Set filename only:', file.name);
+                            
+                            // Update placeholder to guide user
+                            excelOpenFilePath.setAttribute('data-filename-only', 'true');
+                            excelOpenFilePath.select(); // Highlight so user can easily replace
+                        }
+                    }
+                }
+            });
+        }
+        
+        // Open spreadsheet submit handler
+        if (excelOpenSubmit) {
+            excelOpenSubmit.addEventListener('click', async () => {
+                const filePath = excelOpenFilePath ? excelOpenFilePath.value.trim() : '';
+                
+                if (!filePath) {
+                    alert('Please enter the full file path to your Excel spreadsheet.\n\nExample: D:\\Documents\\data.xlsx');
+                    if (excelOpenFilePath) excelOpenFilePath.focus();
+                    return;
+                }
+                
+                // Validate that it looks like a file path
+                if (!filePath.includes('\\') && !filePath.includes('/')) {
+                    alert('Please enter the FULL file path including the folder location.\n\nExample: D:\\Documents\\' + filePath);
+                    return;
+                }
+                
+                excelOpenSubmit.disabled = true;
+                excelOpenSubmit.textContent = 'Opening...';
+                
+                try {
+                    console.log('==========================================');
+                    console.log('📂 Opening spreadsheet...');
+                    console.log('File path:', filePath);
+                    console.log('Request URL:', 'http://localhost:8000/api/excel/open');
+                    
+                    const response = await fetch('http://localhost:8000/api/excel/open', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            file_path: filePath
+                        })
+                    });
+                    
+                    console.log('Response status:', response.status, response.statusText);
+                    
+                    const data = await response.json();
+                    console.log('Server response data:', JSON.stringify(data, null, 2));
+                    
+                    if (response.ok && data.success) {
+                        console.log('✅ Success! Opening editor...');
+                        console.log('Sheets:', data.sheets);
+                        console.log('Active sheet:', data.active_sheet);
+                        console.log('Has data:', !!data.data);
+                        // Close the modal
+                        if (excelOpenModal) excelOpenModal.style.display = 'none';
+                        
+                        // Clear the input
+                        if (excelOpenFilePath) excelOpenFilePath.value = '';
+                        
+                        // Transform the data from backend format to frontend format
+                        let transformedData = null;
+                        if (data.data && Array.isArray(data.data)) {
+                            // Backend sends: [[{value: "x", ...}, ...], ...]
+                            // Frontend needs: {SheetName: [["x", ...], ...]}
+                            
+                            const sheetData = data.data.map(row => {
+                                return row.map(cell => {
+                                    // Extract just the value or formula
+                                    if (cell && typeof cell === 'object') {
+                                        return cell.formula || cell.value || '';
+                                    }
+                                    return cell || '';
+                                });
+                            });
+                            
+                            // Create the sheet data structure
+                            transformedData = {};
+                            const activeSheet = data.active_sheet || data.sheets?.[0] || 'Sheet1';
+                            transformedData[activeSheet] = sheetData;
+                            
+                            // Initialize other sheets as empty if they exist
+                            if (data.sheets && data.sheets.length > 1) {
+                                data.sheets.forEach(sheetName => {
+                                    if (sheetName !== activeSheet && !transformedData[sheetName]) {
+                                        transformedData[sheetName] = Array(30).fill().map(() => Array(15).fill(''));
+                                    }
+                                });
+                            }
+                            
+                            console.log('Transformed data structure:', transformedData);
+                        }
+                        
+                        // Open the spreadsheet in the editor
+                        openExcelEditor(
+                            data.file_path || filePath,
+                            data.sheets || ['Sheet1'],
+                            data.active_sheet || data.sheets?.[0] || 'Sheet1',
+                            transformedData
+                        );
+                        
+                        console.log('✅ Spreadsheet opened successfully!');
+                        console.log('==========================================');
+                    } else {
+                        console.error('❌ Failed to open spreadsheet');
+                        console.error('Response:', data);
+                        const errorMsg = data.detail || data.message || data.error || 'Unknown error';
+                        alert('❌ Error opening spreadsheet:\n\n' + errorMsg + '\n\n📋 Details:\n• File: ' + filePath + '\n\n✓ Make sure:\n1. The file exists at that location\n2. The path is correct\n3. The file is a valid .xlsx or .xls file\n4. The file is not open in another program');
+                        console.log('==========================================');
+                    }
+                } catch (error) {
+                    console.error('❌ Exception while opening spreadsheet');
+                    console.error('Error:', error);
+                    console.error('Stack:', error.stack);
+                    alert('❌ Error opening spreadsheet:\n\n' + error.message + '\n\n🔧 Please check:\n1. The backend server is running\n2. The file path is correct: ' + filePath + '\n3. You have permission to access the file\n4. Check the console (F12) for details');
+                    console.log('==========================================');
+                } finally {
+                    excelOpenSubmit.disabled = false;
+                    excelOpenSubmit.textContent = 'Open Spreadsheet';
                 }
             });
         }
