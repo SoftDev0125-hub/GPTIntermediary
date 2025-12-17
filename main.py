@@ -18,6 +18,7 @@ from services.app_launcher import AppLauncher
 from services.telegram_service import TelegramService
 from services.slack_service import SlackService
 from services.word_service import WordService
+from services.excel_service import ExcelService
 from models.schemas import (
     SendEmailRequest, 
     EmailReplyRequest, 
@@ -44,7 +45,12 @@ from models.schemas import (
     FindReplaceRequest,
     PageSetupRequest,
     SaveWordDocumentRequest,
-    SaveWordHTMLRequest
+    CreateExcelSpreadsheetRequest,
+    OpenExcelSpreadsheetRequest,
+    SaveExcelSpreadsheetRequest,
+    AddExcelSheetRequest,
+    DeleteExcelSheetRequest,
+    ExcelSpreadsheetResponse
 )
 from pydantic import BaseModel
 
@@ -89,6 +95,7 @@ app_launcher = AppLauncher()
 telegram_service = TelegramService()
 slack_service = SlackService()
 word_service = WordService()
+excel_service = ExcelService()
 
 
 @app.on_event("startup")
@@ -127,6 +134,7 @@ async def shutdown_event():
     await telegram_service.cleanup()
     await slack_service.cleanup()
     await word_service.cleanup()
+    await excel_service.cleanup()
 
 
 @app.get("/")
@@ -975,6 +983,171 @@ async def save_word_document(request: SaveWordDocumentRequest):
             raise HTTPException(status_code=500, detail=result.get("error", "Failed to save document"))
     except Exception as e:
         logger.error(f"Error saving Word document: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ===== Excel Spreadsheet Endpoints =====
+
+@app.post("/api/excel/create", response_model=ExcelSpreadsheetResponse)
+async def create_excel_spreadsheet(request: CreateExcelSpreadsheetRequest):
+    """
+    Create a new Excel spreadsheet
+    
+    Args:
+        request: Spreadsheet creation details
+    
+    Returns:
+        Operation status with file path
+    """
+    try:
+        logger.info(f"Creating Excel spreadsheet: {request.file_path}")
+        result = await excel_service.create_spreadsheet(
+            file_path=request.file_path,
+            sheet_name=request.sheet_name
+        )
+        
+        if result.get("success"):
+            return ExcelSpreadsheetResponse(
+                success=True,
+                message=result.get("message", "Spreadsheet created successfully"),
+                file_path=result.get("file_path"),
+                sheet_name=result.get("sheet_name")
+            )
+        else:
+            raise HTTPException(status_code=500, detail=result.get("error", "Failed to create spreadsheet"))
+    except Exception as e:
+        logger.error(f"Error creating Excel spreadsheet: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/excel/open", response_model=ExcelSpreadsheetResponse)
+async def open_excel_spreadsheet(request: OpenExcelSpreadsheetRequest):
+    """
+    Open an existing Excel spreadsheet
+    
+    Args:
+        request: Spreadsheet path
+    
+    Returns:
+        Spreadsheet data and information
+    """
+    try:
+        logger.info(f"Opening Excel spreadsheet: {request.file_path}")
+        result = await excel_service.open_spreadsheet(request.file_path)
+        
+        if result.get("success"):
+            return ExcelSpreadsheetResponse(
+                success=True,
+                message=result.get("message", "Spreadsheet opened successfully"),
+                file_path=result.get("file_path"),
+                sheet_names=result.get("sheet_names"),
+                active_sheet=result.get("active_sheet"),
+                data=result.get("data"),
+                rows=result.get("rows"),
+                columns=result.get("columns")
+            )
+        else:
+            raise HTTPException(status_code=500, detail=result.get("error", "Failed to open spreadsheet"))
+    except Exception as e:
+        logger.error(f"Error opening Excel spreadsheet: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/excel/save", response_model=ExcelSpreadsheetResponse)
+async def save_excel_spreadsheet(request: SaveExcelSpreadsheetRequest):
+    """
+    Save data to Excel spreadsheet
+    
+    Args:
+        request: Spreadsheet data and path
+    
+    Returns:
+        Operation status
+    """
+    try:
+        logger.info(f"Saving Excel spreadsheet: {request.file_path}")
+        if request.data:
+            logger.info(f"Data contains {len(request.data)} sheets: {list(request.data.keys())}")
+        
+        result = await excel_service.save_spreadsheet(
+            file_path=request.file_path,
+            data=request.data,
+            new_path=request.new_path
+        )
+        
+        if result.get("success"):
+            return ExcelSpreadsheetResponse(
+                success=True,
+                message=result.get("message", "Spreadsheet saved successfully"),
+                file_path=result.get("file_path"),
+                sheets=result.get("sheets")
+            )
+        else:
+            raise HTTPException(status_code=500, detail=result.get("error", "Failed to save spreadsheet"))
+    except Exception as e:
+        logger.error(f"Error saving Excel spreadsheet: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/excel/add-sheet", response_model=ExcelSpreadsheetResponse)
+async def add_excel_sheet(request: AddExcelSheetRequest):
+    """
+    Add a new sheet to an Excel spreadsheet
+    
+    Args:
+        request: Spreadsheet path and sheet name
+    
+    Returns:
+        Operation status with updated sheet list
+    """
+    try:
+        logger.info(f"Adding sheet '{request.sheet_name}' to: {request.file_path}")
+        result = await excel_service.add_sheet(
+            file_path=request.file_path,
+            sheet_name=request.sheet_name
+        )
+        
+        if result.get("success"):
+            return ExcelSpreadsheetResponse(
+                success=True,
+                message=result.get("message", "Sheet added successfully"),
+                sheet_names=result.get("sheet_names")
+            )
+        else:
+            raise HTTPException(status_code=500, detail=result.get("error", "Failed to add sheet"))
+    except Exception as e:
+        logger.error(f"Error adding Excel sheet: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/excel/delete-sheet", response_model=ExcelSpreadsheetResponse)
+async def delete_excel_sheet(request: DeleteExcelSheetRequest):
+    """
+    Delete a sheet from an Excel spreadsheet
+    
+    Args:
+        request: Spreadsheet path and sheet name
+    
+    Returns:
+        Operation status with updated sheet list
+    """
+    try:
+        logger.info(f"Deleting sheet '{request.sheet_name}' from: {request.file_path}")
+        result = await excel_service.delete_sheet(
+            file_path=request.file_path,
+            sheet_name=request.sheet_name
+        )
+        
+        if result.get("success"):
+            return ExcelSpreadsheetResponse(
+                success=True,
+                message=result.get("message", "Sheet deleted successfully"),
+                sheet_names=result.get("sheet_names")
+            )
+        else:
+            raise HTTPException(status_code=500, detail=result.get("error", "Failed to delete sheet"))
+    except Exception as e:
+        logger.error(f"Error deleting Excel sheet: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

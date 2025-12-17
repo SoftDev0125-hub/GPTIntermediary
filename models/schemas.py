@@ -244,3 +244,48 @@ class SaveWordHTMLRequest(BaseModel):
     """Request model for saving HTML content to Word document with formatting"""
     file_path: str = Field(..., description="Path where the document should be saved")
     html_content: str = Field(..., description="HTML content from contenteditable div")
+
+
+# Excel Spreadsheet Models
+class CreateExcelSpreadsheetRequest(BaseModel):
+    """Request model for creating an Excel spreadsheet"""
+    file_path: str = Field(..., description="Path where the spreadsheet should be saved")
+    sheet_name: Optional[str] = Field("Sheet1", description="Name of the first sheet")
+
+
+class OpenExcelSpreadsheetRequest(BaseModel):
+    """Request model for opening an Excel spreadsheet"""
+    file_path: str = Field(..., description="Path to the Excel spreadsheet to open")
+
+
+class SaveExcelSpreadsheetRequest(BaseModel):
+    """Request model for saving data to Excel spreadsheet"""
+    file_path: str = Field(..., description="Current path to the spreadsheet")
+    new_path: Optional[str] = Field(None, description="Optional new path to save as")
+    data: Optional[Dict[str, List[List[Any]]]] = Field(None, description="Optional dictionary of sheet data to save. Key is sheet name, value is 2D list of cell values.")
+
+
+class AddExcelSheetRequest(BaseModel):
+    """Request model for adding a sheet to a spreadsheet"""
+    file_path: str = Field(..., description="Path to the spreadsheet")
+    sheet_name: str = Field(..., description="Name of the new sheet")
+
+
+class DeleteExcelSheetRequest(BaseModel):
+    """Request model for deleting a sheet from a spreadsheet"""
+    file_path: str = Field(..., description="Path to the spreadsheet")
+    sheet_name: str = Field(..., description="Name of the sheet to delete")
+
+
+class ExcelSpreadsheetResponse(BaseModel):
+    """Response model for Excel spreadsheet operations"""
+    success: bool
+    message: Optional[str] = None
+    file_path: Optional[str] = None
+    sheet_name: Optional[str] = None
+    sheet_names: Optional[List[str]] = None
+    active_sheet: Optional[str] = None
+    data: Optional[List[List[Dict[str, Any]]]] = None
+    rows: Optional[int] = None
+    columns: Optional[int] = None
+    error: Optional[str] = None

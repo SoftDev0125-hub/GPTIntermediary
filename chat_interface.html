@@ -24,6 +24,7 @@
             <button class="tab-button active" data-tab="chat">Chat</button>
             <button class="tab-button" data-tab="email">Email</button>
             <button class="tab-button" data-tab="word">Word</button>
+            <button class="tab-button" data-tab="excel">Excel</button>
             <button class="tab-button" data-tab="telegram">Telegram</button>
             <button class="tab-button" data-tab="slack">Slack</button>
         </div>
@@ -138,6 +139,132 @@
                             </div>
                         </div>
                     </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Excel Tab -->
+        <div id="excel" class="tab-content">
+            <div class="header">
+                <div class="header-content">
+                    <h1>Microsoft Excel</h1>
+                    <div class="status-badge">Ready</div>
+                </div>
+            </div>
+
+            <div class="excel-container">
+                <div class="excel-header">
+                    <h2>Excel Spreadsheets</h2>
+                    <div class="button-group">
+                        <button id="createExcelButton" class="btn">Create Spreadsheet</button>
+                        <button id="openExcelButton" class="btn btn-secondary">Open Spreadsheet</button>
+                    </div>
+                </div>
+
+                <div class="excel-scroll-area">
+                    <div id="excelSpreadsheetArea" class="excel-spreadsheet-area">
+                        <div class="empty-state">
+                            <div class="empty-state-text">📊</div>
+                            <h3>Excel Spreadsheet Manager</h3>
+                            <p>Create a new spreadsheet or open an existing one to get started</p>
+                            <div style="margin-top: 20px; text-align: left; max-width: 600px; background: rgba(0,0,0,0.05); padding: 16px; border-radius: 8px;">
+                                <p style="font-weight: 600; margin-bottom: 12px;">Available Features:</p>
+                                <ul style="margin: 8px 0; padding-left: 20px; line-height: 1.8;">
+                                    <li>Create and open Excel spreadsheets (.xlsx)</li>
+                                    <li>Edit cells with formulas and data</li>
+                                    <li>Apply formatting (bold, italic, colors, borders)</li>
+                                    <li>Work with multiple sheets</li>
+                                    <li>Add formulas (SUM, AVERAGE, COUNT, etc.)</li>
+                                    <li>Sort and filter data</li>
+                                    <li>Merge and unmerge cells</li>
+                                    <li>Adjust column widths and row heights</li>
+                                    <li>Save and export spreadsheets</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Excel Create Modal -->
+                <div class="excel-modal" id="excelCreateModal" style="display: none;">
+                    <div class="excel-modal-content">
+                        <div class="excel-modal-header">
+                            <h3>Create New Spreadsheet</h3>
+                            <button class="excel-modal-close" id="excelCreateModalClose">&times;</button>
+                        </div>
+                        <div class="excel-modal-body">
+                            <div class="form-group">
+                                <label for="excelFilePath">File Path:</label>
+                                <div style="display: flex; gap: 8px; align-items: center;">
+                                    <input type="text" id="excelFilePath" placeholder="D:\Documents\spreadsheet.xlsx" style="flex: 1;" />
+                                    <button type="button" id="excelFilePathBrowse" class="btn btn-secondary" style="white-space: nowrap; padding: 8px 16px;">Browse</button>
+                                </div>
+                                <small>Enter the full path where the spreadsheet should be saved</small>
+                            </div>
+                            <div class="form-group">
+                                <label for="excelSheetName">Sheet Name:</label>
+                                <input type="text" id="excelSheetName" placeholder="Sheet1" value="Sheet1" />
+                            </div>
+                        </div>
+                        <div class="excel-modal-footer">
+                            <button class="btn btn-secondary" id="excelCreateCancel">Cancel</button>
+                            <button class="btn" id="excelCreateSubmit">Create Spreadsheet</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Excel Open Modal -->
+                <div class="excel-modal" id="excelOpenModal" style="display: none;">
+                    <div class="excel-modal-content">
+                        <div class="excel-modal-header">
+                            <h3>Open Spreadsheet</h3>
+                            <button class="excel-modal-close" id="excelOpenModalClose">&times;</button>
+                        </div>
+                        <div class="excel-modal-body">
+                            <div class="form-group">
+                                <label for="excelOpenFilePath">File Path:</label>
+                                <div style="display: flex; gap: 8px; align-items: center;">
+                                    <input type="text" id="excelOpenFilePath" placeholder="D:\Documents\spreadsheet.xlsx" style="flex: 1;" />
+                                    <button type="button" id="excelOpenFilePathBrowse" class="btn btn-secondary" style="white-space: nowrap; padding: 8px 16px;">Browse</button>
+                                </div>
+                                <input type="file" id="excelOpenFilePathInput" accept=".xlsx,.xls" style="display: none;" />
+                                <small>Enter the full path to the Excel spreadsheet you want to open</small>
+                            </div>
+                        </div>
+                        <div class="excel-modal-footer">
+                            <button class="btn btn-secondary" id="excelOpenCancel">Cancel</button>
+                            <button class="btn" id="excelOpenSubmit">Open Spreadsheet</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Excel Save As Modal -->
+        <div class="excel-modal" id="excelSaveAsModal" style="display: none;">
+            <div class="excel-modal-content">
+                <div class="excel-modal-header">
+                    <h3>Save Spreadsheet As</h3>
+                    <button class="excel-modal-close" id="excelSaveAsModalClose">&times;</button>
+                </div>
+                <div class="excel-modal-body">
+                    <div class="form-group">
+                        <label for="excelSaveAsFolderPath">Folder Path:</label>
+                        <div style="display: flex; gap: 8px; align-items: center;">
+                            <input type="text" id="excelSaveAsFolderPath" placeholder="D:\Documents" style="flex: 1;" />
+                            <button type="button" id="excelSaveAsFolderPathBrowse" class="btn btn-secondary" style="white-space: nowrap; padding: 8px 16px;">Browse Folder</button>
+                        </div>
+                        <small>Select the folder where you want to save the spreadsheet</small>
+                    </div>
+                    <div class="form-group" style="margin-top: 16px;">
+                        <label for="excelSaveAsFileName">File Name:</label>
+                        <input type="text" id="excelSaveAsFileName" placeholder="spreadsheet.xlsx" style="width: 100%;" />
+                        <small>Enter the file name (include .xlsx extension or it will be added automatically)</small>
+                    </div>
+                </div>
+                <div class="excel-modal-footer">
+                    <button class="btn btn-secondary" id="excelSaveAsCancel">Cancel</button>
+                    <button class="btn" id="excelSaveAsSubmit">Save</button>
                 </div>
             </div>
         </div>
@@ -3279,6 +3406,575 @@
 
         if (slackSendButton) {
             slackSendButton.addEventListener('click', sendSlackMessage);
+        }
+
+        // ===================================================================
+        // Excel Spreadsheet functionality
+        // ===================================================================
+        
+        const createExcelButton = document.getElementById('createExcelButton');
+        const openExcelButton = document.getElementById('openExcelButton');
+        const excelSpreadsheetArea = document.getElementById('excelSpreadsheetArea');
+        
+        // Track current Excel spreadsheet
+        let currentExcelSpreadsheet = {
+            filePath: null,
+            sheets: [],
+            activeSheet: null,
+            data: {} // { sheetName: [[cell values]] }
+        };
+
+        function openExcelEditor(filePath, sheets, activeSheet, sheetData) {
+            currentExcelSpreadsheet.filePath = filePath;
+            currentExcelSpreadsheet.sheets = sheets || ['Sheet1'];
+            currentExcelSpreadsheet.activeSheet = activeSheet || 'Sheet1';
+            currentExcelSpreadsheet.data = sheetData || { 'Sheet1': Array(30).fill().map(() => Array(15).fill('')) };
+            
+            if (excelSpreadsheetArea) {
+                const fileName = filePath.split('\\').pop() || filePath.split('/').pop() || 'Spreadsheet';
+                excelSpreadsheetArea.innerHTML = `
+                    <div class="excel-editor-container">
+                        <div class="excel-editor-toolbar">
+                            <!-- File Operations -->
+                            <div class="excel-editor-toolbar-group">
+                                <button class="excel-editor-btn" id="excelEditorNew" title="New Spreadsheet">📊 New</button>
+                                <button class="excel-editor-btn" id="excelEditorOpen" title="Open Spreadsheet">📂 Open</button>
+                                <button class="excel-editor-btn excel-editor-btn-primary" id="excelEditorSave" title="Save (Ctrl+S)">💾 Save</button>
+                            </div>
+                            
+                            <!-- Formatting -->
+                            <div class="excel-editor-toolbar-group">
+                                <button class="excel-editor-btn" id="excelEditorBold" title="Bold"><strong>B</strong></button>
+                                <button class="excel-editor-btn" id="excelEditorItalic" title="Italic"><em>I</em></button>
+                                <button class="excel-editor-btn" id="excelEditorUnderline" title="Underline"><u>U</u></button>
+                            </div>
+                            
+                            <!-- Alignment -->
+                            <div class="excel-editor-toolbar-group">
+                                <button class="excel-editor-btn" id="excelEditorAlignLeft" title="Align Left">◀</button>
+                                <button class="excel-editor-btn" id="excelEditorAlignCenter" title="Align Center">▣</button>
+                                <button class="excel-editor-btn" id="excelEditorAlignRight" title="Align Right">▶</button>
+                            </div>
+                            
+                            <!-- Font Controls -->
+                            <div class="excel-editor-toolbar-group">
+                                <select class="excel-editor-select" id="excelEditorFontSize" title="Font Size">
+                                    <option value="8">8</option>
+                                    <option value="9">9</option>
+                                    <option value="10">10</option>
+                                    <option value="11" selected>11</option>
+                                    <option value="12">12</option>
+                                    <option value="14">14</option>
+                                    <option value="16">16</option>
+                                    <option value="18">18</option>
+                                    <option value="20">20</option>
+                                </select>
+                                <input type="color" id="excelEditorBgColor" title="Background Color" value="#ffffff" style="width: 40px; height: 28px; border: 1px solid #ddd; border-radius: 4px; cursor: pointer;">
+                            </div>
+                            
+                            <!-- Sheet Operations -->
+                            <div class="excel-editor-toolbar-group">
+                                <button class="excel-editor-btn" id="excelEditorAddSheet" title="Add Sheet">➕ Sheet</button>
+                            </div>
+                        </div>
+                        
+                        <div class="excel-info-bar">
+                            <span style="font-weight: 600;">📊 ${fileName}</span>
+                            <span style="color: rgba(255, 255, 255, 0.7); margin-left: 16px;" id="excelCellInfo">Ready</span>
+                        </div>
+                        
+                        <div class="excel-grid-container" id="excelGridContainer">
+                            ${renderExcelGrid(currentExcelSpreadsheet.data[currentExcelSpreadsheet.activeSheet])}
+                        </div>
+                        
+                        <div class="excel-sheet-tabs" id="excelSheetTabs">
+                            ${renderSheetTabs(currentExcelSpreadsheet.sheets, currentExcelSpreadsheet.activeSheet)}
+                        </div>
+                    </div>
+                `;
+                
+                // Attach event listeners to toolbar buttons
+                attachExcelToolbarListeners();
+                
+                // Attach event listeners to grid cells
+                attachExcelCellListeners();
+                
+                // Attach event listeners to sheet tabs
+                attachExcelSheetTabListeners();
+                
+                // Handle keyboard shortcuts
+                document.addEventListener('keydown', handleExcelKeyboard);
+            }
+        }
+
+        function renderExcelGrid(data) {
+            const rows = data.length;
+            const cols = data[0]?.length || 15;
+            const colLetters = [];
+            
+            // Generate column letters (A, B, C, ... Z, AA, AB, ...)
+            for (let i = 0; i < cols; i++) {
+                colLetters.push(getColumnLetter(i));
+            }
+            
+            let html = '<div class="excel-grid">';
+            
+            // Column headers
+            html += '<div class="excel-row excel-header-row">';
+            html += '<div class="excel-cell excel-corner-cell"></div>'; // Corner cell
+            for (let col = 0; col < cols; col++) {
+                html += `<div class="excel-cell excel-column-header">${colLetters[col]}</div>`;
+            }
+            html += '</div>';
+            
+            // Data rows
+            for (let row = 0; row < rows; row++) {
+                html += '<div class="excel-row">';
+                html += `<div class="excel-cell excel-row-header">${row + 1}</div>`; // Row number
+                for (let col = 0; col < cols; col++) {
+                    const value = data[row][col] || '';
+                    html += `<div class="excel-cell excel-data-cell" data-row="${row}" data-col="${col}" contenteditable="true">${escapeHtml(value)}</div>`;
+                }
+                html += '</div>';
+            }
+            
+            html += '</div>';
+            return html;
+        }
+
+        function renderSheetTabs(sheets, activeSheet) {
+            return sheets.map(sheet => {
+                const activeClass = sheet === activeSheet ? 'active' : '';
+                return `<div class="excel-sheet-tab ${activeClass}" data-sheet="${sheet}">${sheet}</div>`;
+            }).join('');
+        }
+
+        function getColumnLetter(index) {
+            let letter = '';
+            while (index >= 0) {
+                letter = String.fromCharCode(65 + (index % 26)) + letter;
+                index = Math.floor(index / 26) - 1;
+            }
+            return letter;
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function attachExcelToolbarListeners() {
+            // Save button
+            const saveBtn = document.getElementById('excelEditorSave');
+            if (saveBtn) {
+                saveBtn.addEventListener('click', saveExcelSpreadsheet);
+            }
+            
+            // New button
+            const newBtn = document.getElementById('excelEditorNew');
+            if (newBtn) {
+                newBtn.addEventListener('click', () => {
+                    if (createExcelButton) createExcelButton.click();
+                });
+            }
+            
+            // Open button
+            const openBtn = document.getElementById('excelEditorOpen');
+            if (openBtn) {
+                openBtn.addEventListener('click', () => {
+                    if (openExcelButton) openExcelButton.click();
+                });
+            }
+            
+            // Add Sheet button
+            const addSheetBtn = document.getElementById('excelEditorAddSheet');
+            if (addSheetBtn) {
+                addSheetBtn.addEventListener('click', async () => {
+                    const sheetName = prompt('Enter new sheet name:', `Sheet${currentExcelSpreadsheet.sheets.length + 1}`);
+                    if (sheetName && !currentExcelSpreadsheet.sheets.includes(sheetName)) {
+                        currentExcelSpreadsheet.sheets.push(sheetName);
+                        currentExcelSpreadsheet.data[sheetName] = Array(30).fill().map(() => Array(15).fill(''));
+                        updateSheetTabs();
+                    }
+                });
+            }
+        }
+
+        function attachExcelCellListeners() {
+            const cells = document.querySelectorAll('.excel-data-cell');
+            cells.forEach(cell => {
+                cell.addEventListener('focus', function() {
+                    const row = this.getAttribute('data-row');
+                    const col = this.getAttribute('data-col');
+                    const cellInfo = document.getElementById('excelCellInfo');
+                    if (cellInfo) {
+                        cellInfo.textContent = `Cell: ${getColumnLetter(parseInt(col))}${parseInt(row) + 1}`;
+                    }
+                    this.classList.add('excel-cell-selected');
+                });
+                
+                cell.addEventListener('blur', function() {
+                    const row = parseInt(this.getAttribute('data-row'));
+                    const col = parseInt(this.getAttribute('data-col'));
+                    const value = this.textContent;
+                    
+                    // Update data
+                    if (!currentExcelSpreadsheet.data[currentExcelSpreadsheet.activeSheet]) {
+                        currentExcelSpreadsheet.data[currentExcelSpreadsheet.activeSheet] = Array(30).fill().map(() => Array(15).fill(''));
+                    }
+                    currentExcelSpreadsheet.data[currentExcelSpreadsheet.activeSheet][row][col] = value;
+                    
+                    this.classList.remove('excel-cell-selected');
+                });
+                
+                cell.addEventListener('keydown', function(e) {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        // Move to next row
+                        const row = parseInt(this.getAttribute('data-row'));
+                        const col = parseInt(this.getAttribute('data-col'));
+                        const nextCell = document.querySelector(`[data-row="${row + 1}"][data-col="${col}"]`);
+                        if (nextCell) nextCell.focus();
+                    } else if (e.key === 'Tab') {
+                        e.preventDefault();
+                        // Move to next column
+                        const row = parseInt(this.getAttribute('data-row'));
+                        const col = parseInt(this.getAttribute('data-col'));
+                        const nextCell = document.querySelector(`[data-row="${row}"][data-col="${col + 1}"]`);
+                        if (nextCell) nextCell.focus();
+                    }
+                });
+            });
+        }
+
+        function attachExcelSheetTabListeners() {
+            const tabs = document.querySelectorAll('.excel-sheet-tab');
+            tabs.forEach(tab => {
+                tab.addEventListener('click', function() {
+                    const sheetName = this.getAttribute('data-sheet');
+                    switchExcelSheet(sheetName);
+                });
+                
+                // Double-click to rename sheet
+                tab.addEventListener('dblclick', function(e) {
+                    e.stopPropagation();
+                    const oldName = this.getAttribute('data-sheet');
+                    renameExcelSheet(oldName, this);
+                });
+                
+                // Right-click context menu
+                tab.addEventListener('contextmenu', function(e) {
+                    e.preventDefault();
+                    const sheetName = this.getAttribute('data-sheet');
+                    showSheetContextMenu(e, sheetName);
+                });
+            });
+        }
+
+        function switchExcelSheet(sheetName) {
+            currentExcelSpreadsheet.activeSheet = sheetName;
+            
+            if (!currentExcelSpreadsheet.data[sheetName]) {
+                currentExcelSpreadsheet.data[sheetName] = Array(30).fill().map(() => Array(15).fill(''));
+            }
+            
+            const gridContainer = document.getElementById('excelGridContainer');
+            if (gridContainer) {
+                gridContainer.innerHTML = renderExcelGrid(currentExcelSpreadsheet.data[sheetName]);
+                attachExcelCellListeners();
+            }
+            
+            updateSheetTabs();
+        }
+
+        function updateSheetTabs() {
+            const tabsContainer = document.getElementById('excelSheetTabs');
+            if (tabsContainer) {
+                tabsContainer.innerHTML = renderSheetTabs(currentExcelSpreadsheet.sheets, currentExcelSpreadsheet.activeSheet);
+                attachExcelSheetTabListeners();
+            }
+        }
+
+        function renameExcelSheet(oldName, tabElement) {
+            const newName = prompt('Enter new sheet name:', oldName);
+            
+            if (!newName || newName === oldName) {
+                return; // User cancelled or didn't change the name
+            }
+            
+            // Validate new name
+            if (newName.trim() === '') {
+                alert('Sheet name cannot be empty');
+                return;
+            }
+            
+            if (currentExcelSpreadsheet.sheets.includes(newName)) {
+                alert('A sheet with this name already exists');
+                return;
+            }
+            
+            // Update sheet name in array
+            const index = currentExcelSpreadsheet.sheets.indexOf(oldName);
+            if (index !== -1) {
+                currentExcelSpreadsheet.sheets[index] = newName;
+            }
+            
+            // Update data object
+            if (currentExcelSpreadsheet.data[oldName]) {
+                currentExcelSpreadsheet.data[newName] = currentExcelSpreadsheet.data[oldName];
+                delete currentExcelSpreadsheet.data[oldName];
+            }
+            
+            // Update active sheet if it was the renamed one
+            if (currentExcelSpreadsheet.activeSheet === oldName) {
+                currentExcelSpreadsheet.activeSheet = newName;
+            }
+            
+            // Update UI
+            updateSheetTabs();
+        }
+
+        function showSheetContextMenu(event, sheetName) {
+            // Remove any existing context menu
+            const existingMenu = document.getElementById('excelSheetContextMenu');
+            if (existingMenu) {
+                existingMenu.remove();
+            }
+            
+            // Create context menu
+            const menu = document.createElement('div');
+            menu.id = 'excelSheetContextMenu';
+            menu.style.position = 'fixed';
+            menu.style.left = event.clientX + 'px';
+            menu.style.top = event.clientY + 'px';
+            menu.style.background = 'rgba(30, 41, 59, 0.95)';
+            menu.style.border = '1px solid rgba(99, 102, 241, 0.5)';
+            menu.style.borderRadius = '8px';
+            menu.style.padding = '8px 0';
+            menu.style.zIndex = '10000';
+            menu.style.minWidth = '150px';
+            menu.style.boxShadow = '0 4px 12px rgba(0, 0, 0, 0.3)';
+            
+            const menuItems = [
+                {
+                    label: '✏️ Rename',
+                    action: () => {
+                        const tab = document.querySelector(`.excel-sheet-tab[data-sheet="${sheetName}"]`);
+                        if (tab) renameExcelSheet(sheetName, tab);
+                    }
+                },
+                {
+                    label: '🗑️ Delete',
+                    action: () => deleteExcelSheet(sheetName)
+                }
+            ];
+            
+            menuItems.forEach(item => {
+                const menuItem = document.createElement('div');
+                menuItem.textContent = item.label;
+                menuItem.style.padding = '8px 16px';
+                menuItem.style.cursor = 'pointer';
+                menuItem.style.color = 'white';
+                menuItem.style.fontSize = '13px';
+                menuItem.style.transition = 'background 0.2s';
+                
+                menuItem.addEventListener('mouseenter', () => {
+                    menuItem.style.background = 'rgba(99, 102, 241, 0.3)';
+                });
+                
+                menuItem.addEventListener('mouseleave', () => {
+                    menuItem.style.background = 'transparent';
+                });
+                
+                menuItem.addEventListener('click', () => {
+                    item.action();
+                    menu.remove();
+                });
+                
+                menu.appendChild(menuItem);
+            });
+            
+            document.body.appendChild(menu);
+            
+            // Close menu when clicking elsewhere
+            const closeMenu = (e) => {
+                if (!menu.contains(e.target)) {
+                    menu.remove();
+                    document.removeEventListener('click', closeMenu);
+                }
+            };
+            
+            setTimeout(() => {
+                document.addEventListener('click', closeMenu);
+            }, 100);
+        }
+
+        function deleteExcelSheet(sheetName) {
+            if (currentExcelSpreadsheet.sheets.length <= 1) {
+                alert('Cannot delete the last sheet');
+                return;
+            }
+            
+            if (!confirm(`Are you sure you want to delete sheet "${sheetName}"?`)) {
+                return;
+            }
+            
+            // Remove from sheets array
+            const index = currentExcelSpreadsheet.sheets.indexOf(sheetName);
+            if (index !== -1) {
+                currentExcelSpreadsheet.sheets.splice(index, 1);
+            }
+            
+            // Remove data
+            if (currentExcelSpreadsheet.data[sheetName]) {
+                delete currentExcelSpreadsheet.data[sheetName];
+            }
+            
+            // If deleted sheet was active, switch to first sheet
+            if (currentExcelSpreadsheet.activeSheet === sheetName) {
+                switchExcelSheet(currentExcelSpreadsheet.sheets[0]);
+            } else {
+                updateSheetTabs();
+            }
+        }
+
+        async function saveExcelSpreadsheet() {
+            if (!currentExcelSpreadsheet.filePath) {
+                alert('No spreadsheet to save');
+                return;
+            }
+            
+            const saveBtn = document.getElementById('excelEditorSave');
+            if (saveBtn) {
+                saveBtn.disabled = true;
+                saveBtn.textContent = '💾 Saving...';
+            }
+            
+            try {
+                // Capture current cell data before saving
+                captureCurrentCellData();
+                
+                console.log('=== EXCEL SAVE DEBUG ===');
+                console.log('File path:', currentExcelSpreadsheet.filePath);
+                console.log('Sheets:', currentExcelSpreadsheet.sheets);
+                console.log('Active sheet:', currentExcelSpreadsheet.activeSheet);
+                console.log('Data keys:', Object.keys(currentExcelSpreadsheet.data));
+                
+                // Log sample data from each sheet
+                for (const [sheetName, sheetData] of Object.entries(currentExcelSpreadsheet.data)) {
+                    const nonEmptyRows = sheetData.filter(row => row.some(cell => cell !== ''));
+                    const totalCells = sheetData.reduce((sum, row) => sum + row.filter(cell => cell !== '').length, 0);
+                    console.log(`Sheet "${sheetName}": ${nonEmptyRows.length} non-empty rows, ${totalCells} cells with data`);
+                }
+                
+                const response = await fetch('http://localhost:8000/api/excel/save', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        file_path: currentExcelSpreadsheet.filePath,
+                        data: currentExcelSpreadsheet.data
+                    })
+                });
+
+                const data = await response.json();
+                console.log('Save response:', data);
+                
+                if (response.ok && data.success) {
+                    if (saveBtn) {
+                        saveBtn.textContent = '💾 Saved!';
+                        setTimeout(() => {
+                            if (saveBtn) {
+                                saveBtn.textContent = '💾 Save';
+                                saveBtn.disabled = false;
+                            }
+                        }, 2000);
+                    }
+                    alert(`Spreadsheet saved successfully!\n\nFile: ${data.file_path}\nSheets: ${data.sheets ? data.sheets.join(', ') : 'N/A'}`);
+                } else {
+                    throw new Error(data.detail || data.message || data.error || 'Failed to save spreadsheet');
+                }
+            } catch (error) {
+                console.error('Error saving spreadsheet:', error);
+                alert('Error saving spreadsheet: ' + error.message);
+                if (saveBtn) {
+                    saveBtn.disabled = false;
+                    saveBtn.textContent = '💾 Save';
+                }
+            }
+        }
+
+        function captureCurrentCellData() {
+            // Capture data from all visible cells in the current sheet
+            const cells = document.querySelectorAll('.excel-data-cell');
+            cells.forEach(cell => {
+                const row = parseInt(cell.getAttribute('data-row'));
+                const col = parseInt(cell.getAttribute('data-col'));
+                const value = cell.textContent.trim();
+                
+                // Ensure the sheet data array exists
+                if (!currentExcelSpreadsheet.data[currentExcelSpreadsheet.activeSheet]) {
+                    currentExcelSpreadsheet.data[currentExcelSpreadsheet.activeSheet] = Array(30).fill().map(() => Array(15).fill(''));
+                }
+                
+                // Update the value
+                if (currentExcelSpreadsheet.data[currentExcelSpreadsheet.activeSheet][row]) {
+                    currentExcelSpreadsheet.data[currentExcelSpreadsheet.activeSheet][row][col] = value;
+                }
+            });
+        }
+
+        function handleExcelKeyboard(e) {
+            // Save shortcut (Ctrl+S)
+            if (e.ctrlKey && e.key === 's') {
+                const gridContainer = document.getElementById('excelGridContainer');
+                if (gridContainer && document.activeElement.classList.contains('excel-data-cell')) {
+                    e.preventDefault();
+                    saveExcelSpreadsheet();
+                }
+            }
+        }
+
+        // Create spreadsheet button handler
+        if (createExcelButton) {
+            createExcelButton.addEventListener('click', async () => {
+                const timestamp = new Date().toISOString().replace(/[:.]/g, '-').substring(0, 19);
+                const defaultPath = await getDefaultDocumentsPath();
+                const filePath = `${defaultPath}\\spreadsheet_${timestamp}.xlsx`;
+                
+                createExcelButton.disabled = true;
+                createExcelButton.textContent = 'Creating...';
+                
+                try {
+                    const response = await fetch('http://localhost:8000/api/excel/create', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            file_path: filePath,
+                            sheet_name: 'Sheet1'
+                        })
+                    });
+
+                    const data = await response.json();
+                    if (response.ok && data.success) {
+                        // Open the spreadsheet in the editor immediately
+                        openExcelEditor(filePath, data.sheets || ['Sheet1'], data.active_sheet || 'Sheet1', null);
+                    } else {
+                        const errorMsg = data.detail || data.message || data.error || 'Failed to create spreadsheet';
+                        alert('Error creating spreadsheet:\\n\\n' + errorMsg);
+                    }
+                } catch (error) {
+                    console.error('Error creating spreadsheet:', error);
+                    alert('Error creating spreadsheet: ' + error.message);
+                } finally {
+                    createExcelButton.disabled = false;
+                    createExcelButton.textContent = 'Create Spreadsheet';
+                }
+            });
         }
     </script>
 </body>
