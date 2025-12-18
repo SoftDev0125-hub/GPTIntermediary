@@ -352,7 +352,6 @@ def chat():
     """Handle chat messages with OpenAI + fallback"""
     data = request.json
     user_message = data.get('message', '').strip()
-    history = data.get('history', [])
     user_id = data.get('user_id')  # Get user_id from request
     
     # Validate and convert user_id
@@ -375,13 +374,12 @@ def chat():
     # Try OpenAI first if available
     if USE_OPENAI:
         try:
-            # Get conversation history from database if user_id is available
-            db_history = []
-            if user_id and DATABASE_AVAILABLE:
-                db_history = get_conversation_history_from_db(user_id, limit=20)  # Get last 20 conversation pairs
-                logger.info(f"[CHAT] Loaded {len(db_history)} messages from database history")
+            # DISABLED: Database history retrieval to prevent timeout
+            # The database query was causing timeouts, so we skip it entirely
+            # Each question is now answered independently without past context
             
             # Build messages for OpenAI
+            # Simplified system prompt without history to prevent timeout
             system_content = """You are ChatGPT, a helpful AI assistant created by OpenAI. You can answer questions on any topic, provide explanations, help with problem-solving, write code, and have natural conversations.
 
 Additionally, you have special capabilities to interact with the user's computer:
@@ -390,45 +388,19 @@ Additionally, you have special capabilities to interact with the user's computer
 • Check unread emails
 • Reply to emails
 
-IMPORTANT: You have access to the user's previous conversation history from past sessions stored in the database.
-This history contains valuable context about:
-- Topics the user has discussed
-- Questions they've asked before  
-- Your previous answers and explanations
-- User preferences and interests
-- Ongoing projects or tasks
-
-CRITICAL INSTRUCTIONS FOR USING CONVERSATION HISTORY:
-1. ANALYZE the conversation history carefully before responding
-2. REFERENCE specific previous discussions when relevant
-3. BUILD UPON previous answers rather than repeating them
-4. MAINTAIN continuity - if the user asks follow-up questions, connect them to previous context
-5. LEARN from patterns - notice what topics interest the user and provide deeper insights
-6. REMEMBER preferences - if the user preferred certain formats or approaches, use them again
-7. PROVIDE MORE ACCURATE answers by leveraging what you've discussed before
+Answer each question independently and clearly. Focus on the current question without referencing past conversations.
 
 When answering questions:
-- Provide clear, accurate, and helpful responses based on previous conversations and context
-- Use the conversation history to understand the user's preferences, ongoing topics, and context
-- If the question relates to a previous topic, acknowledge it and expand on previous discussions
-- Use the history to understand the user's knowledge level and adjust explanations accordingly
-- Connect new questions to previous conversations when there's a relationship
-- Provide more personalized responses based on what you know about the user from history
+- Provide clear, accurate, and helpful responses
 - Explain complex topics in an understandable way
 - Format code with proper syntax
 - Use examples when helpful
 - Be conversational and friendly
-- Reference previous discussions when relevant to provide continuity
 
 When users ask you to send emails, use the send_email function with proper to/subject/body parameters.
 For app launching, use the launch_app function with the app name.
 
 You can discuss any topic freely - science, math, programming, history, creative writing, or anything else the user asks about."""
-            
-            # Add context about history if available
-            if db_history:
-                history_summary = f"\n\nCONVERSATION HISTORY CONTEXT:\nYou have access to {len(db_history)} previous messages from past conversations with this user. Use this history to provide contextually aware and accurate responses."
-                system_content += history_summary
             
             messages = [
                 {
@@ -437,32 +409,52 @@ You can discuss any topic freely - science, math, programming, history, creative
                 }
             ]
             
-            # Add database conversation history first (most relevant context)
-            if db_history:
-                # Keep last 20 messages from database (10 conversation pairs) to provide good context
-                recent_history = db_history[-20:]
-                messages.extend(recent_history)
-                logger.info(f"[CHAT] Added {len(recent_history)} messages from database to context")
-                logger.info(f"[CHAT] History preview: First Q: {recent_history[0]['content'][:50] if recent_history else 'None'}... | Last A: {recent_history[-1]['content'][:50] if recent_history else 'None'}...")
-            
-            # Add frontend-provided history (if any) - this takes precedence for current session
-            if history:
-                messages.extend(history[-10:])  # Keep last 10 messages from current session
-                logger.info(f"[CHAT] Added {len(history[-10:])} messages from frontend history")
-            
+            # DISABLED: No history is used to prevent timeout
+            # Each question is answered independently
+            # Skip database history and frontend history entirely
+
+           
             # Add current user message
             messages.append({"role": "user", "content": user_message})
             
-            logger.info(f"[CHAT] Total messages in context: {len(messages)} (1 system + {len(messages)-1} conversation messages)")
+            total_context = len(messages)
+            logger.info(f"[CHAT] Total messages in context: {total_context} (1 system + {total_context-1} conversation messages)")
             
-            # Call OpenAI with function calling
-            response = openai.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=messages,
-                functions=FUNCTIONS,
-                function_call="auto",
-                temperature=0.7
-            )
+            # Warn if context is getting large
+            if total_context > 25:
+                logger.warning(f"[CHAT] Large context size: {total_context} messages - may cause timeout")
+            
+            # Call OpenAI with function calling - use direct call with very short timeout
+            # Only system + current user message to prevent timeout
+            minimal_messages = [
+                messages[0],  # System message
+                {"role": "user", "content": user_message}  # Current user message only
+            ]
+            
+            logger.info(f"[CHAT] Calling OpenAI API with minimal context: {len(minimal_messages)} messages")
+            
+            # Direct call with very short timeout
+            try:
+                response = openai.chat.completions.create(
+                    model="gpt-3.5-turbo",
+                    messages=minimal_messages,
+                    functions=FUNCTIONS,
+                    function_call="auto",
+                    temperature=0.7,
+                    max_tokens=1500,  # Reduced tokens for faster response
+                    timeout=8  # Very short timeout - 8 seconds
+                )
+            except Exception as api_error:
+                error_str = str(api_error).lower()
+                logger.error(f"[CHAT] OpenAI API error: {error_str}")
+                if 'timeout' in error_str or 'timed out' in error_str:
+                    raise Exception("OpenAI API timeout")
+                raise
+            except Exception as api_error:
+                error_str = str(api_error).lower()
+                logger.error(f"[CHAT] OpenAI API error: {error_str}")
+                # Fall through to keyword matching fallback
+                raise
             
             message = response.choices[0].message
             function_called = None
@@ -477,7 +469,8 @@ You can discuss any topic freely - science, math, programming, history, creative
                     app_name = function_args.get('app_name')
                     backend_response = requests.post(
                         f"{BACKEND_URL}/api/app/launch",
-                        json={"app_name": app_name}
+                        json={"app_name": app_name},
+                        timeout=5  # 5 second timeout
                     )
                     function_result = backend_response.json()
                     function_called = function_name
@@ -491,7 +484,8 @@ You can discuss any topic freely - science, math, programming, history, creative
                     }
                     backend_response = requests.post(
                         f"{BACKEND_URL}/api/email/send",
-                        json=email_data
+                        json=email_data,
+                        timeout=5  # 5 second timeout
                     )
                     function_result = backend_response.json()
                     function_called = function_name
@@ -503,7 +497,8 @@ You can discuss any topic freely - science, math, programming, history, creative
                     }
                     backend_response = requests.post(
                         f"{BACKEND_URL}/api/email/unread",
-                        json=email_data
+                        json=email_data,
+                        timeout=5  # 5 second timeout
                     )
                     function_result = backend_response.json()
                     function_called = function_name
@@ -516,7 +511,8 @@ You can discuss any topic freely - science, math, programming, history, creative
                     }
                     backend_response = requests.post(
                         f"{BACKEND_URL}/api/email/reply",
-                        json=email_data
+                        json=email_data,
+                        timeout=5  # 5 second timeout
                     )
                     function_result = backend_response.json()
                     function_called = function_name
@@ -541,13 +537,39 @@ You can discuss any topic freely - science, math, programming, history, creative
                         "content": json.dumps(function_result)
                     })
                     
-                    # Get final response from OpenAI
-                    second_response = openai.chat.completions.create(
-                        model="gpt-3.5-turbo",
-                        messages=messages
-                    )
-                    
+            # Get final response from OpenAI
+            # Use MINIMAL context: only system + user message + function call messages
+            # Direct call with very short timeout
+            minimal_messages = [
+                messages[0],  # System message
+                {"role": "user", "content": user_message},  # Original user message
+                {"role": "assistant", "content": None, "function_call": {"name": function_name, "arguments": json.dumps(function_args)}},
+                {"role": "function", "name": function_name, "content": json.dumps(function_result)}
+            ]
+            
+            logger.info(f"[CHAT] Making second OpenAI call with minimal context: {len(minimal_messages)} messages")
+            
+            try:
+                second_response = openai.chat.completions.create(
+                    model="gpt-3.5-turbo",
+                    messages=minimal_messages,
+                    temperature=0.7,
+                    max_tokens=1500,  # Reduced tokens
+                    timeout=8  # Very short timeout - 8 seconds
+                )
+                if not second_response or not second_response.choices or len(second_response.choices) == 0:
+                    logger.error("[CHAT] Empty response from second OpenAI call")
+                    final_message = "I apologize, but I couldn't generate a complete response. Please try again."
+                else:
                     final_message = second_response.choices[0].message.content
+                    logger.info(f"[CHAT] Second OpenAI call successful")
+            except Exception as second_error:
+                error_str = str(second_error).lower()
+                logger.error(f"[CHAT] Error in second OpenAI call: {second_error}")
+                if 'timeout' in error_str or 'timed out' in error_str:
+                    final_message = f"I completed the action ({function_name}), but the response generation timed out. Please check if it worked."
+                else:
+                    final_message = f"I completed the action ({function_name}), but had trouble generating a response. Please check if it worked."
                 else:
                     final_message = message.content
             else:
@@ -560,20 +582,36 @@ You can discuss any topic freely - science, math, programming, history, creative
             
             logger.info(f"[CHAT] GPT Response preview: '{final_message[:100]}...' (length={len(final_message)})")
             
-            # Save to database if user_id is provided
+            # Prepare response first - don't wait for database save
+            response_data = {
+                'response': final_message,
+                'function_called': function_called,
+                'mode': 'openai'
+            }
+            
+            # Return response immediately
+            logger.info(f"[CHAT] Returning response immediately (length={len(final_message)})")
+            response = jsonify(response_data)
+            
+            # Save to database in background (non-blocking) to prevent timeout
             if user_id and DATABASE_AVAILABLE:
-                logger.info(f"[CHAT] Attempting to save chat to database: user_id={user_id}, mode=openai")
-                save_chat_to_db(user_id, user_message, final_message, 'gpt-3.5-turbo', function_called, 'openai')
+                import threading
+                def save_in_background():
+                    try:
+                        logger.info(f"[CHAT] Saving chat to database in background: user_id={user_id}")
+                        save_chat_to_db(user_id, user_message, final_message, 'gpt-3.5-turbo', function_called, 'openai')
+                        logger.info(f"[CHAT] Database save completed")
+                    except Exception as db_save_error:
+                        logger.error(f"[CHAT] Database save failed (non-critical): {db_save_error}")
+                
+                # Start background thread (non-blocking)
+                threading.Thread(target=save_in_background, daemon=True).start()
             elif not user_id:
                 logger.warning("[CHAT] user_id not provided, skipping database save")
             elif not DATABASE_AVAILABLE:
                 logger.warning("[CHAT] Database not available, skipping database save")
             
-            return jsonify({
-                'response': final_message,
-                'function_called': function_called,
-                'mode': 'openai'
-            })
+            return response
         
         except Exception as e:
             error_str = str(e)
@@ -636,72 +674,6 @@ You can discuss any topic freely - science, math, programming, history, creative
             'error': str(e)
         }), 500
 
-
-def get_conversation_history_from_db(user_id, limit=20):
-    """Retrieve previous conversation history from database for context
-    
-    Args:
-        user_id: User ID to get conversations for
-        limit: Maximum number of conversation pairs to retrieve (default 20)
-    
-    Returns:
-        List of message dictionaries in OpenAI format: [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}, ...]
-    """
-    if not DATABASE_AVAILABLE or not ChatWithGPT or not user_id:
-        return []
-    
-    try:
-        db = SessionLocal()
-        try:
-            # Get recent conversations for this user, ordered by most recent first
-            conversations = db.query(ChatWithGPT).filter(
-                ChatWithGPT.user_id == int(user_id)
-            ).order_by(
-                ChatWithGPT.created_at.desc()
-            ).limit(limit).all()
-            
-            if not conversations:
-                logger.info(f"[DB] No previous conversations found for user_id={user_id}")
-                return []
-            
-            # Convert to OpenAI message format (most recent first, then reverse to chronological order)
-            history = []
-            for conv in reversed(conversations):
-                if conv.questions and conv.answers:
-                    # Clean and validate the content
-                    question = str(conv.questions).strip()
-                    answer = str(conv.answers).strip()
-                    
-                    if question and answer:  # Only add non-empty conversations
-                        history.append({
-                            "role": "user",
-                            "content": question
-                        })
-                        history.append({
-                            "role": "assistant",
-                            "content": answer
-                        })
-            
-            logger.info(f"[DB] Retrieved {len(history)} messages ({len(history)//2} conversation pairs) from database history for user_id={user_id}")
-            
-            # Log sample topics for debugging
-            if history:
-                sample_topics = []
-                for i in range(0, min(6, len(history)), 2):
-                    if i < len(history):
-                        topic_preview = history[i]['content'][:40].replace('\n', ' ')
-                        sample_topics.append(topic_preview)
-                logger.info(f"[DB] Sample topics from history: {', '.join(sample_topics)}...")
-            
-            return history
-        except Exception as e:
-            logger.error(f"[DB] Error retrieving conversation history: {e}", exc_info=True)
-            return []
-        finally:
-            db.close()
-    except Exception as e:
-        logger.error(f"[DB] Database connection error retrieving history: {e}", exc_info=True)
-        return []
 
 
 def save_chat_to_db(user_id, user_message, gpt_response, model=None, function_called=None, mode=None):

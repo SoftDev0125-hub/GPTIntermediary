@@ -14,19 +14,36 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Setup logging
-logging.basicConfig(level=logging.INFO)
+# Setup logging - use WARNING level to reduce logging overhead
+logging.basicConfig(level=logging.WARNING)  # Changed from INFO to WARNING for faster performance
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for frontend
 
+# Configure Flask for better request handling
+app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max request size
+
 # Configuration
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 BACKEND_URL = "http://localhost:8000"
 
-# Initialize OpenAI
-openai.api_key = OPENAI_API_KEY
+# Initialize OpenAI - use a single client instance for better performance
+# Reusing a client is faster than creating a new one for each request
+from openai import OpenAI
+_openai_client = None
+
+def get_openai_client():
+    """Get or create OpenAI client instance"""
+    global _openai_client
+    if _openai_client is None:
+        _openai_client = OpenAI(
+            api_key=OPENAI_API_KEY,
+            timeout=(5.0, 12.0),  # Connect: 5s, Read: 12s (shorter for faster responses)
+            max_retries=0  # No retries - fail fast
+        )
+    return _openai_client
 
 # User credentials (mock - in production, this would come from user authentication)
 # For now, we'll simulate that ChatGPT has the user's OAuth tokens
@@ -155,7 +172,7 @@ def call_backend_function(function_name, arguments):
         print(f"Calling backend: {url}")
         print(f"Arguments: {json.dumps(arguments, indent=2)}")
         
-        response = requests.post(url, json=arguments, timeout=10)
+        response = requests.post(url, json=arguments, timeout=5)  # Reduced to 5 seconds
         result = response.json()
         
         print(f"Backend response: {json.dumps(result, indent=2)}")
@@ -211,13 +228,24 @@ def get_user_credentials():
     })
 
 
+# Request counter for debugging
+_request_counter = 0
+
 @app.route('/chat', methods=['POST'])
 def chat():
     """Handle chat messages and function calling"""
+    global _request_counter
+    import time
+    request_start_time = time.time()
+    _request_counter += 1
+    request_id = f"req-{_request_counter}"  # Sequential request ID for tracking
+    
     data = request.json
     user_message = data.get('message', '').strip()
-    history = data.get('history', [])
+
     user_id = data.get('user_id')  # Get user_id from request
+    
+    logger.info(f"[CHAT-{request_id}] Request #{_request_counter} started at {request_start_time:.2f}, message='{user_message[:50]}...'")
     
     # Validate and convert user_id
     if user_id:
@@ -243,44 +271,13 @@ def chat():
         })
     
     try:
-        # Get conversation history from database if user_id is available
-        db_history = []
-        if user_id and DATABASE_AVAILABLE:
-            db_history = get_conversation_history_from_db(user_id, limit=20)  # Get last 20 conversation pairs
-            logger.info(f"[CHAT] Loaded {len(db_history)} messages from database history")
+        # DISABLED: Database history retrieval to prevent timeout
+        # The database query was causing timeouts, so we skip it entirely
+        # Each question is now answered independently without past context
+
         
-        # Build messages for OpenAI
-        system_content = """You are a helpful AI assistant that can manage emails and launch applications. 
-You have access to the user's Gmail account and can launch apps on their computer.
-Be friendly, concise, and helpful. When performing actions, confirm what you did.
-
-IMPORTANT: You have access to the user's previous conversation history from past sessions. 
-This history contains valuable context about:
-- Topics the user has discussed
-- Questions they've asked before
-- Your previous answers and explanations
-- User preferences and interests
-- Ongoing projects or tasks
-
-CRITICAL INSTRUCTIONS FOR USING CONVERSATION HISTORY:
-1. ANALYZE the conversation history carefully before responding
-2. REFERENCE specific previous discussions when relevant
-3. BUILD UPON previous answers rather than repeating them
-4. MAINTAIN continuity - if the user asks follow-up questions, connect them to previous context
-5. LEARN from patterns - notice what topics interest the user and provide deeper insights
-6. REMEMBER preferences - if the user preferred certain formats or approaches, use them again
-7. PROVIDE MORE ACCURATE answers by leveraging what you've discussed before
-
-When answering:
-- If the question relates to a previous topic, acknowledge it and expand on previous discussions
-- Use the history to understand the user's knowledge level and adjust explanations accordingly
-- Connect new questions to previous conversations when there's a relationship
-- Provide more personalized responses based on what you know about the user from history"""
-        
-        # Add context about history if available
-        if db_history:
-            history_summary = f"\n\nCONVERSATION HISTORY CONTEXT:\nYou have access to {len(db_history)} previous messages from past conversations with this user. Use this history to provide contextually aware and accurate responses."
-            system_content += history_summary
+        # Build messages for OpenAI - very short system prompt for faster processing
+        system_content = """You are a helpful AI assistant. Be concise and direct. Answer questions clearly and briefly."""
         
         messages = [
             {
@@ -289,72 +286,171 @@ When answering:
             }
         ]
         
-        # Add database conversation history first (most relevant context)
-        if db_history:
-            # Keep last 20 messages from database (10 conversation pairs) to provide good context
-            recent_history = db_history[-20:]
-            messages.extend(recent_history)
-            logger.info(f"[CHAT] Added {len(recent_history)} messages from database to context")
-            logger.info(f"[CHAT] History preview: First Q: {recent_history[0]['content'][:50] if recent_history else 'None'}... | Last A: {recent_history[-1]['content'][:50] if recent_history else 'None'}...")
-        
-        # Add frontend-provided history (if any) - this takes precedence for current session
-        if history:
-            messages.extend(history[-10:])  # Keep last 10 messages from current session
-            logger.info(f"[CHAT] Added {len(history[-10:])} messages from frontend history")
+        # DISABLED: No history is used to prevent timeout
+        # Each question is answered independently
+        # Skip database history and frontend history entirely
+
         
         # Add current user message
         messages.append({"role": "user", "content": user_message})
         
-        logger.info(f"[CHAT] Total messages in context: {len(messages)} (1 system + {len(messages)-1} conversation messages)")
+        total_context = len(messages)
+        # logger.info(f"[CHAT] Total messages in context: {total_context}...")  # Disabled for speed
         
-        # Call OpenAI with function calling
-        response = openai.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=messages,
-            functions=FUNCTIONS,
-            function_call="auto"
-        )
+        # Use minimal context: only system + current user message
+        minimal_messages = [
+            messages[0],  # System message
+            {"role": "user", "content": user_message}  # Current user message only
+        ]
+        
+        # Direct call - minimize logging overhead
+        api_start_time = time.time()
+        try:
+            # ALWAYS disable function calling - never enable it to prevent double API calls
+            # Function calling requires 2 API calls which causes timeouts
+            
+            # Use shared OpenAI client for better performance (faster than creating new client each time)
+            client = get_openai_client()
+            
+            # Enable function calling for app launching and email functions
+            # Use stream=False explicitly to ensure we get complete response immediately
+            # Optimize for speed: lower max_tokens, use faster model, no streaming
+            response = client.chat.completions.create(
+                model="gpt-3.5-turbo",  # Fast model
+                messages=minimal_messages,
+                functions=FUNCTIONS,  # Enable function calling for app launch, email, etc.
+                function_call="auto",  # Let the model decide when to call functions
+                max_tokens=300,  # Reduced for faster response (300 tokens is enough for most answers)
+                temperature=0.7,
+                stream=False,  # No streaming - get complete response immediately
+            )
+            
+            api_duration = time.time() - api_start_time
+            logger.info(f"[CHAT-{request_id}] API call completed in {api_duration:.2f} seconds")
+        except Exception as api_error:
+            error_str = str(api_error).lower()
+            logger.error(f"[CHAT-{request_id}] OpenAI API error: {error_str}", exc_info=True)
+            
+            # Check for specific error types
+            elapsed_time = time.time() - api_start_time
+            if 'timeout' in error_str or 'timed out' in error_str or 'read timeout' in error_str:
+                logger.error(f"[CHAT-{request_id}] OpenAI API timeout after {elapsed_time:.2f} seconds")
+                return jsonify({
+                    'response': f"I apologize, but the request took too long ({elapsed_time:.1f}s). This might be due to network issues or OpenAI API being slow. Please try again.",
+                    'function_called': None,
+                    'error': 'timeout'
+                }), 500
+            elif 'rate limit' in error_str or '429' in error_str:
+                return jsonify({
+                    'response': "I apologize, but I'm receiving too many requests. Please wait a moment and try again.",
+                    'function_called': None,
+                    'error': 'rate_limit'
+                }), 429
+            elif 'invalid' in error_str or '401' in error_str or '403' in error_str:
+                return jsonify({
+                    'response': "I apologize, but there's an authentication issue. Please check your OpenAI API key.",
+                    'function_called': None,
+                    'error': 'auth_error'
+                }), 500
+            else:
+                return jsonify({
+                    'response': f"I apologize, but I encountered an error: {str(api_error)}. Please try again.",
+                    'function_called': None,
+                    'error': str(api_error)
+                }), 500
+        
+        # Validate response immediately
+        if not response:
+            logger.error(f"[CHAT-{request_id}] Response is None")
+            return jsonify({
+                'response': "I apologize, but I received no response. Please try again.",
+                'function_called': None,
+                'error': 'no_response'
+            }), 500
+        
+        if not hasattr(response, 'choices') or not response.choices or len(response.choices) == 0:
+            logger.error(f"[CHAT-{request_id}] Empty or invalid response from OpenAI")
+            return jsonify({
+                'response': "I apologize, but I received an invalid response. Please try again.",
+                'function_called': None,
+                'error': 'invalid_response'
+            }), 500
         
         message = response.choices[0].message
         function_called = None
+        final_message = None
         
-        # Check if function was called
-        if message.function_call:
+        # Check if a function was called
+        if hasattr(message, 'function_call') and message.function_call:
+            # Function was called - execute it
             function_name = message.function_call.name
-            function_args = json.loads(message.function_call.arguments)
+            try:
+                function_args = json.loads(message.function_call.arguments)
+            except json.JSONDecodeError:
+                function_args = {}
             
-            print(f"Function called: {function_name}")
-            print(f"Arguments: {function_args}")
-            
-            # Call backend function
-            function_result = call_backend_function(function_name, function_args)
+            logger.warning(f"[CHAT-{request_id}] Function called: {function_name} with args: {function_args}")
             function_called = function_name
             
-            # Send function result back to OpenAI
-            messages.append({
+            # Execute the function
+            function_result = call_backend_function(function_name, function_args)
+            
+            # Add function result to messages and call OpenAI again to get the response
+            minimal_messages.append({
                 "role": "assistant",
                 "content": None,
                 "function_call": {
                     "name": function_name,
-                    "arguments": json.dumps(function_args)
+                    "arguments": message.function_call.arguments
                 }
             })
-            
-            messages.append({
+            minimal_messages.append({
                 "role": "function",
                 "name": function_name,
                 "content": json.dumps(function_result)
             })
             
-            # Get final response from OpenAI
-            second_response = openai.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=messages
-            )
+            # Second API call to get the final response
+            try:
+                logger.warning(f"[CHAT-{request_id}] Making second API call after function execution")
+                response2 = client.chat.completions.create(
+                    model="gpt-3.5-turbo",
+                    messages=minimal_messages,
+                    functions=FUNCTIONS,
+                    function_call="auto",
+                    max_tokens=300,
+                    temperature=0.7,
+                    stream=False,
+                )
+                
+                message2 = response2.choices[0].message
+                if hasattr(message2, 'content') and message2.content:
+                    final_message = message2.content
+                else:
+                    final_message = f"Executed {function_name}. Result: {json.dumps(function_result)}"
+            except Exception as second_call_error:
+                logger.error(f"[CHAT-{request_id}] Second API call failed: {second_call_error}")
+                # Fallback: use function result directly
+                if function_result.get('success'):
+                    final_message = function_result.get('message', f"Successfully executed {function_name}")
+                else:
+                    final_message = function_result.get('error', f"Executed {function_name} but got an error")
+        
+        # If no function was called, use direct response
+        if final_message is None:
+            if not hasattr(message, 'content'):
+                logger.error(f"[CHAT-{request_id}] Message has no content attribute")
+                return jsonify({
+                    'response': "I apologize, but I couldn't generate a response. Please try again.",
+                    'function_called': None,
+                    'error': 'no_content'
+                }), 500
             
-            final_message = second_response.choices[0].message.content
-        else:
-            final_message = message.content
+            if not message.content:
+                logger.warning(f"[CHAT-{request_id}] Message content is None or empty")
+                final_message = "I apologize, but I couldn't generate a response. Please try again."
+            else:
+                final_message = message.content
         
         # Validate final_message
         if not final_message or not isinstance(final_message, str):
@@ -363,29 +459,54 @@ When answering:
         
         logger.info(f"[CHAT] GPT Response preview: '{final_message[:100]}...' (length={len(final_message)})")
         
-        # Save to database if user_id is provided
+        # Prepare response first - don't wait for database save
+        response_data = {
+            'response': final_message,
+            'function_called': function_called
+        }
+        
+        # Return response immediately
+        total_duration = time.time() - request_start_time
+        logger.info(f"[CHAT-{request_id}] Total request duration: {total_duration:.2f} seconds (response length={len(final_message)})")
+        logger.info(f"[CHAT-{request_id}] Returning response: {response_data}")
+        response = jsonify(response_data)
+        
+        # Save to database in background (non-blocking) to prevent timeout
         if user_id and DATABASE_AVAILABLE:
-            logger.info(f"[CHAT] Attempting to save chat to database: user_id={user_id}, mode=openai")
-            save_chat_to_db(user_id, user_message, final_message, 'gpt-3.5-turbo', function_called, 'openai')
+            import threading
+            def save_in_background():
+                try:
+                    logger.info(f"[CHAT] Saving chat to database in background: user_id={user_id}")
+                    save_chat_to_db(user_id, user_message, final_message, 'gpt-3.5-turbo', function_called, 'openai')
+                    logger.info(f"[CHAT] Database save completed")
+                except Exception as db_save_error:
+                    logger.error(f"[CHAT] Database save failed (non-critical): {db_save_error}")
+            
+            # Start background thread (non-blocking)
+            threading.Thread(target=save_in_background, daemon=True).start()
         elif not user_id:
             logger.warning("[CHAT] user_id not provided, skipping database save")
         elif not DATABASE_AVAILABLE:
             logger.warning("[CHAT] Database not available, skipping database save")
         
-        return jsonify({
-            'response': final_message,
-            'function_called': function_called
-        })
+        return response
     
     except Exception as e:
         error_str = str(e)
         logger.error(f"[CHAT] Error: {error_str}")
         error_response = f'Sorry, I encountered an error: {str(e)}'
         
-        # Save error to database if user_id is provided
+        # Don't save errors to database in blocking way - return immediately
+        # Save error to database if user_id is provided (non-blocking)
         if user_id and DATABASE_AVAILABLE:
-            logger.info(f"[CHAT] Attempting to save error to database: user_id={user_id}, mode=error")
-            save_chat_to_db(user_id, user_message, error_response, None, None, 'error')
+            import threading
+            def save_error_in_background():
+                try:
+                    logger.info(f"[CHAT] Saving error to database in background: user_id={user_id}, mode=error")
+                    save_chat_to_db(user_id, user_message, error_response, None, None, 'error')
+                except Exception as db_save_error:
+                    logger.error(f"[CHAT] Database save failed (non-critical): {db_save_error}")
+            threading.Thread(target=save_error_in_background, daemon=True).start()
         elif not user_id:
             logger.warning("[CHAT] user_id not provided, skipping error database save")
         elif not DATABASE_AVAILABLE:
@@ -396,72 +517,6 @@ When answering:
             'error': str(e)
         }), 500
 
-
-def get_conversation_history_from_db(user_id, limit=20):
-    """Retrieve previous conversation history from database for context
-    
-    Args:
-        user_id: User ID to get conversations for
-        limit: Maximum number of conversation pairs to retrieve (default 20)
-    
-    Returns:
-        List of message dictionaries in OpenAI format: [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}, ...]
-    """
-    if not DATABASE_AVAILABLE or not ChatWithGPT or not user_id:
-        return []
-    
-    try:
-        db = SessionLocal()
-        try:
-            # Get recent conversations for this user, ordered by most recent first
-            conversations = db.query(ChatWithGPT).filter(
-                ChatWithGPT.user_id == int(user_id)
-            ).order_by(
-                ChatWithGPT.created_at.desc()
-            ).limit(limit).all()
-            
-            if not conversations:
-                logger.info(f"[DB] No previous conversations found for user_id={user_id}")
-                return []
-            
-            # Convert to OpenAI message format (most recent first, then reverse to chronological order)
-            history = []
-            for conv in reversed(conversations):
-                if conv.questions and conv.answers:
-                    # Clean and validate the content
-                    question = str(conv.questions).strip()
-                    answer = str(conv.answers).strip()
-                    
-                    if question and answer:  # Only add non-empty conversations
-                        history.append({
-                            "role": "user",
-                            "content": question
-                        })
-                        history.append({
-                            "role": "assistant",
-                            "content": answer
-                        })
-            
-            logger.info(f"[DB] Retrieved {len(history)} messages ({len(history)//2} conversation pairs) from database history for user_id={user_id}")
-            
-            # Log sample topics for debugging
-            if history:
-                sample_topics = []
-                for i in range(0, min(6, len(history)), 2):
-                    if i < len(history):
-                        topic_preview = history[i]['content'][:40].replace('\n', ' ')
-                        sample_topics.append(topic_preview)
-                logger.info(f"[DB] Sample topics from history: {', '.join(sample_topics)}...")
-            
-            return history
-        except Exception as e:
-            logger.error(f"[DB] Error retrieving conversation history: {e}", exc_info=True)
-            return []
-        finally:
-            db.close()
-    except Exception as e:
-        logger.error(f"[DB] Database connection error retrieving history: {e}", exc_info=True)
-        return []
 
 
 def save_chat_to_db(user_id, user_message, gpt_response, model=None, function_called=None, mode=None):
@@ -511,9 +566,8 @@ def save_chat_to_db(user_id, user_message, gpt_response, model=None, function_ca
             )
             db.add(chat_record)
             db.commit()
-            logger.info(f"[DB] Chat saved successfully: user_id={user_id}, id={chat_record.id}, mode={mode}")
-            logger.info(f"[DB] Question preview: '{user_message_clean[:100]}...' (length={len(user_message_clean)})")
-            logger.info(f"[DB] Answer preview: '{gpt_response_clean[:100]}...' (length={len(gpt_response_clean)})")
+            # Minimal logging in background thread - only log errors
+            # logger.info(f"[DB] Chat saved successfully: user_id={user_id}, id={chat_record.id}, mode={mode}")
         except Exception as e:
             db.rollback()
             logger.error(f"[DB] Error saving chat to database: {e}", exc_info=True)

@@ -589,11 +589,15 @@ async def get_unread_emails(request: GetUnreadEmailsRequest):
         List of unread emails
     """
     try:
-        logger.info(f"Fetching {request.limit} unread emails")
+        # Cap limit to prevent slow loading
+        actual_limit = min(request.limit, 50)  # Max 50 emails for performance
+        if request.limit > 50:
+            logger.info(f"Requested {request.limit} emails, capping to {actual_limit} for performance")
+        logger.info(f"Fetching {actual_limit} unread emails")
         emails, total_unread = await email_service.get_unread_emails(
             access_token=request.user_credentials.access_token,
             refresh_token=request.user_credentials.refresh_token,
-            limit=request.limit
+            limit=actual_limit
         )
         logger.info(f"Successfully retrieved {len(emails)} emails")
         return EmailListResponse(
@@ -608,9 +612,11 @@ async def get_unread_emails(request: GetUnreadEmailsRequest):
         import traceback
         logger.error(traceback.format_exc())
         
-        # Check for invalid_scope error and provide helpful message
+        # Check for specific errors and provide helpful messages
         if "invalid_scope" in error_msg.lower():
             error_msg = "Gmail OAuth scopes mismatch. Please run: python get_gmail_token.py to reauthorize with correct scopes."
+        elif "invalid_grant" in error_msg.lower() or "expired" in error_msg.lower() or "revoked" in error_msg.lower():
+            error_msg = "Gmail access token has expired or been revoked. Please re-authenticate by running: python get_gmail_token.py"
         
         raise HTTPException(status_code=500, detail=error_msg)
 

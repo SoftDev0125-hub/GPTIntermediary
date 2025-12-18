@@ -65,9 +65,16 @@ class EmailService:
             if creds.expired and creds.refresh_token:
                 try:
                     creds.refresh(Request())
+                    logger.info("Token refreshed successfully")
                 except Exception as refresh_error:
-                    logger.error(f"Failed to refresh token: {str(refresh_error)}")
-                    raise Exception("Token refresh failed. Please re-authenticate with: python get_gmail_token.py")
+                    error_str = str(refresh_error)
+                    logger.error(f"Failed to refresh token: {error_str}")
+                    
+                    # Check for specific invalid_grant error
+                    if 'invalid_grant' in error_str.lower() or 'expired' in error_str.lower() or 'revoked' in error_str.lower():
+                        raise Exception("Gmail access token has expired or been revoked. Please re-authenticate by running: python get_gmail_token.py")
+                    else:
+                        raise Exception(f"Token refresh failed: {error_str}. Please re-authenticate with: python get_gmail_token.py")
             
             # Build service with cache_discovery=False to avoid timeout issues
             return build('gmail', 'v1', credentials=creds, cache_discovery=False)
