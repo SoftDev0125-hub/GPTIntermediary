@@ -13,6 +13,7 @@ import os
 import json
 import logging
 from dotenv import load_dotenv
+from datetime import datetime
 
 load_dotenv()
 
@@ -22,6 +23,28 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 CORS(app)
+
+# Database imports
+try:
+    from database import SessionLocal, init_db, engine
+    from db_models import ChatWithGPT, Base
+    DATABASE_AVAILABLE = True
+    logger.info("[OK] Database modules loaded successfully")
+    
+    # Initialize database tables if they don't exist
+    try:
+        Base.metadata.create_all(bind=engine)
+        logger.info("[OK] Database tables checked/created")
+    except Exception as e:
+        logger.warning(f"[WARNING] Could not initialize database tables: {e}")
+except ImportError as e:
+    logger.warning(f"[WARNING] Database modules not available: {e}")
+    logger.warning("[WARNING] Chat conversations will not be saved to database")
+    DATABASE_AVAILABLE = False
+    ChatWithGPT = None
+    SessionLocal = None
+    Base = None
+    engine = None
 
 # OpenAI Configuration
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
@@ -328,8 +351,20 @@ def get_user_credentials():
 def chat():
     """Handle chat messages with OpenAI + fallback"""
     data = request.json
-    user_message = data.get('message', '')
+    user_message = data.get('message', '').strip()
     history = data.get('history', [])
+    user_id = data.get('user_id')  # Get user_id from request
+    
+    # Validate and convert user_id
+    if user_id:
+        try:
+            user_id = int(user_id)
+            logger.info(f"[CHAT] Received message from user_id={user_id}, message='{user_message[:50]}...' (length={len(user_message)})")
+        except (ValueError, TypeError):
+            logger.warning(f"[CHAT] Invalid user_id format: {user_id}, type: {type(user_id)}")
+            user_id = None
+    else:
+        logger.warning(f"[CHAT] No user_id provided in request. Data keys: {list(data.keys()) if data else 'None'}")
     
     if not user_message:
         return jsonify({
@@ -470,6 +505,22 @@ You can discuss any topic freely - science, math, programming, history, creative
             else:
                 final_message = message.content
             
+            # Validate final_message
+            if not final_message or not isinstance(final_message, str):
+                logger.warning(f"[CHAT] Invalid final_message: type={type(final_message)}, value={str(final_message)[:100]}")
+                final_message = str(final_message) if final_message else "No response generated"
+            
+            logger.info(f"[CHAT] GPT Response preview: '{final_message[:100]}...' (length={len(final_message)})")
+            
+            # Save to database if user_id is provided
+            if user_id and DATABASE_AVAILABLE:
+                logger.info(f"[CHAT] Attempting to save chat to database: user_id={user_id}, mode=openai")
+                save_chat_to_db(user_id, user_message, final_message, 'gpt-3.5-turbo', function_called, 'openai')
+            elif not user_id:
+                logger.warning("[CHAT] user_id not provided, skipping database save")
+            elif not DATABASE_AVAILABLE:
+                logger.warning("[CHAT] Database not available, skipping database save")
+            
             return jsonify({
                 'response': final_message,
                 'function_called': function_called,
@@ -493,14 +544,108 @@ You can discuss any topic freely - science, math, programming, history, creative
         result = execute_action(action_data)
         result['mode'] = 'keyword'
         
+        # Get the response
+        keyword_response = result.get('response', '')
+        if not keyword_response or not isinstance(keyword_response, str):
+            logger.warning(f"[CHAT] Invalid keyword response: type={type(keyword_response)}, value={str(keyword_response)[:100]}")
+            keyword_response = str(keyword_response) if keyword_response else "No response generated"
+        
+        logger.info(f"[CHAT] Keyword Response preview: '{keyword_response[:100]}...' (length={len(keyword_response)})")
+        
+        # Save to database if user_id is provided
+        if user_id and DATABASE_AVAILABLE:
+            logger.info(f"[CHAT] Attempting to save chat to database: user_id={user_id}, mode=keyword")
+            save_chat_to_db(
+                user_id, 
+                user_message, 
+                keyword_response, 
+                None, 
+                result.get('function_called'), 
+                'keyword'
+            )
+        elif not user_id:
+            logger.warning("[CHAT] user_id not provided, skipping database save")
+        elif not DATABASE_AVAILABLE:
+            logger.warning("[CHAT] Database not available, skipping database save")
+        
         return jsonify(result)
     
     except Exception as e:
         print(f"Error: {str(e)}")
+        error_response = f'Sorry, I encountered an error: {str(e)}'
+        
+        # Save error to database if user_id is provided
+        if user_id and DATABASE_AVAILABLE:
+            logger.info(f"[CHAT] Attempting to save error to database: user_id={user_id}, mode=error")
+            save_chat_to_db(user_id, user_message, error_response, None, None, 'error')
+        elif not user_id:
+            logger.warning("[CHAT] user_id not provided, skipping error database save")
+        elif not DATABASE_AVAILABLE:
+            logger.warning("[CHAT] Database not available, skipping error database save")
+        
         return jsonify({
-            'response': f'Sorry, I encountered an error: {str(e)}',
+            'response': error_response,
             'error': str(e)
         }), 500
+
+
+def save_chat_to_db(user_id, user_message, gpt_response, model=None, function_called=None, mode=None):
+    """Save chat conversation to database
+    Stores user message in 'questions' column and GPT response in 'answers' column
+    """
+    if not DATABASE_AVAILABLE or not ChatWithGPT:
+        logger.warning(f"[DB] Cannot save: DATABASE_AVAILABLE={DATABASE_AVAILABLE}, ChatWithGPT={ChatWithGPT}")
+        return
+    
+    # Validate user_id
+    if not user_id:
+        logger.warning("[DB] Cannot save: user_id is None or empty")
+        return
+    
+    try:
+        user_id = int(user_id)
+    except (ValueError, TypeError):
+        logger.error(f"[DB] Invalid user_id: {user_id} (type: {type(user_id)})")
+        return
+    
+    # Validate messages
+    if not user_message or not isinstance(user_message, str):
+        logger.warning(f"[DB] Cannot save: invalid user_message. Type: {type(user_message)}, Value: {str(user_message)[:100]}")
+        return
+    
+    if not gpt_response or not isinstance(gpt_response, str):
+        logger.warning(f"[DB] Cannot save: invalid gpt_response. Type: {type(gpt_response)}, Value: {str(gpt_response)[:100]}")
+        return
+    
+    # Clean and prepare the messages
+    user_message_clean = str(user_message).strip()
+    gpt_response_clean = str(gpt_response).strip()
+    
+    if not user_message_clean or not gpt_response_clean:
+        logger.warning(f"[DB] Cannot save: empty message after cleaning. user_message length: {len(user_message_clean)}, gpt_response length: {len(gpt_response_clean)}")
+        return
+    
+    try:
+        db = SessionLocal()
+        try:
+            # Use 'questions' and 'answers' columns as per database structure
+            chat_record = ChatWithGPT(
+                user_id=user_id,
+                questions=user_message_clean[:10000],  # User's question stored in 'questions' column
+                answers=gpt_response_clean[:10000]  # GPT's answer stored in 'answers' column
+            )
+            db.add(chat_record)
+            db.commit()
+            logger.info(f"[DB] Chat saved successfully: user_id={user_id}, id={chat_record.id}, mode={mode}")
+            logger.info(f"[DB] Question preview: '{user_message_clean[:100]}...' (length={len(user_message_clean)})")
+            logger.info(f"[DB] Answer preview: '{gpt_response_clean[:100]}...' (length={len(gpt_response_clean)})")
+        except Exception as e:
+            db.rollback()
+            logger.error(f"[DB] Error saving chat to database: {e}", exc_info=True)
+        finally:
+            db.close()
+    except Exception as e:
+        logger.error(f"[DB] Database connection error: {e}", exc_info=True)
 
 
 if __name__ == '__main__':

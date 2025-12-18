@@ -14,6 +14,7 @@ import platform
 import sys
 import random
 import uuid
+import asyncio
 from datetime import datetime
 
 from services.email_service import EmailService
@@ -190,7 +191,15 @@ async def startup_event():
         logger.warning("=" * 70)
     
     await email_service.initialize()
-    await telegram_service.initialize()
+    
+    # Initialize Telegram service with timeout to prevent blocking startup
+    try:
+        await asyncio.wait_for(telegram_service.initialize(), timeout=10.0)
+    except asyncio.TimeoutError:
+        logger.warning("Telegram service initialization timed out - continuing without it")
+    except Exception as e:
+        logger.warning(f"Telegram service initialization failed: {e} - continuing without it")
+    
     await slack_service.initialize()
     await word_service.initialize()
     logger.info("Services initialized successfully")

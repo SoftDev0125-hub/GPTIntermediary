@@ -219,3 +219,26 @@ class SystemLog(Base):
     def __repr__(self):
         return f"<SystemLog(id={self.id}, action='{self.action}')>"
 
+
+class ChatWithGPT(Base):
+    """Chat conversations between users and GPT in the Chat tab
+    Uses existing database columns: questions (user messages) and answers (GPT responses)
+    """
+    __tablename__ = "chat_with_gpt"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    
+    # Chat content - using existing column names from database
+    questions = Column(Text, nullable=True)  # User's question/message
+    answers = Column(Text, nullable=True)  # GPT's response
+    
+    # Timestamp
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # Relationships
+    user = relationship("User", foreign_keys=[user_id])
+
+    def __repr__(self):
+        return f"<ChatWithGPT(id={self.id}, user_id={self.user_id}, created_at='{self.created_at}')>"
+

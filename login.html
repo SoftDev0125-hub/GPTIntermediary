@@ -13,7 +13,7 @@
 
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: #1a1a1a;
             min-height: 100vh;
             display: flex;
             justify-content: center;
@@ -22,16 +22,16 @@
         }
 
         .container {
-            background: white;
+            background: #2d2d2d;
             border-radius: 20px;
-            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
             overflow: hidden;
             max-width: 450px;
             width: 100%;
         }
 
         .header {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: #1a1a1a;
             color: white;
             padding: 40px 30px;
             text-align: center;
@@ -49,6 +49,7 @@
 
         .form-container {
             padding: 40px 30px;
+            background: #2d2d2d;
         }
 
         .tabs {
@@ -60,18 +61,18 @@
         .tab {
             flex: 1;
             padding: 12px;
-            background: #f5f5f5;
+            background: #3d3d3d;
             border: none;
             border-radius: 8px;
             cursor: pointer;
             font-size: 15px;
             font-weight: 600;
-            color: #666;
+            color: #ccc;
             transition: all 0.3s ease;
         }
 
         .tab.active {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: #4a4a4a;
             color: white;
         }
 
@@ -90,7 +91,7 @@
         .form-group label {
             display: block;
             margin-bottom: 8px;
-            color: #333;
+            color: #e0e0e0;
             font-weight: 600;
             font-size: 14px;
         }
@@ -101,12 +102,15 @@
             border: 2px solid #e0e0e0;
             border-radius: 8px;
             font-size: 15px;
+            background: #ffffff;
+            color: #333;
             transition: border-color 0.3s ease;
         }
 
         .form-group input:focus {
             outline: none;
             border-color: #667eea;
+            background: #ffffff;
         }
 
         .password-input-wrapper {
@@ -129,7 +133,7 @@
             display: flex;
             align-items: center;
             justify-content: center;
-            color: #666;
+            color: #999;
             transition: color 0.2s ease;
             z-index: 10;
         }
@@ -186,21 +190,21 @@
         }
 
         .message.error {
-            background: #fee;
-            color: #c33;
-            border: 1px solid #fcc;
+            background: #3d1f1f;
+            color: #ff6b6b;
+            border: 1px solid #5a2a2a;
         }
 
         .message.success {
-            background: #efe;
-            color: #3c3;
-            border: 1px solid #cfc;
+            background: #1f3d1f;
+            color: #6bff6b;
+            border: 1px solid #2a5a2a;
         }
 
         .message.info {
-            background: #eef;
-            color: #33c;
-            border: 1px solid #ccf;
+            background: #1f1f3d;
+            color: #6b9bff;
+            border: 1px solid #2a2a5a;
         }
 
         .message.show {
@@ -210,9 +214,9 @@
         .footer {
             text-align: center;
             padding: 20px;
-            color: #666;
+            color: #999;
             font-size: 13px;
-            background: #f9f9f9;
+            background: #1a1a1a;
         }
 
         .password-requirements {
@@ -227,7 +231,7 @@
             align-items: center;
             padding: 6px 0;
             font-size: 13px;
-            color: #666;
+            color: #999;
             transition: all 0.3s ease;
         }
 
@@ -244,7 +248,7 @@
             text-align: center;
             margin-right: 8px;
             font-size: 12px;
-            color: #999;
+            color: #666;
             transition: all 0.3s ease;
         }
 
@@ -268,7 +272,7 @@
             color: #667eea;
             margin: 10px 0;
             padding: 15px;
-            background: #f5f5f5;
+            background: #1a1a1a;
             border-radius: 8px;
             text-align: center;
         }
@@ -277,7 +281,7 @@
             display: block;
             margin-top: 5px;
             font-size: 12px;
-            color: #666;
+            color: #999;
         }
 
         .btn-secondary {
@@ -534,6 +538,10 @@
                         localStorage.setItem('user_name', data.user.name);
                     }
                     
+                    // Save login credentials to sessionStorage for next time
+                    sessionStorage.setItem('saved_login_email', email);
+                    sessionStorage.setItem('saved_login_password', password);
+                    
                     // Redirect to main app
                     setTimeout(() => {
                         window.location.href = '/chat_interface.html';
@@ -732,7 +740,7 @@
                 }
         }
 
-        // Check if already logged in
+        // Check if already logged in and load saved login credentials
         window.addEventListener('DOMContentLoaded', () => {
             const token = localStorage.getItem('auth_token');
             if (token) {
@@ -752,6 +760,24 @@
                     // Server not responding, stay on login page
                     localStorage.clear();
                 });
+            }
+            
+            // Load saved login credentials from sessionStorage
+            const savedEmail = sessionStorage.getItem('saved_login_email');
+            const savedPassword = sessionStorage.getItem('saved_login_password');
+            
+            if (savedEmail) {
+                const emailInput = document.getElementById('loginEmail');
+                if (emailInput) {
+                    emailInput.value = savedEmail;
+                }
+            }
+            
+            if (savedPassword) {
+                const passwordInput = document.getElementById('loginPassword');
+                if (passwordInput) {
+                    passwordInput.value = savedPassword;
+                }
             }
         });
     </script>

@@ -408,11 +408,11 @@ def main():
         print("[*] Verifying backend server is responding...")
         import urllib.request
         import socket
-        max_retries = 15
+        max_retries = 20  # Increased to allow more time for Telegram initialization timeout
         backend_ready = False
         for i in range(max_retries):
             try:
-                response = urllib.request.urlopen('http://localhost:8000/', timeout=2)  # Reduced timeout for faster checks
+                response = urllib.request.urlopen('http://localhost:8000/', timeout=3)  # Increased timeout slightly
                 print("[OK] Backend server is responding on http://localhost:8000")
                 backend_ready = True
                 break
@@ -426,6 +426,7 @@ def main():
                     print("[!] The window will open, but some features may not work.")
                     print("[!] Check if main.py started successfully in the background.")
                     print("[!] You may need to start it manually: python main.py")
+                    print("[!] Check logs/backend_server.log for startup errors")
             except Exception as e:
                 print(f"[!] Warning: Could not verify backend server: {e}")
                 break

@@ -40,11 +40,34 @@
             <div class="chat-container" id="chatContainer">
                 <div class="message system">
                     <div class="message-content">
-                        <strong>Welcome to ChatGPT Assistant!</strong><br>
-                        Your AI-powered automation system is ready. Try:<br>
-                        &bull; "Launch calculator" or "Open notepad"<br>
-                        &bull; "Send email to user@example.com"<br>
-                        &bull; Or ask any question!
+                        <div class="welcome-header">
+                            <div class="welcome-icon">✨</div>
+                            <h2>Welcome to ChatGPT Assistant!</h2>
+                            <p class="welcome-subtitle">Your AI-powered automation system is ready to help</p>
+                        </div>
+                        <div class="help-features">
+                            <div class="feature-item">
+                                <span class="feature-icon">🚀</span>
+                                <div class="feature-content">
+                                    <strong>Launch Applications</strong>
+                                    <p>Try: "Launch calculator" or "Open notepad"</p>
+                                </div>
+                            </div>
+                            <div class="feature-item">
+                                <span class="feature-icon">📧</span>
+                                <div class="feature-content">
+                                    <strong>Send Emails</strong>
+                                    <p>Try: "Send email to user@example.com"</p>
+                                </div>
+                            </div>
+                            <div class="feature-item">
+                                <span class="feature-icon">💬</span>
+                                <div class="feature-content">
+                                    <strong>Ask Questions</strong>
+                                    <p>Ask me anything - I'm here to help!</p>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -683,13 +706,52 @@
 
             typingIndicator.classList.add('active');
 
+            // Get user_id from localStorage (set during login)
+            const userId = localStorage.getItem('user_id');
+            
+            // Validate user_id
+            let userIdInt = null;
+            if (userId) {
+                const parsed = parseInt(userId, 10);
+                if (!isNaN(parsed) && parsed > 0) {
+                    userIdInt = parsed;
+                } else {
+                    console.warn('[CHAT] Invalid user_id in localStorage:', userId);
+                }
+            } else {
+                // Try to get user_id from token if not in localStorage
+                const authToken = localStorage.getItem('auth_token');
+                if (authToken) {
+                    try {
+                        const tokenParts = authToken.split('.');
+                        if (tokenParts.length === 3) {
+                            const payload = JSON.parse(atob(tokenParts[1]));
+                            if (payload.user_id) {
+                                userIdInt = parseInt(payload.user_id, 10);
+                                localStorage.setItem('user_id', userIdInt.toString());
+                                console.log('[CHAT] Extracted user_id from token:', userIdInt);
+                            }
+                        }
+                    } catch (e) {
+                        console.warn('[CHAT] Could not extract user_id from token');
+                    }
+                }
+                
+                if (!userIdInt) {
+                    console.warn('[CHAT] No user_id found. Chat will work but conversations will not be saved to database.');
+                }
+            }
+
             try {
                 const response = await fetch('http://localhost:5000/chat', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                     },
-                    body: JSON.stringify({ message: message })
+                    body: JSON.stringify({ 
+                        message: message,
+                        user_id: userIdInt  // Send validated user_id
+                    })
                 });
 
                 const data = await response.json();
@@ -6243,6 +6305,39 @@
                 }
             });
         }
+
+        // Check authentication on page load
+        window.addEventListener('DOMContentLoaded', () => {
+            const userId = localStorage.getItem('user_id');
+            const authToken = localStorage.getItem('auth_token');
+            
+            if (!userId && authToken) {
+                // Try to extract user_id from token
+                try {
+                    // JWT tokens have 3 parts separated by dots
+                    const tokenParts = authToken.split('.');
+                    if (tokenParts.length === 3) {
+                        // Decode the payload (second part)
+                        const payload = JSON.parse(atob(tokenParts[1]));
+                        if (payload.user_id) {
+                            localStorage.setItem('user_id', payload.user_id.toString());
+                            console.log('[AUTH] Extracted user_id from token:', payload.user_id);
+                        }
+                    }
+                } catch (e) {
+                    console.warn('[AUTH] Could not extract user_id from token:', e);
+                }
+            }
+            
+            // Final check - if still no user_id, warn but don't block
+            const finalUserId = localStorage.getItem('user_id');
+            if (!finalUserId) {
+                console.warn('[AUTH] No user_id found. Chat conversations will not be saved to database.');
+                console.warn('[AUTH] Please log in again to enable conversation recording.');
+            } else {
+                console.log('[AUTH] User authenticated. user_id:', finalUserId);
+            }
+        });
     </script>
 </body>
 </html>
