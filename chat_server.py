@@ -243,21 +243,69 @@ def chat():
         })
     
     try:
+        # Get conversation history from database if user_id is available
+        db_history = []
+        if user_id and DATABASE_AVAILABLE:
+            db_history = get_conversation_history_from_db(user_id, limit=20)  # Get last 20 conversation pairs
+            logger.info(f"[CHAT] Loaded {len(db_history)} messages from database history")
+        
         # Build messages for OpenAI
+        system_content = """You are a helpful AI assistant that can manage emails and launch applications. 
+You have access to the user's Gmail account and can launch apps on their computer.
+Be friendly, concise, and helpful. When performing actions, confirm what you did.
+
+IMPORTANT: You have access to the user's previous conversation history from past sessions. 
+This history contains valuable context about:
+- Topics the user has discussed
+- Questions they've asked before
+- Your previous answers and explanations
+- User preferences and interests
+- Ongoing projects or tasks
+
+CRITICAL INSTRUCTIONS FOR USING CONVERSATION HISTORY:
+1. ANALYZE the conversation history carefully before responding
+2. REFERENCE specific previous discussions when relevant
+3. BUILD UPON previous answers rather than repeating them
+4. MAINTAIN continuity - if the user asks follow-up questions, connect them to previous context
+5. LEARN from patterns - notice what topics interest the user and provide deeper insights
+6. REMEMBER preferences - if the user preferred certain formats or approaches, use them again
+7. PROVIDE MORE ACCURATE answers by leveraging what you've discussed before
+
+When answering:
+- If the question relates to a previous topic, acknowledge it and expand on previous discussions
+- Use the history to understand the user's knowledge level and adjust explanations accordingly
+- Connect new questions to previous conversations when there's a relationship
+- Provide more personalized responses based on what you know about the user from history"""
+        
+        # Add context about history if available
+        if db_history:
+            history_summary = f"\n\nCONVERSATION HISTORY CONTEXT:\nYou have access to {len(db_history)} previous messages from past conversations with this user. Use this history to provide contextually aware and accurate responses."
+            system_content += history_summary
+        
         messages = [
             {
                 "role": "system",
-                "content": """You are a helpful AI assistant that can manage emails and launch applications. 
-                You have access to the user's Gmail account and can launch apps on their computer.
-                Be friendly, concise, and helpful. When performing actions, confirm what you did."""
+                "content": system_content
             }
         ]
         
-        # Add conversation history
-        messages.extend(history[-10:])  # Keep last 10 messages for context
+        # Add database conversation history first (most relevant context)
+        if db_history:
+            # Keep last 20 messages from database (10 conversation pairs) to provide good context
+            recent_history = db_history[-20:]
+            messages.extend(recent_history)
+            logger.info(f"[CHAT] Added {len(recent_history)} messages from database to context")
+            logger.info(f"[CHAT] History preview: First Q: {recent_history[0]['content'][:50] if recent_history else 'None'}... | Last A: {recent_history[-1]['content'][:50] if recent_history else 'None'}...")
+        
+        # Add frontend-provided history (if any) - this takes precedence for current session
+        if history:
+            messages.extend(history[-10:])  # Keep last 10 messages from current session
+            logger.info(f"[CHAT] Added {len(history[-10:])} messages from frontend history")
         
         # Add current user message
         messages.append({"role": "user", "content": user_message})
+        
+        logger.info(f"[CHAT] Total messages in context: {len(messages)} (1 system + {len(messages)-1} conversation messages)")
         
         # Call OpenAI with function calling
         response = openai.chat.completions.create(
@@ -347,6 +395,73 @@ def chat():
             'response': error_response,
             'error': str(e)
         }), 500
+
+
+def get_conversation_history_from_db(user_id, limit=20):
+    """Retrieve previous conversation history from database for context
+    
+    Args:
+        user_id: User ID to get conversations for
+        limit: Maximum number of conversation pairs to retrieve (default 20)
+    
+    Returns:
+        List of message dictionaries in OpenAI format: [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}, ...]
+    """
+    if not DATABASE_AVAILABLE or not ChatWithGPT or not user_id:
+        return []
+    
+    try:
+        db = SessionLocal()
+        try:
+            # Get recent conversations for this user, ordered by most recent first
+            conversations = db.query(ChatWithGPT).filter(
+                ChatWithGPT.user_id == int(user_id)
+            ).order_by(
+                ChatWithGPT.created_at.desc()
+            ).limit(limit).all()
+            
+            if not conversations:
+                logger.info(f"[DB] No previous conversations found for user_id={user_id}")
+                return []
+            
+            # Convert to OpenAI message format (most recent first, then reverse to chronological order)
+            history = []
+            for conv in reversed(conversations):
+                if conv.questions and conv.answers:
+                    # Clean and validate the content
+                    question = str(conv.questions).strip()
+                    answer = str(conv.answers).strip()
+                    
+                    if question and answer:  # Only add non-empty conversations
+                        history.append({
+                            "role": "user",
+                            "content": question
+                        })
+                        history.append({
+                            "role": "assistant",
+                            "content": answer
+                        })
+            
+            logger.info(f"[DB] Retrieved {len(history)} messages ({len(history)//2} conversation pairs) from database history for user_id={user_id}")
+            
+            # Log sample topics for debugging
+            if history:
+                sample_topics = []
+                for i in range(0, min(6, len(history)), 2):
+                    if i < len(history):
+                        topic_preview = history[i]['content'][:40].replace('\n', ' ')
+                        sample_topics.append(topic_preview)
+                logger.info(f"[DB] Sample topics from history: {', '.join(sample_topics)}...")
+            
+            return history
+        except Exception as e:
+            logger.error(f"[DB] Error retrieving conversation history: {e}", exc_info=True)
+            return []
+        finally:
+            db.close()
+    except Exception as e:
+        logger.error(f"[DB] Database connection error retrieving history: {e}", exc_info=True)
+        return []
 
 
 def save_chat_to_db(user_id, user_message, gpt_response, model=None, function_called=None, mode=None):
