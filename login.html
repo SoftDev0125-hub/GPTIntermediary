@@ -1,0 +1,623 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GPT Intermediary - Login</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            overflow: hidden;
+            max-width: 450px;
+            width: 100%;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 40px 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 28px;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            font-size: 14px;
+            opacity: 0.9;
+        }
+
+        .form-container {
+            padding: 40px 30px;
+        }
+
+        .tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 30px;
+        }
+
+        .tab {
+            flex: 1;
+            padding: 12px;
+            background: #f5f5f5;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 15px;
+            font-weight: 600;
+            color: #666;
+            transition: all 0.3s ease;
+        }
+
+        .tab.active {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .form {
+            display: none;
+        }
+
+        .form.active {
+            display: block;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            color: #333;
+            font-weight: 600;
+            font-size: 14px;
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 12px 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 15px;
+            transition: border-color 0.3s ease;
+        }
+
+        .form-group input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .password-input-wrapper {
+            position: relative;
+            display: flex;
+            align-items: center;
+        }
+
+        .password-input-wrapper input {
+            padding-right: 45px; /* Make room for toggle button */
+        }
+
+        .password-toggle {
+            position: absolute;
+            right: 10px;
+            background: none;
+            border: none;
+            cursor: pointer;
+            padding: 5px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #666;
+            transition: color 0.2s ease;
+            z-index: 10;
+        }
+
+        .password-toggle:hover {
+            color: #667eea;
+        }
+
+        .password-toggle:focus {
+            outline: 2px solid #667eea;
+            outline-offset: 2px;
+            border-radius: 4px;
+        }
+
+        .eye-icon {
+            font-size: 18px;
+            user-select: none;
+        }
+
+        .btn {
+            width: 100%;
+            padding: 14px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn:active {
+            transform: translateY(0);
+        }
+
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .message {
+            margin-bottom: 20px;
+            padding: 12px 15px;
+            border-radius: 8px;
+            font-size: 14px;
+            display: none;
+        }
+
+        .message.error {
+            background: #fee;
+            color: #c33;
+            border: 1px solid #fcc;
+        }
+
+        .message.success {
+            background: #efe;
+            color: #3c3;
+            border: 1px solid #cfc;
+        }
+
+        .message.info {
+            background: #eef;
+            color: #33c;
+            border: 1px solid #ccf;
+        }
+
+        .message.show {
+            display: block;
+        }
+
+        .footer {
+            text-align: center;
+            padding: 20px;
+            color: #666;
+            font-size: 13px;
+            background: #f9f9f9;
+        }
+
+        .password-requirements {
+            list-style: none;
+            padding: 0;
+            margin-top: 10px;
+            margin-bottom: 0;
+        }
+
+        .password-requirements .requirement {
+            display: flex;
+            align-items: center;
+            padding: 6px 0;
+            font-size: 13px;
+            color: #666;
+            transition: all 0.3s ease;
+        }
+
+        .password-requirements .requirement.requirement-met {
+            color: #4caf50;
+            font-weight: 500;
+        }
+
+        .password-requirements .requirement-icon {
+            display: inline-block;
+            width: 18px;
+            height: 18px;
+            line-height: 18px;
+            text-align: center;
+            margin-right: 8px;
+            font-size: 12px;
+            color: #999;
+            transition: all 0.3s ease;
+        }
+
+        .password-requirements .requirement.requirement-met .requirement-icon {
+            color: #4caf50;
+        }
+
+        .password-requirements .requirement.requirement-met .requirement-icon::before {
+            content: '✓';
+            font-weight: bold;
+            font-size: 14px;
+        }
+
+        .password-requirements .requirement:not(.requirement-met) .requirement-icon::before {
+            content: '○';
+        }
+
+        .loading {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid rgba(255,255,255,0.3);
+            border-radius: 50%;
+            border-top-color: white;
+            animation: spin 0.6s linear infinite;
+            margin-left: 10px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🤖 GPT Intermediary</h1>
+            <p>AI-Powered Automation Platform</p>
+        </div>
+
+        <div class="form-container">
+            <div class="tabs">
+                <button class="tab active" onclick="switchTab('login')">Login</button>
+                <button class="tab" onclick="switchTab('register')">Register</button>
+            </div>
+
+            <div id="message" class="message"></div>
+
+            <!-- Login Form -->
+            <form id="loginForm" class="form active" onsubmit="handleLogin(event)">
+                <div class="form-group">
+                    <label for="loginEmail">Email Address</label>
+                    <input type="email" id="loginEmail" name="email" required placeholder="your@email.com">
+                </div>
+                <div class="form-group">
+                    <label for="loginPassword">Password</label>
+                    <div class="password-input-wrapper">
+                        <input type="password" id="loginPassword" name="password" required placeholder="Enter your password">
+                        <button type="button" class="password-toggle" onclick="togglePasswordVisibility('loginPassword', this)" aria-label="Toggle password visibility">
+                            <span class="eye-icon">👁️</span>
+                        </button>
+                    </div>
+                </div>
+                <button type="submit" class="btn" id="loginBtn">
+                    Sign In
+                </button>
+            </form>
+
+            <!-- Register Form -->
+            <form id="registerForm" class="form" onsubmit="handleRegister(event)">
+                <div class="form-group">
+                    <label for="registerName">Full Name</label>
+                    <input type="text" id="registerName" name="name" required placeholder="John Doe">
+                </div>
+                <div class="form-group">
+                    <label for="registerEmail">Email Address</label>
+                    <input type="email" id="registerEmail" name="email" required placeholder="your@email.com">
+                </div>
+                <div class="form-group">
+                    <label for="registerPassword">Password</label>
+                    <div class="password-input-wrapper">
+                        <input type="password" id="registerPassword" name="password" required 
+                               placeholder="Enter your password" oninput="checkPasswordRequirements(this.value)">
+                        <button type="button" class="password-toggle" onclick="togglePasswordVisibility('registerPassword', this)" aria-label="Toggle password visibility">
+                            <span class="eye-icon">👁️</span>
+                        </button>
+                    </div>
+                    <ul class="password-requirements" id="passwordRequirements">
+                        <li id="req-length" class="requirement">
+                            <span class="requirement-icon">○</span>
+                            <span class="requirement-text">At least 6 characters</span>
+                        </li>
+                        <li id="req-uppercase" class="requirement">
+                            <span class="requirement-icon">○</span>
+                            <span class="requirement-text">One uppercase letter (A-Z)</span>
+                        </li>
+                        <li id="req-number" class="requirement">
+                            <span class="requirement-icon">○</span>
+                            <span class="requirement-text">One number (0-9)</span>
+                        </li>
+                        <li id="req-special" class="requirement">
+                            <span class="requirement-icon">○</span>
+                            <span class="requirement-text">One special character (!@#$%^&* etc.)</span>
+                        </li>
+                    </ul>
+                </div>
+                <div class="form-group">
+                    <label for="registerConfirmPassword">Confirm Password</label>
+                    <div class="password-input-wrapper">
+                        <input type="password" id="registerConfirmPassword" name="confirmPassword" required placeholder="Re-enter password">
+                        <button type="button" class="password-toggle" onclick="togglePasswordVisibility('registerConfirmPassword', this)" aria-label="Toggle password visibility">
+                            <span class="eye-icon">👁️</span>
+                        </button>
+                    </div>
+                </div>
+                <button type="submit" class="btn" id="registerBtn">
+                    Create Account
+                </button>
+            </form>
+        </div>
+
+        <div class="footer">
+            &copy; 2024 GPT Intermediary. All rights reserved.
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:8000';
+
+        function switchTab(tab) {
+            // Update tab buttons
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            event.target.classList.add('active');
+
+            // Update forms
+            document.querySelectorAll('.form').forEach(f => f.classList.remove('active'));
+            document.getElementById(tab + 'Form').classList.add('active');
+
+            // Clear message
+            hideMessage();
+        }
+
+        function showMessage(message, type = 'info') {
+            const msgEl = document.getElementById('message');
+            msgEl.textContent = message;
+            msgEl.className = `message ${type} show`;
+        }
+
+        function hideMessage() {
+            const msgEl = document.getElementById('message');
+            msgEl.className = 'message';
+        }
+
+        function togglePasswordVisibility(inputId, button) {
+            const input = document.getElementById(inputId);
+            const eyeIcon = button.querySelector('.eye-icon');
+            
+            if (input.type === 'password') {
+                input.type = 'text';
+                eyeIcon.textContent = '🙈'; // Hide icon
+            } else {
+                input.type = 'password';
+                eyeIcon.textContent = '👁️'; // Show icon
+            }
+        }
+
+        function checkPasswordRequirements(password) {
+            const requirements = {
+                'req-length': password.length >= 6,
+                'req-uppercase': /[A-Z]/.test(password),
+                'req-number': /[0-9]/.test(password),
+                'req-special': /[^a-zA-Z0-9]/.test(password)
+            };
+
+            // Update each requirement with highlighting
+            Object.keys(requirements).forEach(reqId => {
+                const reqElement = document.getElementById(reqId);
+                if (reqElement) {
+                    if (requirements[reqId]) {
+                        reqElement.classList.add('requirement-met');
+                    } else {
+                        reqElement.classList.remove('requirement-met');
+                    }
+                }
+            });
+        }
+
+        function validatePassword(password) {
+            // At least 6 characters
+            if (password.length < 6) {
+                return { valid: false, message: 'Password must be at least 6 characters long' };
+            }
+            
+            // At least one uppercase letter
+            if (!password.match(/[A-Z]/)) {
+                return { valid: false, message: 'Password must include at least one uppercase letter' };
+            }
+            
+            // At least one number
+            if (!password.match(/[0-9]/)) {
+                return { valid: false, message: 'Password must include at least one number' };
+            }
+            
+            // At least one special character
+            if (!password.match(/[^a-zA-Z0-9]/)) {
+                return { valid: false, message: 'Password must include at least one special character (!@#$%^&* etc.)' };
+            }
+            
+            return { valid: true, message: 'Password is strong' };
+        }
+
+        async function handleLogin(event) {
+            event.preventDefault();
+            
+            const btn = document.getElementById('loginBtn');
+            const email = document.getElementById('loginEmail').value;
+            const password = document.getElementById('loginPassword').value;
+
+            btn.disabled = true;
+            btn.innerHTML = 'Signing In<span class="loading"></span>';
+            hideMessage();
+
+            try {
+                const response = await fetch(`${API_BASE}/api/auth/login`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ email, password })
+                });
+
+                const data = await response.json();
+
+                if (response.ok && data.success) {
+                    showMessage('Login successful! Opening application...', 'success');
+                    
+                    // Store token and user info
+                    localStorage.setItem('auth_token', data.token);
+                    if (data.user) {
+                        localStorage.setItem('user_id', data.user.id);
+                        localStorage.setItem('user_email', data.user.email);
+                        localStorage.setItem('user_name', data.user.name);
+                    }
+                    
+                    // Redirect to main app
+                    setTimeout(() => {
+                        window.location.href = '/chat_interface.html';
+                    }, 1000);
+                } else {
+                    // Extract error message from detail or message field
+                    const errorMsg = data.detail || data.message || 'Login failed. Please check your credentials and try again.';
+                    showMessage(errorMsg, 'error');
+                    btn.disabled = false;
+                    btn.innerHTML = 'Sign In';
+                }
+            } catch (error) {
+                console.error('Login error:', error);
+                showMessage('Connection error. Please make sure the server is running.', 'error');
+                btn.disabled = false;
+                btn.innerHTML = 'Sign In';
+            }
+        }
+
+        async function handleRegister(event) {
+            event.preventDefault();
+            
+            const btn = document.getElementById('registerBtn');
+            const name = document.getElementById('registerName').value;
+            const email = document.getElementById('registerEmail').value;
+            const password = document.getElementById('registerPassword').value;
+            const confirmPassword = document.getElementById('registerConfirmPassword').value;
+
+            // Validate passwords match
+            if (password !== confirmPassword) {
+                showMessage('Passwords do not match!', 'error');
+                return;
+            }
+
+            // Validate password requirements
+            const passwordCheck = validatePassword(password);
+            if (!passwordCheck.valid) {
+                showMessage(passwordCheck.message, 'error');
+                return;
+            }
+
+            btn.disabled = true;
+            btn.innerHTML = 'Creating Account<span class="loading"></span>';
+            hideMessage();
+
+            try {
+                const response = await fetch(`${API_BASE}/api/auth/register`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ 
+                        name, 
+                        email, 
+                        password 
+                    })
+                });
+
+                const data = await response.json();
+
+                if (response.ok && data.success) {
+                    showMessage(
+                        data.message || 'Registration successful! Your account has been created.', 
+                        'success'
+                    );
+                    
+                    // Clear form
+                    document.getElementById('registerForm').reset();
+                    // Reset password requirements
+                    document.querySelectorAll('.password-requirements .requirement').forEach(req => {
+                        req.classList.remove('requirement-met');
+                    });
+                    
+                    // Switch to login tab after 3 seconds
+                    setTimeout(() => {
+                        switchTab('login');
+                        showMessage('You can now login with your new account.', 'info');
+                    }, 3000);
+                } else {
+                    // Extract error message from detail or message field
+                    let errorMsg = 'Registration failed. Please try again.';
+                    if (data.detail) {
+                        errorMsg = data.detail;
+                    } else if (data.message) {
+                        errorMsg = data.message;
+                    } else if (typeof data === 'string') {
+                        errorMsg = data;
+                    } else if (data.error) {
+                        errorMsg = data.error;
+                    }
+                    console.error('Registration failed:', data);
+                    showMessage(errorMsg, 'error');
+                }
+            } catch (error) {
+                console.error('Registration error:', error);
+                let errorMsg = 'Connection error. Please make sure the server is running.';
+                if (error.message) {
+                    errorMsg += ' Error: ' + error.message;
+                }
+                showMessage(errorMsg, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = 'Create Account';
+            }
+        }
+
+        // Check if already logged in
+        window.addEventListener('DOMContentLoaded', () => {
+            const token = localStorage.getItem('auth_token');
+            if (token) {
+                // Verify token is still valid
+                fetch(`${API_BASE}/api/auth/verify`, {
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                }).then(response => {
+                    if (response.ok) {
+                        window.location.href = '/chat_interface.html';
+                    } else {
+                        // Token invalid, clear storage
+                        localStorage.clear();
+                    }
+                }).catch(() => {
+                    // Server not responding, stay on login page
+                    localStorage.clear();
+                });
+            }
+        });
+    </script>
+</body>
+</html>
+

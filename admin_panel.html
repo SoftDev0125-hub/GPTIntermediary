@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Panel - User Management</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: #f5f7fa;
+            padding: 20px;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            border-radius: 12px;
+            margin-bottom: 30px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .header h1 {
+            font-size: 28px;
+        }
+
+        .header .user-info {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .btn {
+            padding: 10px 20px;
+            background: white;
+            color: #667eea;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: transform 0.2s;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .card {
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+
+        .card h2 {
+            margin-bottom: 20px;
+            color: #333;
+        }
+
+        .users-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .users-table th {
+            background: #f8f9fa;
+            padding: 12px;
+            text-align: left;
+            font-weight: 600;
+            color: #666;
+            border-bottom: 2px solid #e9ecef;
+        }
+
+        .users-table td {
+            padding: 15px 12px;
+            border-bottom: 1px solid #e9ecef;
+        }
+
+        .users-table tr:hover {
+            background: #f8f9fa;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .status-pending {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        .status-active {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .action-buttons {
+            display: flex;
+            gap: 8px;
+        }
+
+        .btn-approve {
+            padding: 6px 16px;
+            background: #28a745;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+        }
+
+        .btn-reject {
+            padding: 6px 16px;
+            background: #dc3545;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+        }
+
+        .btn-approve:hover {
+            background: #218838;
+        }
+
+        .btn-reject:hover {
+            background: #c82333;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 40px;
+            color: #999;
+        }
+
+        .empty-state svg {
+            width: 64px;
+            height: 64px;
+            margin-bottom: 16px;
+            opacity: 0.3;
+        }
+
+        .message {
+            padding: 12px 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: none;
+        }
+
+        .message.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+
+        .message.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+
+        .message.show {
+            display: block;
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .stat-card {
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+
+        .stat-card .number {
+            font-size: 32px;
+            font-weight: 700;
+            color: #667eea;
+            margin-bottom: 8px;
+        }
+
+        .stat-card .label {
+            color: #666;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div>
+                <h1>👥 Admin Panel</h1>
+                <p>User Management & Approvals</p>
+            </div>
+            <div class="user-info">
+                <span id="adminName">Admin</span>
+                <button class="btn" onclick="goToApp()">Back to App</button>
+                <button class="btn" onclick="logout()">Logout</button>
+            </div>
+        </div>
+
+        <div id="message" class="message"></div>
+
+        <div class="stats">
+            <div class="stat-card">
+                <div class="number" id="pendingCount">0</div>
+                <div class="label">Pending Approvals</div>
+            </div>
+            <div class="stat-card">
+                <div class="number" id="activeCount">0</div>
+                <div class="label">Active Users</div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>⏳ Pending User Approvals</h2>
+            <div id="pendingUsersTable"></div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:8000';
+        let authToken = '';
+
+        function showMessage(message, type) {
+            const msgEl = document.getElementById('message');
+            msgEl.textContent = message;
+            msgEl.className = `message ${type} show`;
+            setTimeout(() => {
+                msgEl.className = 'message';
+            }, 5000);
+        }
+
+        async function checkAuth() {
+            authToken = localStorage.getItem('auth_token');
+            const isAdmin = localStorage.getItem('is_admin') === 'true';
+            const userName = localStorage.getItem('user_name');
+
+            if (!authToken || !isAdmin) {
+                alert('Admin access required!');
+                window.location.href = '/';
+                return false;
+            }
+
+            document.getElementById('adminName').textContent = userName || 'Admin';
+            return true;
+        }
+
+        async function loadPendingUsers() {
+            try {
+                const response = await fetch(`${API_BASE}/api/auth/pending-users`, {
+                    headers: {
+                        'Authorization': `Bearer ${authToken}`
+                    }
+                });
+
+                const data = await response.json();
+
+                if (response.ok && data.success) {
+                    displayPendingUsers(data.users);
+                    document.getElementById('pendingCount').textContent = data.users.length;
+                } else {
+                    showMessage('Failed to load pending users', 'error');
+                }
+            } catch (error) {
+                console.error('Error loading users:', error);
+                showMessage('Connection error. Please check if the server is running.', 'error');
+            }
+        }
+
+        function displayPendingUsers(users) {
+            const container = document.getElementById('pendingUsersTable');
+
+            if (users.length === 0) {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <svg fill="currentColor" viewBox="0 0 20 20">
+                            <path d="M9 6a3 3 0 11-6 0 3 3 0 016 0zM17 6a3 3 0 11-6 0 3 3 0 016 0zM12.93 17c.046-.327.07-.66.07-1a6.97 6.97 0 00-1.5-4.33A5 5 0 0119 16v1h-6.07zM6 11a5 5 0 015 5v1H1v-1a5 5 0 015-5z"/>
+                        </svg>
+                        <p>No pending user approvals</p>
+                    </div>
+                `;
+                return;
+            }
+
+            const html = `
+                <table class="users-table">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Full Name</th>
+                            <th>Email</th>
+                            <th>Username</th>
+                            <th>Registered</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${users.map(user => `
+                            <tr>
+                                <td>#${user.id}</td>
+                                <td>${user.full_name}</td>
+                                <td>${user.email}</td>
+                                <td>${user.username}</td>
+                                <td>${new Date(user.created_at).toLocaleDateString()}</td>
+                                <td>
+                                    <div class="action-buttons">
+                                        <button class="btn-approve" onclick="approveUser(${user.id}, '${user.email}')">
+                                            ✓ Approve
+                                        </button>
+                                        <button class="btn-reject" onclick="rejectUser(${user.id}, '${user.email}')">
+                                            ✗ Reject
+                                        </button>
+                                    </div>
+                                </td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            `;
+
+            container.innerHTML = html;
+        }
+
+        async function approveUser(userId, email) {
+            if (!confirm(`Approve user: ${email}?`)) return;
+
+            try {
+                const response = await fetch(`${API_BASE}/api/auth/approve-user/${userId}`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${authToken}`
+                    }
+                });
+
+                const data = await response.json();
+
+                if (response.ok && data.success) {
+                    showMessage(`User ${email} approved successfully!`, 'success');
+                    loadPendingUsers();
+                } else {
+                    showMessage(data.message || 'Failed to approve user', 'error');
+                }
+            } catch (error) {
+                console.error('Error approving user:', error);
+                showMessage('Connection error', 'error');
+            }
+        }
+
+        async function rejectUser(userId, email) {
+            if (!confirm(`Reject and remove user: ${email}?\n\nThis action cannot be undone!`)) return;
+
+            try {
+                const response = await fetch(`${API_BASE}/api/auth/reject-user/${userId}`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${authToken}`
+                    }
+                });
+
+                const data = await response.json();
+
+                if (response.ok && data.success) {
+                    showMessage(`User ${email} rejected and removed`, 'success');
+                    loadPendingUsers();
+                } else {
+                    showMessage(data.message || 'Failed to reject user', 'error');
+                }
+            } catch (error) {
+                console.error('Error rejecting user:', error);
+                showMessage('Connection error', 'error');
+            }
+        }
+
+        function goToApp() {
+            window.location.href = '/chat_interface.html';
+        }
+
+        function logout() {
+            if (confirm('Are you sure you want to logout?')) {
+                localStorage.clear();
+                window.location.href = '/';
+            }
+        }
+
+        // Initialize
+        window.addEventListener('DOMContentLoaded', async () => {
+            if (await checkAuth()) {
+                loadPendingUsers();
+                // Refresh every 30 seconds
+                setInterval(loadPendingUsers, 30000);
+            }
+        });
+    </script>
+</body>
+</html>
+

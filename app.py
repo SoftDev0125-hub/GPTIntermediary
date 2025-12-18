@@ -435,8 +435,8 @@ def main():
             print("[!] Continuing anyway - the app window will open.")
             print("[!] If features don't work, check if the backend server is running.")
         
-        # Get the chat interface HTML path
-        html_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'chat_interface.html')
+        # Get the login page HTML path
+        html_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'login.html')
         html_path = os.path.normpath(html_path)
         
         if not os.path.exists(html_path):
@@ -446,7 +446,7 @@ def main():
             stop_servers()
             return
         
-        print(f"[*] Opening chat interface: {html_path}")
+        print(f"[*] Opening login page: {html_path}")
         print("[*] The application window should open now...")
         print("[*] Press Ctrl+C to stop all servers and exit")
         print("=" * 60)

@@ -141,12 +141,32 @@ def call_backend_function(function_name, arguments):
 
 @app.route('/')
 def index():
-    """Serve the chat interface HTML"""
+    """Serve the login page"""
+    try:
+        html_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'login.html')
+        return send_file(html_path)
+    except Exception as e:
+        return f"Error loading login page: {str(e)}", 500
+
+
+@app.route('/chat_interface.html')
+def chat_interface():
+    """Serve the chat interface HTML (requires authentication)"""
     try:
         html_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'chat_interface.html')
         return send_file(html_path)
     except Exception as e:
         return f"Error loading chat interface: {str(e)}", 500
+
+
+@app.route('/admin_panel.html')
+def admin_panel():
+    """Serve the admin panel HTML (requires admin authentication)"""
+    try:
+        html_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'admin_panel.html')
+        return send_file(html_path)
+    except Exception as e:
+        return f"Error loading admin panel: {str(e)}", 500
 
 @app.route('/health', methods=['GET'])
 def health():

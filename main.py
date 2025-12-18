@@ -7,12 +7,11 @@ from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional, List, Union
 import logging
 import os
 import platform
 import sys
-from sqlalchemy.orm import Session
 from datetime import datetime
 
 from services.email_service import EmailService
@@ -24,14 +23,36 @@ from services.excel_service import ExcelService
 
 # Database imports
 try:
-    from database import get_db, init_db, SessionLocal
-    from models import User, Conversation, Message, UserPreference, ExcelFile, SystemLog
+    from database import get_db, init_db, engine
+    from db_models import User
+    from sqlalchemy.orm import Session
     DATABASE_AVAILABLE = True
 except ImportError as e:
-    print(f"⚠️ Database modules not available: {e}")
-    print("⚠️ Install required packages: pip install sqlalchemy psycopg2-binary alembic")
+    print(f"[WARNING] Database modules not available: {e}")
+    print("[WARNING] Install required packages: pip install sqlalchemy psycopg2-binary")
     DATABASE_AVAILABLE = False
-    get_db = None
+    # Create stub function for dependency injection
+    def get_db():
+        raise HTTPException(status_code=503, detail="Database not available")
+    # Import Session for type hints even when database not available
+    try:
+        from sqlalchemy.orm import Session
+    except ImportError:
+        # Fallback type for when SQLAlchemy is not installed
+        Session = object
+    User = None
+
+# Authentication imports
+try:
+    from auth_utils import hash_password, verify_password, create_access_token, verify_token, extract_user_id_from_token
+    from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+    AUTH_AVAILABLE = True
+    security = HTTPBearer()
+except ImportError as e:
+    print(f"[WARNING] Authentication modules not available: {e}")
+    print("[WARNING] Install required packages: pip install passlib bcrypt python-jose python-multipart")
+    AUTH_AVAILABLE = False
+    security = None
 from models.schemas import (
     SendEmailRequest, 
     EmailReplyRequest, 
@@ -93,20 +114,7 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Database startup event
-@app.on_event("startup")
-async def startup_event():
-    """Initialize database on application startup"""
-    if DATABASE_AVAILABLE:
-        try:
-            logger.info("🗄️ Initializing database...")
-            init_db()
-            logger.info("✅ Database initialized successfully!")
-        except Exception as e:
-            logger.warning(f"⚠️ Database initialization failed: {e}")
-            logger.warning("⚠️ App will continue without database functionality")
-    else:
-        logger.warning("⚠️ Database not available - install requirements: pip install sqlalchemy psycopg2-binary alembic")
+# Database will be initialized on startup if available
 
 # Configure CORS - Allow all origins including file:// (null origin)
 # Using wildcard with allow_credentials=False to support null origin
@@ -151,6 +159,17 @@ async def startup_event():
     """Initialize services on startup"""
     logger.info("Starting ChatGPT Backend Broker...")
     
+    # Initialize database connection if available
+    if DATABASE_AVAILABLE:
+        try:
+            init_db()
+            logger.info("Database connection initialized successfully")
+        except Exception as e:
+            logger.error(f"Failed to initialize database: {e}")
+            logger.warning("Application will continue without database features")
+    else:
+        logger.warning("Database not available - authentication features disabled")
+    
     # Check for Gmail credentials
     access_token = os.getenv('USER_ACCESS_TOKEN', '').strip()
     refresh_token = os.getenv('USER_REFRESH_TOKEN', '').strip()
@@ -191,8 +210,149 @@ async def root():
     return {
         "status": "running",
         "service": "ChatGPT Backend Broker",
-        "version": "1.0.0"
+        "version": "1.0.0",
+        "database": "available" if DATABASE_AVAILABLE else "unavailable"
     }
+
+
+# ==================== AUTHENTICATION ENDPOINTS ====================
+
+class RegisterRequest(BaseModel):
+    """Request model for user registration"""
+    name: str
+    email: str
+    password: str
+    password: str
+
+
+class LoginRequest(BaseModel):
+    """Request model for user login"""
+    email: str
+    password: str
+
+
+@app.post("/api/auth/register")
+async def register_user(request: RegisterRequest, db: Session = Depends(get_db)):
+    """
+    Register a new user account
+    Saves user to existing users table (name, email, password, create_at)
+    """
+    if not DATABASE_AVAILABLE or not User:
+        raise HTTPException(status_code=503, detail="Database not available")
+    
+    try:
+        # Validate input
+        if not request.email or not request.email.strip():
+            raise HTTPException(status_code=400, detail="Email is required")
+        if not request.name or not request.name.strip():
+            raise HTTPException(status_code=400, detail="Name is required")
+        if not request.password or len(request.password) < 6:
+            raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+        
+        # Check if user already exists
+        existing_user = db.query(User).filter(User.email == request.email.strip()).first()
+        if existing_user:
+            raise HTTPException(status_code=400, detail="This email is already registered. Please use a different email or login.")
+        
+        # Hash password (truncation to 72 bytes is handled automatically in hash_password function)
+        try:
+            hashed_password = hash_password(request.password)
+        except ValueError as e:
+            # This shouldn't happen due to truncation in hash_password, but handle it just in case
+            error_msg = str(e)
+            logger.error(f"Password hashing error: {error_msg}, password length: {len(request.password.encode('utf-8'))} bytes")
+            raise HTTPException(status_code=500, detail=f"Password hashing failed. Please try a different password.")
+        
+        # Create new user (using existing table structure)
+        new_user = User(
+            name=request.name.strip(),
+            email=request.email.strip(),  # Store email in lowercase
+            password=hashed_password,  # Store hashed password in password column
+            create_at=datetime.now()  # Use create_at column (existing structure)
+        )
+        
+        db.add(new_user)
+        db.commit()
+        db.refresh(new_user)
+        
+        logger.info(f"New user registered: {new_user.email} (ID: {new_user.id})")
+        
+        return {
+            "success": True,
+            "message": "Registration successful! Your account has been created.",
+            "user_id": new_user.id
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Registration error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Registration failed: {str(e)}")
+
+
+@app.post("/api/auth/login")
+async def login_user(request: LoginRequest, db: Session = Depends(get_db)):
+    """
+    Authenticate user and return JWT token
+    Returns error if user not found in database or password is incorrect
+    """
+    if not DATABASE_AVAILABLE or not User or not AUTH_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Authentication service not available")
+    
+    try:
+        # Validate input
+        if not request.email or not request.email.strip():
+            raise HTTPException(status_code=400, detail="Email is required")
+        if not request.password:
+            raise HTTPException(status_code=400, detail="Password is required")
+        
+        # Find user by email
+        user = db.query(User).filter(User.email == request.email.strip()).first()
+        if not user:
+            # User not found in database - return error
+            logger.warning(f"Login attempt with non-existent email: {request.email}")
+            raise HTTPException(status_code=401, detail="Invalid email or password. Please check your credentials and try again.")
+        
+        # Verify password (check password column which stores hashed password)
+        password_valid = False
+        if user.password:
+            # Verify against password column (stores hashed password)
+            password_valid = verify_password(request.password, user.password)
+        
+        if not password_valid:
+            # Password incorrect - return error
+            logger.warning(f"Invalid password attempt for user: {request.email}")
+            raise HTTPException(status_code=401, detail="Invalid email or password. Please check your credentials and try again.")
+        
+        # Password is correct - create JWT token
+        token_data = {
+            "user_id": user.id,
+            "email": user.email,
+            "name": user.name
+        }
+        access_token = create_access_token(data=token_data)
+        
+        logger.info(f"User logged in successfully: {user.email} (ID: {user.id})")
+        
+        return {
+            "success": True,
+            "token": access_token,
+            "user": {
+                "id": user.id,
+                "email": user.email,
+                "name": user.name
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Login error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Login failed: {str(e)}")
+
+
+# ==================== END AUTHENTICATION ENDPOINTS ====================
 
 
 @app.post("/api/email/send", response_model=OperationResponse)
@@ -1803,254 +1963,7 @@ async def get_chatgpt_functions():
     return CHATGPT_FUNCTIONS
 
 
-# ============================================================================
-# DATABASE API ENDPOINTS
-# ============================================================================
-
-@app.post("/api/db/conversations")
-async def create_conversation(
-    user_id: int,
-    title: Optional[str] = None,
-    model: str = "gpt-4",
-    system_prompt: Optional[str] = None,
-    db: Session = Depends(get_db)
-):
-    """Create a new conversation"""
-    if not DATABASE_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Database not available")
-    
-    try:
-        conversation = Conversation(
-            user_id=user_id,
-            title=title,
-            model=model,
-            system_prompt=system_prompt
-        )
-        db.add(conversation)
-        db.commit()
-        db.refresh(conversation)
-        
-        return {
-            "success": True,
-            "conversation_id": conversation.id,
-            "created_at": conversation.created_at.isoformat()
-        }
-    except Exception as e:
-        db.rollback()
-        logger.error(f"Error creating conversation: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/api/db/messages")
-async def save_message(
-    conversation_id: int,
-    role: str,
-    content: str,
-    tokens: Optional[int] = None,
-    cost: Optional[float] = None,
-    db: Session = Depends(get_db)
-):
-    """Save a message to a conversation"""
-    if not DATABASE_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Database not available")
-    
-    try:
-        message = Message(
-            conversation_id=conversation_id,
-            role=role,
-            content=content,
-            tokens=tokens,
-            cost=cost
-        )
-        db.add(message)
-        db.commit()
-        db.refresh(message)
-        
-        return {
-            "success": True,
-            "message_id": message.id,
-            "created_at": message.created_at.isoformat()
-        }
-    except Exception as e:
-        db.rollback()
-        logger.error(f"Error saving message: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/api/db/conversations/{conversation_id}/messages")
-async def get_conversation_messages(
-    conversation_id: int,
-    limit: Optional[int] = 100,
-    db: Session = Depends(get_db)
-):
-    """Get all messages in a conversation"""
-    if not DATABASE_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Database not available")
-    
-    try:
-        messages = db.query(Message).filter(
-            Message.conversation_id == conversation_id
-        ).order_by(Message.created_at).limit(limit).all()
-        
-        return {
-            "success": True,
-            "conversation_id": conversation_id,
-            "messages": [
-                {
-                    "id": msg.id,
-                    "role": msg.role,
-                    "content": msg.content,
-                    "tokens": msg.tokens,
-                    "cost": msg.cost,
-                    "created_at": msg.created_at.isoformat()
-                }
-                for msg in messages
-            ]
-        }
-    except Exception as e:
-        logger.error(f"Error getting messages: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/api/db/users/{user_id}/conversations")
-async def get_user_conversations(
-    user_id: int,
-    archived: bool = False,
-    limit: Optional[int] = 50,
-    db: Session = Depends(get_db)
-):
-    """Get all conversations for a user"""
-    if not DATABASE_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Database not available")
-    
-    try:
-        conversations = db.query(Conversation).filter(
-            Conversation.user_id == user_id,
-            Conversation.is_archived == archived
-        ).order_by(Conversation.updated_at.desc()).limit(limit).all()
-        
-        return {
-            "success": True,
-            "user_id": user_id,
-            "conversations": [
-                {
-                    "id": conv.id,
-                    "title": conv.title,
-                    "model": conv.model,
-                    "created_at": conv.created_at.isoformat(),
-                    "updated_at": conv.updated_at.isoformat() if conv.updated_at else None,
-                    "message_count": len(conv.messages)
-                }
-                for conv in conversations
-            ]
-        }
-    except Exception as e:
-        logger.error(f"Error getting conversations: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/api/db/excel/log")
-async def log_excel_file_opened(
-    user_id: int,
-    file_path: str,
-    file_name: str,
-    sheet_names: List[str],
-    db: Session = Depends(get_db)
-):
-    """Log when an Excel file is opened"""
-    if not DATABASE_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Database not available")
-    
-    try:
-        # Check if file already exists in database
-        excel_file = db.query(ExcelFile).filter(
-            ExcelFile.user_id == user_id,
-            ExcelFile.file_path == file_path
-        ).first()
-        
-        if excel_file:
-            # Update existing record
-            excel_file.last_opened = datetime.now()
-            excel_file.sheet_names = sheet_names
-        else:
-            # Create new record
-            excel_file = ExcelFile(
-                user_id=user_id,
-                file_path=file_path,
-                file_name=file_name,
-                sheet_names=sheet_names,
-                last_opened=datetime.now()
-            )
-            db.add(excel_file)
-        
-        db.commit()
-        db.refresh(excel_file)
-        
-        return {
-            "success": True,
-            "file_id": excel_file.id
-        }
-    except Exception as e:
-        db.rollback()
-        logger.error(f"Error logging Excel file: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/api/db/excel/recent")
-async def get_recent_excel_files(
-    user_id: int,
-    limit: int = 10,
-    db: Session = Depends(get_db)
-):
-    """Get recently opened Excel files for a user"""
-    if not DATABASE_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Database not available")
-    
-    try:
-        files = db.query(ExcelFile).filter(
-            ExcelFile.user_id == user_id
-        ).order_by(ExcelFile.last_opened.desc()).limit(limit).all()
-        
-        return {
-            "success": True,
-            "files": [
-                {
-                    "id": f.id,
-                    "file_name": f.file_name,
-                    "file_path": f.file_path,
-                    "sheet_names": f.sheet_names,
-                    "last_opened": f.last_opened.isoformat() if f.last_opened else None
-                }
-                for f in files
-            ]
-        }
-    except Exception as e:
-        logger.error(f"Error getting recent files: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/api/db/health")
-async def database_health_check():
-    """Check if database connection is healthy"""
-    if not DATABASE_AVAILABLE:
-        return {
-            "status": "unavailable",
-            "message": "Database modules not installed"
-        }
-    
-    try:
-        from database import engine
-        # Try to connect to database
-        with engine.connect() as conn:
-            return {
-                "status": "healthy",
-                "message": "Database connection successful"
-            }
-    except Exception as e:
-        return {
-            "status": "unhealthy",
-            "message": str(e)
-        }
+# Database endpoints removed
 
 
 if __name__ == "__main__":

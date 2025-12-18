@@ -1,5 +1,6 @@
 """
 Database models for GPTIntermediary application
+Models are designed to work with existing database structure
 """
 from sqlalchemy import Column, Integer, String, Text, DateTime, Boolean, ForeignKey, JSON, Float
 from sqlalchemy.orm import relationship
@@ -8,28 +9,24 @@ from database import Base
 
 
 class User(Base):
-    """User accounts and authentication"""
+    """User accounts - matches existing users table structure"""
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True, index=True)
-    username = Column(String(100), unique=True, index=True, nullable=False)
-    email = Column(String(255), unique=True, index=True, nullable=True)
-    hashed_password = Column(String(255), nullable=True)  # For future authentication
-    full_name = Column(String(255), nullable=True)
-    is_active = Column(Boolean, default=True)
-    is_admin = Column(Boolean, default=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-    last_login = Column(DateTime(timezone=True), nullable=True)
-
-    # Relationships
-    conversations = relationship("Conversation", back_populates="user", cascade="all, delete-orphan")
-    preferences = relationship("UserPreference", back_populates="user", uselist=False, cascade="all, delete-orphan")
-    telegram_sessions = relationship("TelegramSession", back_populates="user", cascade="all, delete-orphan")
-    excel_files = relationship("ExcelFile", back_populates="user", cascade="all, delete-orphan")
+    name = Column(String(50), nullable=False)  # Existing column
+    email = Column(String(100), unique=True, index=True, nullable=False)  # Existing column
+    password = Column(String(255), nullable=False)  # Existing column (stores hashed password)
+    create_at = Column(DateTime, nullable=True, server_default=func.now())  # Existing column (note: create_at not created_at)
+    
+    # Note: Relationships are commented out because related tables may not exist yet
+    # Uncomment when those tables are created:
+    # conversations = relationship("Conversation", back_populates="user", cascade="all, delete-orphan", lazy="dynamic")
+    # preferences = relationship("UserPreference", back_populates="user", uselist=False, cascade="all, delete-orphan")
+    # telegram_sessions = relationship("TelegramSession", back_populates="user", cascade="all, delete-orphan", lazy="dynamic")
+    # excel_files = relationship("ExcelFile", back_populates="user", cascade="all, delete-orphan", lazy="dynamic")
 
     def __repr__(self):
-        return f"<User(id={self.id}, username='{self.username}')>"
+        return f"<User(id={self.id}, name='{self.name}', email='{self.email}')>"
 
 
 class Conversation(Base):
@@ -46,10 +43,12 @@ class Conversation(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     
     # Metadata for conversation
-    metadata = Column(JSON, nullable=True)  # Store additional info as JSON
+    extra_data = Column(JSON, nullable=True)  # Store additional info as JSON
 
     # Relationships
-    user = relationship("User", back_populates="conversations")
+    # Note: User relationship removed because User model doesn't have conversations relationship
+    # user = relationship("User", back_populates="conversations")
+    user = relationship("User", foreign_keys=[user_id])
     messages = relationship("Message", back_populates="conversation", cascade="all, delete-orphan", order_by="Message.created_at")
 
     def __repr__(self):
@@ -68,8 +67,8 @@ class Message(Base):
     cost = Column(Float, nullable=True)  # Cost for this message
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     
-    # Additional metadata
-    metadata = Column(JSON, nullable=True)  # Function calls, attachments, etc.
+    # Additional data
+    extra_data = Column(JSON, nullable=True)  # Function calls, attachments, etc.
 
     # Relationships
     conversation = relationship("Conversation", back_populates="messages")
@@ -104,7 +103,8 @@ class UserPreference(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     # Relationships
-    user = relationship("User", back_populates="preferences")
+    # Note: back_populates removed because User model doesn't have preferences relationship
+    user = relationship("User", foreign_keys=[user_id])
 
     def __repr__(self):
         return f"<UserPreference(user_id={self.user_id})>"
@@ -136,7 +136,8 @@ class TelegramSession(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     # Relationships
-    user = relationship("User", back_populates="telegram_sessions")
+    # Note: back_populates removed because User model doesn't have telegram_sessions relationship
+    user = relationship("User", foreign_keys=[user_id])
 
     def __repr__(self):
         return f"<TelegramSession(id={self.id}, phone='{self.phone_number}')>"
@@ -165,11 +166,12 @@ class ExcelFile(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     
-    # Additional metadata
-    metadata = Column(JSON, nullable=True)
+    # Additional data
+    extra_data = Column(JSON, nullable=True)
 
     # Relationships
-    user = relationship("User", back_populates="excel_files")
+    # Note: back_populates removed because User model doesn't have excel_files relationship
+    user = relationship("User", foreign_keys=[user_id])
 
     def __repr__(self):
         return f"<ExcelFile(id={self.id}, name='{self.file_name}')>"
@@ -209,7 +211,7 @@ class SystemLog(Base):
     message = Column(Text, nullable=True)
     
     # Additional context
-    metadata = Column(JSON, nullable=True)  # IP address, user agent, etc.
+    extra_data = Column(JSON, nullable=True)  # IP address, user agent, etc.
     
     # Timestamp
     created_at = Column(DateTime(timezone=True), server_default=func.now())

@@ -1,5 +1,6 @@
 """
-Database configuration and session management for PostgreSQL/Supabase
+Database configuration and session management for PostgreSQL
+Connects to existing gptintermediarydb database
 """
 import os
 from sqlalchemy import create_engine
@@ -13,15 +14,16 @@ load_dotenv()
 
 # Get database URL from environment variable
 # Format: postgresql://user:password@host:port/database
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:password@localhost:5432/gptintermediary")
-
-# For Supabase, the connection string format is:
-# postgresql://postgres:[YOUR-PASSWORD]@db.[YOUR-PROJECT-REF].supabase.co:5432/postgres
+# Example: postgresql://postgres:password@localhost:5432/gptintermediarydb
+DATABASE_URL = os.getenv(
+    "DATABASE_URL", 
+    "postgresql://postgres:password@localhost:5432/gptintermediarydb"
+)
 
 # Create SQLAlchemy engine
 engine = create_engine(
     DATABASE_URL,
-    poolclass=NullPool,  # Supabase works better with NullPool
+    poolclass=NullPool,  # Works better with connection pooling
     echo=False,  # Set to True for SQL query debugging
     pool_pre_ping=True,  # Verify connections before using them
 )
@@ -50,19 +52,10 @@ def get_db():
 
 def init_db():
     """
-    Initialize database - create all tables.
-    Call this when starting the application.
+    Initialize database - create all tables that don't exist.
+    This will only create tables that are defined in db_models but don't exist yet.
     """
-    import models  # Import models to register them
+    import db_models  # Import models to register them
     Base.metadata.create_all(bind=engine)
-    print("✅ Database tables created successfully!")
-
-
-def drop_all_tables():
-    """
-    Drop all tables - USE WITH CAUTION!
-    Only use in development.
-    """
-    Base.metadata.drop_all(bind=engine)
-    print("⚠️ All database tables dropped!")
+    print("[DATABASE] Tables checked/created successfully!")
 

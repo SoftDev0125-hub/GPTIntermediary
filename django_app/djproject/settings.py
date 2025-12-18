@@ -48,12 +48,8 @@ TEMPLATES = [
 WSGI_APPLICATION = "djproject.wsgi.application"
 ASGI_APPLICATION = "djproject.asgi.application"
 
-DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.sqlite3",
-        "NAME": BASE_DIR / "db.sqlite3",
-    }
-}
+# Database removed
+DATABASES = {}
 
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
