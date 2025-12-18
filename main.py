@@ -7,11 +7,13 @@ from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 from pydantic import BaseModel
-from typing import Optional, List, Union
+from typing import Optional, List, Union, Dict
 import logging
 import os
 import platform
 import sys
+import random
+import uuid
 from datetime import datetime
 
 from services.email_service import EmailService
@@ -26,6 +28,7 @@ try:
     from database import get_db, init_db, engine
     from db_models import User
     from sqlalchemy.orm import Session
+    from sqlalchemy.sql import func
     DATABASE_AVAILABLE = True
 except ImportError as e:
     print(f"[WARNING] Database modules not available: {e}")
@@ -217,12 +220,128 @@ async def root():
 
 # ==================== AUTHENTICATION ENDPOINTS ====================
 
+# Import verification services
+try:
+    from verification_service import generate_verification_code, store_verification_code, verify_code, cleanup_expired_codes
+    from email_verification import send_verification_email
+    VERIFICATION_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"Verification services not available: {e}")
+    VERIFICATION_AVAILABLE = False
+
+# In-memory storage for CAPTCHA challenges
+# Format: {session_id: {'question': str, 'answer': int, 'created_at': datetime}}
+captcha_challenges: Dict[str, Dict] = {}
+
+
+class CaptchaRequest(BaseModel):
+    """Request model for generating CAPTCHA"""
+    pass
+
+
+class SendVerificationCodeRequest(BaseModel):
+    """Request model for sending verification code"""
+    email: str
+    captcha_answer: int
+    captcha_session_id: str
+
+
+class VerifyCodeRequest(BaseModel):
+    """Request model for verifying code"""
+    email: str
+    code: str
+
+
+@app.get("/api/auth/captcha")
+async def generate_captcha():
+    """
+    Generate a simple math CAPTCHA challenge
+    Returns a math question and session ID
+    """
+    # Generate two random numbers between 1 and 10
+    num1 = random.randint(1, 10)
+    num2 = random.randint(1, 10)
+    answer = num1 + num2
+    
+    # Create session ID
+    session_id = str(uuid.uuid4())
+    
+    # Store challenge
+    captcha_challenges[session_id] = {
+        'question': f"{num1} + {num2}",
+        'answer': answer,
+        'created_at': datetime.now()
+    }
+    
+    return {
+        "success": True,
+        "session_id": session_id,
+        "question": f"{num1} + {num2} = ?"
+    }
+
+
+@app.post("/api/auth/send-verification-code")
+async def send_verification_code(request: SendVerificationCodeRequest):
+    """
+    Send verification code to email after CAPTCHA verification
+    """
+    if not VERIFICATION_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Verification service not available")
+    
+    try:
+        # Verify CAPTCHA
+        if request.captcha_session_id not in captcha_challenges:
+            raise HTTPException(status_code=400, detail="Invalid or expired CAPTCHA session")
+        
+        captcha_data = captcha_challenges[request.captcha_session_id]
+        
+        # Check if answer is correct
+        if request.captcha_answer != captcha_data['answer']:
+            # Remove invalid CAPTCHA
+            del captcha_challenges[request.captcha_session_id]
+            raise HTTPException(status_code=400, detail="CAPTCHA answer is incorrect")
+        
+        # Remove used CAPTCHA
+        del captcha_challenges[request.captcha_session_id]
+        
+        # Validate email
+        email = request.email.strip().lower()
+        if not email or '@' not in email:
+            raise HTTPException(status_code=400, detail="Invalid email address")
+        
+        # Generate and store verification code
+        code = generate_verification_code()
+        store_verification_code(email, code)
+        
+        # Send verification email
+        email_sent = send_verification_email(email, code)
+        
+        if email_sent:
+            return {
+                "success": True,
+                "message": "Verification code sent to your email. Please check your inbox."
+            }
+        else:
+            # Email not sent, but code is still valid (might be in logs for development)
+            return {
+                "success": True,
+                "message": "Verification code generated. Check server logs if email is not configured."
+            }
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error sending verification code: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to send verification code: {str(e)}")
+
 class RegisterRequest(BaseModel):
     """Request model for user registration"""
     name: str
     email: str
     password: str
-    password: str
+    verification_code: Optional[str] = None
+    captcha_answer: Optional[int] = None
+    captcha_session_id: Optional[str] = None
 
 
 class LoginRequest(BaseModel):
@@ -234,7 +353,7 @@ class LoginRequest(BaseModel):
 @app.post("/api/auth/register")
 async def register_user(request: RegisterRequest, db: Session = Depends(get_db)):
     """
-    Register a new user account
+    Register a new user account (CAPTCHA and email verification disabled)
     Saves user to existing users table (name, email, password, create_at)
     """
     if not DATABASE_AVAILABLE or not User:
@@ -249,8 +368,20 @@ async def register_user(request: RegisterRequest, db: Session = Depends(get_db))
         if not request.password or len(request.password) < 6:
             raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
         
-        # Check if user already exists
-        existing_user = db.query(User).filter(User.email == request.email.strip()).first()
+        # Verify email verification code (DISABLED)
+        # if VERIFICATION_AVAILABLE:
+        #     if not request.verification_code:
+        #         raise HTTPException(status_code=400, detail="Verification code is required")
+        #     
+        #     email = request.email.strip().lower()
+        #     if not verify_code(email, request.verification_code):
+        #         raise HTTPException(status_code=400, detail="Invalid or expired verification code. Please request a new code.")
+        
+        # Normalize email (lowercase and strip whitespace)
+        email_normalized = request.email.strip().lower()
+        
+        # Check if user already exists (case-insensitive email check)
+        existing_user = db.query(User).filter(func.lower(User.email) == email_normalized).first()
         if existing_user:
             raise HTTPException(status_code=400, detail="This email is already registered. Please use a different email or login.")
         
@@ -266,7 +397,7 @@ async def register_user(request: RegisterRequest, db: Session = Depends(get_db))
         # Create new user (using existing table structure)
         new_user = User(
             name=request.name.strip(),
-            email=request.email.strip(),  # Store email in lowercase
+            email=email_normalized,  # Store email in lowercase
             password=hashed_password,  # Store hashed password in password column
             create_at=datetime.now()  # Use create_at column (existing structure)
         )

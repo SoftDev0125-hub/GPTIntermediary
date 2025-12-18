@@ -262,6 +262,35 @@
             content: '○';
         }
 
+        .captcha-question {
+            font-size: 24px;
+            font-weight: bold;
+            color: #667eea;
+            margin: 10px 0;
+            padding: 15px;
+            background: #f5f5f5;
+            border-radius: 8px;
+            text-align: center;
+        }
+
+        .verification-hint {
+            display: block;
+            margin-top: 5px;
+            font-size: 12px;
+            color: #666;
+        }
+
+        .btn-secondary {
+            background: #6c757d;
+            margin-top: 10px;
+        }
+
+        .btn-secondary:hover {
+            background: #5a6268;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(108, 117, 125, 0.4);
+        }
+
         .loading {
             display: inline-block;
             width: 16px;
@@ -360,6 +389,22 @@
                         </button>
                     </div>
                 </div>
+                
+                <!-- CAPTCHA Section (hidden initially) -->
+                <div id="captchaSection" class="form-group" style="display: none;">
+                    <label>Bot Check</label>
+                    <div id="captchaQuestion" class="captcha-question"></div>
+                    <input type="number" id="captchaAnswer" placeholder="Enter the answer" min="0" max="100">
+                    <button type="button" class="btn btn-secondary" id="verifyCaptchaBtn" onclick="verifyCaptcha()">Verify</button>
+                </div>
+                
+                <!-- Verification Code Section (hidden initially) -->
+                <div id="verificationSection" class="form-group" style="display: none;">
+                    <label for="verificationCode">Verification Code</label>
+                    <input type="text" id="verificationCode" placeholder="Enter 6-digit code" maxlength="6" pattern="[0-9]{6}">
+                    <small class="verification-hint">Check your email for the verification code</small>
+                </div>
+                
                 <button type="submit" class="btn" id="registerBtn">
                     Create Account
                 </button>
@@ -508,6 +553,81 @@
             }
         }
 
+        // Global variables for registration flow
+        let captchaSessionId = null;
+        let registrationStep = 'form'; // 'form', 'captcha', 'verification', 'complete'
+
+        async function loadCaptcha() {
+            try {
+                const response = await fetch(`${API_BASE}/api/auth/captcha`);
+                const data = await response.json();
+                if (data.success) {
+                    captchaSessionId = data.session_id;
+                    document.getElementById('captchaQuestion').textContent = data.question;
+                    document.getElementById('captchaSection').style.display = 'block';
+                    document.getElementById('registerBtn').style.display = 'none';
+                    registrationStep = 'captcha';
+                }
+            } catch (error) {
+                console.error('Error loading CAPTCHA:', error);
+                showMessage('Failed to load CAPTCHA. Please try again.', 'error');
+            }
+        }
+
+        async function verifyCaptcha() {
+            const captchaAnswer = parseInt(document.getElementById('captchaAnswer').value);
+            const email = document.getElementById('registerEmail').value;
+            
+            if (!captchaAnswer || isNaN(captchaAnswer)) {
+                showMessage('Please enter the CAPTCHA answer', 'error');
+                return;
+            }
+
+            if (!email) {
+                showMessage('Please enter your email address first', 'error');
+                return;
+            }
+
+            const btn = document.getElementById('verifyCaptchaBtn');
+            btn.disabled = true;
+            btn.innerHTML = 'Verifying<span class="loading"></span>';
+            hideMessage();
+
+            try {
+                const response = await fetch(`${API_BASE}/api/auth/send-verification-code`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        email: email,
+                        captcha_answer: captchaAnswer,
+                        captcha_session_id: captchaSessionId
+                    })
+                });
+
+                const data = await response.json();
+
+                if (response.ok && data.success) {
+                    showMessage(data.message || 'Verification code sent to your email!', 'success');
+                    document.getElementById('captchaSection').style.display = 'none';
+                    document.getElementById('verificationSection').style.display = 'block';
+                    document.getElementById('registerBtn').style.display = 'block';
+                    document.getElementById('registerBtn').innerHTML = 'Complete Registration';
+                    registrationStep = 'verification';
+                } else {
+                    const errorMsg = data.detail || data.message || 'CAPTCHA verification failed. Please try again.';
+                    showMessage(errorMsg, 'error');
+                }
+            } catch (error) {
+                console.error('Error verifying CAPTCHA:', error);
+                showMessage('Failed to verify CAPTCHA. Please try again.', 'error');
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = 'Verify';
+            }
+        }
+
         async function handleRegister(event) {
             event.preventDefault();
             
@@ -516,6 +636,12 @@
             const email = document.getElementById('registerEmail').value;
             const password = document.getElementById('registerPassword').value;
             const confirmPassword = document.getElementById('registerConfirmPassword').value;
+
+            // Validate all fields are filled
+            if (!name || !email || !password || !confirmPassword) {
+                showMessage('Please fill out all fields', 'error');
+                return;
+            }
 
             // Validate passwords match
             if (password !== confirmPassword) {
@@ -530,6 +656,9 @@
                 return;
             }
 
+            // CAPTCHA and verification code are DISABLED
+            // Directly proceed with registration
+            
             btn.disabled = true;
             btn.innerHTML = 'Creating Account<span class="loading"></span>';
             hideMessage();
@@ -543,56 +672,64 @@
                     body: JSON.stringify({ 
                         name, 
                         email, 
-                        password 
+                        password
                     })
                 });
 
-                const data = await response.json();
+                    const data = await response.json();
 
-                if (response.ok && data.success) {
-                    showMessage(
-                        data.message || 'Registration successful! Your account has been created.', 
-                        'success'
-                    );
-                    
-                    // Clear form
-                    document.getElementById('registerForm').reset();
-                    // Reset password requirements
-                    document.querySelectorAll('.password-requirements .requirement').forEach(req => {
-                        req.classList.remove('requirement-met');
-                    });
-                    
-                    // Switch to login tab after 3 seconds
-                    setTimeout(() => {
-                        switchTab('login');
-                        showMessage('You can now login with your new account.', 'info');
-                    }, 3000);
-                } else {
-                    // Extract error message from detail or message field
-                    let errorMsg = 'Registration failed. Please try again.';
-                    if (data.detail) {
-                        errorMsg = data.detail;
-                    } else if (data.message) {
-                        errorMsg = data.message;
-                    } else if (typeof data === 'string') {
-                        errorMsg = data;
-                    } else if (data.error) {
-                        errorMsg = data.error;
+                    if (response.ok && data.success) {
+                        showMessage(
+                            data.message || 'Registration successful! Your account has been created.', 
+                            'success'
+                        );
+                        
+                        // Clear form
+                        document.getElementById('registerForm').reset();
+                        // Reset password requirements
+                        document.querySelectorAll('.password-requirements .requirement').forEach(req => {
+                            req.classList.remove('requirement-met');
+                        });
+                        // Reset registration flow
+                        document.getElementById('captchaSection').style.display = 'none';
+                        document.getElementById('verificationSection').style.display = 'none';
+                        document.getElementById('registerBtn').innerHTML = 'Create Account';
+                        registrationStep = 'form';
+                        captchaSessionId = null;
+                        
+                        // Switch to login tab after 3 seconds
+                        setTimeout(() => {
+                            switchTab('login');
+                            showMessage('You can now login with your new account.', 'info');
+                        }, 3000);
+                    } else {
+                        // Extract error message from detail or message field
+                        let errorMsg = 'Registration failed. Please try again.';
+                        if (data.detail) {
+                            errorMsg = data.detail;
+                        } else if (data.message) {
+                            errorMsg = data.message;
+                        } else if (typeof data === 'string') {
+                            errorMsg = data;
+                        } else if (data.error) {
+                            errorMsg = data.error;
+                        }
+                        console.error('Registration failed:', data);
+                        showMessage(errorMsg, 'error');
+                        btn.disabled = false;
+                        btn.innerHTML = 'Create Account';
                     }
-                    console.error('Registration failed:', data);
+                } catch (error) {
+                    console.error('Registration error:', error);
+                    let errorMsg = 'Connection error. Please make sure the server is running.';
+                    if (error.message) {
+                        errorMsg += ' Error: ' + error.message;
+                    }
                     showMessage(errorMsg, 'error');
+                } finally {
+                    btn.disabled = false;
+                    btn.innerHTML = 'Create Account';
                 }
-            } catch (error) {
-                console.error('Registration error:', error);
-                let errorMsg = 'Connection error. Please make sure the server is running.';
-                if (error.message) {
-                    errorMsg += ' Error: ' + error.message;
-                }
-                showMessage(errorMsg, 'error');
-            } finally {
-                btn.disabled = false;
-                btn.innerHTML = 'Create Account';
-            }
         }
 
         // Check if already logged in
