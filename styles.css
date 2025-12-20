@@ -2125,6 +2125,214 @@ body::before {
     justify-content: flex-start;
 }
 
+/* WhatsApp Message Footer */
+.whatsapp-message-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 4px;
+    gap: 8px;
+}
+
+.whatsapp-message-wrapper.sent .whatsapp-message-footer {
+    flex-direction: row-reverse;
+}
+
+/* WhatsApp Message Actions */
+.whatsapp-message-actions {
+    display: flex;
+    gap: 4px;
+    opacity: 0;
+    transition: opacity 0.2s;
+}
+
+.whatsapp-message-wrapper:hover .whatsapp-message-actions {
+    opacity: 1;
+}
+
+.whatsapp-action-btn {
+    background: rgba(0, 0, 0, 0.3);
+    border: none;
+    border-radius: 4px;
+    padding: 4px 8px;
+    cursor: pointer;
+    font-size: 14px;
+    color: rgba(255, 255, 255, 0.8);
+    transition: background 0.2s;
+}
+
+.whatsapp-action-btn:hover {
+    background: rgba(0, 0, 0, 0.5);
+}
+
+.whatsapp-action-btn:active {
+    transform: scale(0.95);
+}
+
+/* WhatsApp Media Styles */
+.whatsapp-media-container {
+    position: relative;
+    margin-bottom: 8px;
+    border-radius: 8px;
+    overflow: hidden;
+    max-width: 100%;
+}
+
+.whatsapp-media-image {
+    max-width: 100%;
+    max-height: 400px;
+    width: auto;
+    height: auto;
+    display: block;
+    cursor: pointer;
+    border-radius: 8px;
+    transition: transform 0.2s;
+}
+
+.whatsapp-media-image:hover {
+    transform: scale(1.02);
+}
+
+.whatsapp-media-video {
+    max-width: 100%;
+    max-height: 400px;
+    width: auto;
+    height: auto;
+    display: block;
+    border-radius: 8px;
+}
+
+.whatsapp-media-download {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    background: rgba(0, 0, 0, 0.6);
+    color: white;
+    padding: 6px 10px;
+    border-radius: 20px;
+    text-decoration: none;
+    font-size: 12px;
+    backdrop-filter: blur(10px);
+    transition: background 0.2s;
+    z-index: 10;
+}
+
+.whatsapp-media-download:hover {
+    background: rgba(0, 0, 0, 0.8);
+}
+
+/* WhatsApp File Container */
+.whatsapp-file-container {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+}
+
+.whatsapp-file-icon {
+    font-size: 32px;
+    flex-shrink: 0;
+}
+
+.whatsapp-file-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.whatsapp-file-name {
+    font-size: 14px;
+    font-weight: 500;
+    color: #e4e4e4;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-bottom: 4px;
+}
+
+.whatsapp-file-type {
+    font-size: 12px;
+    color: #707579;
+}
+
+.whatsapp-media-loading {
+    padding: 20px;
+    text-align: center;
+    color: #707579;
+    font-size: 14px;
+}
+
+/* WhatsApp Media Viewer (Modal) */
+.whatsapp-media-viewer {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.95);
+    z-index: 10000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+}
+
+.whatsapp-media-viewer-content {
+    position: relative;
+    max-width: 90%;
+    max-height: 90%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+}
+
+.whatsapp-media-viewer-content img {
+    max-width: 100%;
+    max-height: 80vh;
+    object-fit: contain;
+    border-radius: 8px;
+}
+
+.whatsapp-media-viewer-close {
+    position: absolute;
+    top: -40px;
+    right: 0;
+    background: rgba(255, 255, 255, 0.2);
+    border: none;
+    color: white;
+    font-size: 32px;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.2s;
+}
+
+.whatsapp-media-viewer-close:hover {
+    background: rgba(255, 255, 255, 0.3);
+}
+
+.whatsapp-media-viewer-download {
+    background: #3390ec;
+    color: white;
+    padding: 10px 20px;
+    border-radius: 20px;
+    text-decoration: none;
+    font-size: 14px;
+    font-weight: 500;
+    transition: background 0.2s;
+}
+
+.whatsapp-media-viewer-download:hover {
+    background: #2d7fd1;
+}
+
 .whatsapp-input-container {
     padding: 12px 16px;
     background: #212121;

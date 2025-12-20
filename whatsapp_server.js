@@ -123,10 +123,28 @@ function initializeWhatsApp() {
                 timestamp: message.timestamp,
                 type: message.type,
                 hasMedia: message.hasMedia,
+                mediaUrl: null,
+                mediaMimetype: null,
+                mediaFilename: null,
                 contact_id: message.from, // Use from as contact_id initially
                 contact_name: 'Loading...', // Will be updated
                 is_group: false
             };
+            
+            // If message has media, try to download it asynchronously
+            if (message.hasMedia) {
+                message.downloadMedia().then(media => {
+                    if (media) {
+                        quickMessage.mediaUrl = `data:${media.mimetype};base64,${media.data}`;
+                        quickMessage.mediaMimetype = media.mimetype;
+                        quickMessage.mediaFilename = media.filename || null;
+                        // Emit update with media
+                        io.emit('whatsapp_message_update', quickMessage);
+                    }
+                }).catch(err => {
+                    console.error('[WhatsApp] Error downloading media:', err);
+                });
+            }
             
             // Emit immediately for instant display
             io.emit('whatsapp_message', quickMessage);
@@ -144,6 +162,9 @@ function initializeWhatsApp() {
                     timestamp: message.timestamp,
                     type: message.type,
                     hasMedia: message.hasMedia,
+                    mediaUrl: quickMessage.mediaUrl,
+                    mediaMimetype: quickMessage.mediaMimetype,
+                    mediaFilename: quickMessage.mediaFilename,
                     contact_id: chat.id._serialized,
                     contact_name: chat.name || contact.name || 'Unknown',
                     is_group: chat.isGroup
@@ -175,10 +196,28 @@ function initializeWhatsApp() {
                     timestamp: message.timestamp,
                     type: message.type,
                     hasMedia: message.hasMedia,
+                    mediaUrl: null,
+                    mediaMimetype: null,
+                    mediaFilename: null,
                     contact_id: message.to, // Use 'to' for sent messages
                     contact_name: 'Loading...',
                     is_group: false
                 };
+                
+                // If message has media, try to download it asynchronously
+                if (message.hasMedia) {
+                    message.downloadMedia().then(media => {
+                        if (media) {
+                            quickMessage.mediaUrl = `data:${media.mimetype};base64,${media.data}`;
+                            quickMessage.mediaMimetype = media.mimetype;
+                            quickMessage.mediaFilename = media.filename || null;
+                            // Emit update with media
+                            io.emit('whatsapp_message_update', quickMessage);
+                        }
+                    }).catch(err => {
+                        console.error('[WhatsApp] Error downloading media:', err);
+                    });
+                }
                 
                 // Emit immediately for instant display
                 io.emit('whatsapp_message', quickMessage);
@@ -196,6 +235,9 @@ function initializeWhatsApp() {
                         timestamp: message.timestamp,
                         type: message.type,
                         hasMedia: message.hasMedia,
+                        mediaUrl: quickMessage.mediaUrl,
+                        mediaMimetype: quickMessage.mediaMimetype,
+                        mediaFilename: quickMessage.mediaFilename,
                         contact_id: chat.id._serialized,
                         contact_name: chat.name || contact.name || 'Unknown',
                         is_group: chat.isGroup
@@ -473,15 +515,36 @@ app.post('/api/whatsapp/messages', async (req, res) => {
         const messages = await chat.fetchMessages({ limit: limit });
 
         // Format messages for frontend
-        const formattedMessages = messages.map(msg => ({
-            id: msg.id._serialized,
-            body: msg.body || '',
-            from: msg.from || contact_id,
-            fromMe: msg.fromMe,
-            timestamp: msg.timestamp,
-            type: msg.type,
-            hasMedia: msg.hasMedia,
-            mediaUrl: msg.hasMedia ? (msg.mediaKey ? 'media_available' : null) : null
+        const formattedMessages = await Promise.all(messages.map(async (msg) => {
+            const baseMessage = {
+                id: msg.id._serialized,
+                body: msg.body || '',
+                from: msg.from || contact_id,
+                fromMe: msg.fromMe,
+                timestamp: msg.timestamp,
+                type: msg.type,
+                hasMedia: msg.hasMedia,
+                mediaUrl: null,
+                mediaMimetype: null,
+                mediaFilename: null
+            };
+
+            // Get media info if available
+            if (msg.hasMedia) {
+                try {
+                    const media = await msg.downloadMedia();
+                    if (media) {
+                        baseMessage.mediaUrl = `data:${media.mimetype};base64,${media.data}`;
+                        baseMessage.mediaMimetype = media.mimetype;
+                        baseMessage.mediaFilename = media.filename || null;
+                    }
+                } catch (mediaError) {
+                    console.error('[WhatsApp] Error downloading media:', mediaError);
+                    baseMessage.mediaUrl = null;
+                }
+            }
+
+            return baseMessage;
         }));
 
         // Sort by timestamp (oldest first for display)
@@ -496,6 +559,175 @@ app.post('/api/whatsapp/messages', async (req, res) => {
         });
     } catch (error) {
         console.error('[WhatsApp] Error getting messages:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
+ * GET /api/whatsapp/media/:messageId
+ * Download media from a message
+ */
+app.get('/api/whatsapp/media/:messageId', async (req, res) => {
+    try {
+        if (!isReady || !client) {
+            return res.status(400).json({
+                success: false,
+                error: 'WhatsApp not connected. Please authenticate first.'
+            });
+        }
+
+        const { messageId } = req.params;
+
+        // Get message by ID
+        const message = await client.getMessageById(messageId);
+        
+        if (!message) {
+            return res.status(404).json({
+                success: false,
+                error: 'Message not found'
+            });
+        }
+
+        if (!message.hasMedia) {
+            return res.status(400).json({
+                success: false,
+                error: 'Message does not contain media'
+            });
+        }
+
+        // Download media
+        const media = await message.downloadMedia();
+        
+        if (!media) {
+            return res.status(500).json({
+                success: false,
+                error: 'Failed to download media'
+            });
+        }
+
+        // Convert base64 to buffer
+        const buffer = Buffer.from(media.data, 'base64');
+        
+        // Set appropriate headers
+        const filename = media.filename || `media_${messageId}.${media.mimetype.split('/')[1]}`;
+        res.setHeader('Content-Type', media.mimetype);
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+        res.setHeader('Content-Length', buffer.length);
+
+        return res.send(buffer);
+    } catch (error) {
+        console.error('[WhatsApp] Error downloading media:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
+ * DELETE /api/whatsapp/message/:messageId
+ * Delete a message
+ */
+app.delete('/api/whatsapp/message/:messageId', async (req, res) => {
+    try {
+        if (!isReady || !client) {
+            return res.status(400).json({
+                success: false,
+                error: 'WhatsApp not connected. Please authenticate first.'
+            });
+        }
+
+        const { messageId } = req.params;
+
+        // Get message by ID
+        const message = await client.getMessageById(messageId);
+        
+        if (!message) {
+            return res.status(404).json({
+                success: false,
+                error: 'Message not found'
+            });
+        }
+
+        // Check if message was sent by current user (can only delete own messages)
+        if (!message.fromMe) {
+            return res.status(403).json({
+                success: false,
+                error: 'You can only delete your own messages'
+            });
+        }
+
+        // Delete message
+        await message.delete(true); // true = delete for everyone
+
+        return res.json({
+            success: true,
+            message: 'Message deleted successfully'
+        });
+    } catch (error) {
+        console.error('[WhatsApp] Error deleting message:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
+ * PUT /api/whatsapp/message/:messageId
+ * Edit a message
+ */
+app.put('/api/whatsapp/message/:messageId', async (req, res) => {
+    try {
+        if (!isReady || !client) {
+            return res.status(400).json({
+                success: false,
+                error: 'WhatsApp not connected. Please authenticate first.'
+            });
+        }
+
+        const { messageId } = req.params;
+        const { text } = req.body;
+
+        if (!text) {
+            return res.status(400).json({
+                success: false,
+                error: 'text is required'
+            });
+        }
+
+        // Get message by ID
+        const message = await client.getMessageById(messageId);
+        
+        if (!message) {
+            return res.status(404).json({
+                success: false,
+                error: 'Message not found'
+            });
+        }
+
+        // Check if message was sent by current user (can only edit own messages)
+        if (!message.fromMe) {
+            return res.status(403).json({
+                success: false,
+                error: 'You can only edit your own messages'
+            });
+        }
+
+        // Edit message
+        const editedMessage = await message.edit(text);
+
+        return res.json({
+            success: true,
+            message: 'Message edited successfully',
+            message_id: editedMessage.id._serialized,
+            body: editedMessage.body
+        });
+    } catch (error) {
+        console.error('[WhatsApp] Error editing message:', error);
         res.status(500).json({
             success: false,
             error: error.message

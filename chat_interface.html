@@ -2379,7 +2379,10 @@
                         fromMe: message.fromMe,
                         timestamp: message.timestamp,
                         type: message.type,
-                        hasMedia: message.hasMedia
+                        hasMedia: message.hasMedia,
+                        mediaUrl: message.mediaUrl || null,
+                        mediaMimetype: message.mediaMimetype || null,
+                        mediaFilename: message.mediaFilename || null
                     };
                     
                     currentChatMessages.push(msgData);
@@ -2406,8 +2409,14 @@
                         fromMe: message.fromMe,
                         timestamp: message.timestamp,
                         type: message.type,
-                        hasMedia: message.hasMedia
+                        hasMedia: message.hasMedia,
+                        mediaUrl: message.mediaUrl || currentChatMessages[existingIndex].mediaUrl || null,
+                        mediaMimetype: message.mediaMimetype || currentChatMessages[existingIndex].mediaMimetype || null,
+                        mediaFilename: message.mediaFilename || currentChatMessages[existingIndex].mediaFilename || null
                     };
+                    
+                    // Update the displayed message if it exists
+                    updateMessageDisplay(message.id, currentChatMessages[existingIndex]);
                 }
             }
             
@@ -2454,12 +2463,68 @@
                 html += `<div class="whatsapp-date-divider"><span>${dateStr}</span></div>`;
             }
 
+            // Build media HTML
+            let mediaHTML = '';
+            if (message.hasMedia && message.mediaUrl) {
+                const isImage = message.mediaMimetype?.startsWith('image/');
+                const isVideo = message.mediaMimetype?.startsWith('video/');
+                
+                if (isImage) {
+                    mediaHTML = `
+                        <div class="whatsapp-media-container">
+                            <img src="${message.mediaUrl}" alt="Image" class="whatsapp-media-image" onclick="openMediaViewer('${message.mediaUrl}', '${message.mediaFilename || 'image'}')" />
+                            <a href="${message.mediaUrl}" download="${message.mediaFilename || 'image'}" class="whatsapp-media-download" title="Download image">⬇️</a>
+                        </div>
+                    `;
+                } else if (isVideo) {
+                    mediaHTML = `
+                        <div class="whatsapp-media-container">
+                            <video controls class="whatsapp-media-video">
+                                <source src="${message.mediaUrl}" type="${message.mediaMimetype}">
+                            </video>
+                            <a href="${message.mediaUrl}" download="${message.mediaFilename || 'video'}" class="whatsapp-media-download" title="Download video">⬇️</a>
+                        </div>
+                    `;
+                } else {
+                    // File/document
+                    const fileIcon = getFileIcon(message.mediaMimetype);
+                    mediaHTML = `
+                        <div class="whatsapp-media-container whatsapp-file-container">
+                            <div class="whatsapp-file-icon">${fileIcon}</div>
+                            <div class="whatsapp-file-info">
+                                <div class="whatsapp-file-name">${escapeHtml(message.mediaFilename || 'File')}</div>
+                                <div class="whatsapp-file-type">${message.mediaMimetype || 'Unknown type'}</div>
+                            </div>
+                            <a href="${message.mediaUrl}" download="${message.mediaFilename || 'file'}" class="whatsapp-media-download" title="Download file">⬇️</a>
+                        </div>
+                    `;
+                }
+            } else if (message.hasMedia && !message.mediaUrl) {
+                // Media is loading
+                mediaHTML = '<div class="whatsapp-media-loading">Loading media...</div>';
+            }
+
+            // Build action buttons for sent messages
+            let actionButtonsHTML = '';
+            if (isSent) {
+                actionButtonsHTML = `
+                    <div class="whatsapp-message-actions">
+                        <button class="whatsapp-action-btn" onclick="editWhatsAppMessage('${message.id}')" title="Edit message">✏️</button>
+                        <button class="whatsapp-action-btn" onclick="deleteWhatsAppMessage('${message.id}')" title="Delete message">🗑️</button>
+                    </div>
+                `;
+            }
+
             // Message bubble with timestamp attribute for future reference
             html += `
                 <div class="whatsapp-message-wrapper ${isSent ? 'sent' : 'received'}" data-message-id="${message.id}" data-timestamp="${message.timestamp}">
                     <div class="whatsapp-message-bubble">
+                        ${mediaHTML}
                         <div class="whatsapp-message-text">${formattedBody || '<em>No content</em>'}</div>
-                        <div class="whatsapp-message-time">${timeStr}</div>
+                        <div class="whatsapp-message-footer">
+                            <div class="whatsapp-message-time">${timeStr}</div>
+                            ${actionButtonsHTML}
+                        </div>
                     </div>
                 </div>
             `;
@@ -2471,6 +2536,181 @@
             requestAnimationFrame(() => {
                 whatsappMessagesContainer.scrollTop = whatsappMessagesContainer.scrollHeight;
             });
+        }
+
+        /**
+         * Update an existing message display (for media updates, edits, etc.)
+         */
+        function updateMessageDisplay(messageId, messageData) {
+            const messageElement = whatsappMessagesContainer?.querySelector(`[data-message-id="${messageId}"]`);
+            if (!messageElement) return;
+
+            const bubble = messageElement.querySelector('.whatsapp-message-bubble');
+            if (!bubble) return;
+
+            // Update media if available
+            if (messageData.hasMedia && messageData.mediaUrl) {
+                const existingMedia = bubble.querySelector('.whatsapp-media-container');
+                if (!existingMedia) {
+                    // Insert media before text
+                    const textElement = bubble.querySelector('.whatsapp-message-text');
+                    if (textElement) {
+                        const isImage = messageData.mediaMimetype?.startsWith('image/');
+                        const isVideo = messageData.mediaMimetype?.startsWith('video/');
+                        let mediaHTML = '';
+                        
+                        if (isImage) {
+                            mediaHTML = `
+                                <div class="whatsapp-media-container">
+                                    <img src="${messageData.mediaUrl}" alt="Image" class="whatsapp-media-image" onclick="openMediaViewer('${messageData.mediaUrl}', '${messageData.mediaFilename || 'image'}')" />
+                                    <a href="${messageData.mediaUrl}" download="${messageData.mediaFilename || 'image'}" class="whatsapp-media-download" title="Download image">⬇️</a>
+                                </div>
+                            `;
+                        } else if (isVideo) {
+                            mediaHTML = `
+                                <div class="whatsapp-media-container">
+                                    <video controls class="whatsapp-media-video">
+                                        <source src="${messageData.mediaUrl}" type="${messageData.mediaMimetype}">
+                                    </video>
+                                    <a href="${messageData.mediaUrl}" download="${messageData.mediaFilename || 'video'}" class="whatsapp-media-download" title="Download video">⬇️</a>
+                                </div>
+                            `;
+                        }
+                        
+                        if (mediaHTML) {
+                            textElement.insertAdjacentHTML('beforebegin', mediaHTML);
+                        }
+                    }
+                }
+            }
+
+            // Update text if changed
+            const textElement = bubble.querySelector('.whatsapp-message-text');
+            if (textElement && messageData.body) {
+                textElement.innerHTML = escapeHtml(messageData.body);
+            }
+        }
+
+        /**
+         * Get file icon based on MIME type
+         */
+        window.getFileIcon = function(mimetype) {
+            if (!mimetype) return '📄';
+            if (mimetype.includes('pdf')) return '📕';
+            if (mimetype.includes('word') || mimetype.includes('document')) return '📘';
+            if (mimetype.includes('excel') || mimetype.includes('spreadsheet')) return '📗';
+            if (mimetype.includes('zip') || mimetype.includes('archive')) return '📦';
+            if (mimetype.includes('audio')) return '🎵';
+            return '📄';
+        }
+
+        window.openMediaViewer = function(mediaUrl, filename) {
+            // Create modal overlay
+            const modal = document.createElement('div');
+            modal.className = 'whatsapp-media-viewer';
+            modal.innerHTML = `
+                <div class="whatsapp-media-viewer-content">
+                    <button class="whatsapp-media-viewer-close" onclick="this.closest('.whatsapp-media-viewer').remove()">&times;</button>
+                    <img src="${mediaUrl}" alt="${filename}" />
+                    <a href="${mediaUrl}" download="${filename}" class="whatsapp-media-viewer-download">Download</a>
+                </div>
+            `;
+            document.body.appendChild(modal);
+            modal.addEventListener('click', (e) => {
+                if (e.target === modal) modal.remove();
+            });
+        }
+
+        // Make functions globally accessible
+        window.editWhatsAppMessage = async function(messageId) {
+            const message = currentChatMessages.find(msg => msg.id === messageId);
+            if (!message) {
+                alert('Message not found');
+                return;
+            }
+
+            const newText = prompt('Edit message:', message.body || '');
+            if (newText === null || newText === message.body) {
+                return; // User cancelled or didn't change
+            }
+
+            try {
+                const response = await fetch(`http://localhost:3000/api/whatsapp/message/${messageId}`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        text: newText
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+
+                const data = await response.json();
+                if (data.success) {
+                    // Update local message
+                    message.body = newText;
+                    updateMessageDisplay(messageId, message);
+                    console.log('[*] Message edited successfully');
+                } else {
+                    throw new Error(data.error || 'Failed to edit message');
+                }
+            } catch (error) {
+                console.error('[!] Error editing message:', error);
+                alert(`Error editing message: ${error.message}`);
+            }
+        }
+
+        window.deleteWhatsAppMessage = async function(messageId) {
+            if (!confirm('Are you sure you want to delete this message?')) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`http://localhost:3000/api/whatsapp/message/${messageId}`, {
+                    method: 'DELETE',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+
+                const data = await response.json();
+                if (data.success) {
+                    // Remove message from local array
+                    const index = currentChatMessages.findIndex(msg => msg.id === messageId);
+                    if (index !== -1) {
+                        currentChatMessages.splice(index, 1);
+                    }
+
+                    // Remove message from display
+                    const messageElement = whatsappMessagesContainer?.querySelector(`[data-message-id="${messageId}"]`);
+                    if (messageElement) {
+                        messageElement.remove();
+                    }
+
+                    // Update message count
+                    if (whatsappStatus) {
+                        whatsappStatus.textContent = `${currentChatMessages.length} messages`;
+                    }
+                    if (whatsappCount) {
+                        whatsappCount.textContent = `${currentChatMessages.length} messages`;
+                    }
+
+                    console.log('[*] Message deleted successfully');
+                } else {
+                    throw new Error(data.error || 'Failed to delete message');
+                }
+            } catch (error) {
+                console.error('[!] Error deleting message:', error);
+                alert(`Error deleting message: ${error.message}`);
+            }
         }
 
         /**
@@ -2623,12 +2863,67 @@
                     html += `<div class="whatsapp-date-divider"><span>${dateStr}</span></div>`;
                 }
 
+                // Build media HTML
+                let mediaHTML = '';
+                if (msg.hasMedia && msg.mediaUrl) {
+                    const isImage = msg.mediaMimetype?.startsWith('image/');
+                    const isVideo = msg.mediaMimetype?.startsWith('video/');
+                    
+                    if (isImage) {
+                        mediaHTML = `
+                            <div class="whatsapp-media-container">
+                                <img src="${msg.mediaUrl}" alt="Image" class="whatsapp-media-image" onclick="openMediaViewer('${msg.mediaUrl}', '${msg.mediaFilename || 'image'}')" />
+                                <a href="${msg.mediaUrl}" download="${msg.mediaFilename || 'image'}" class="whatsapp-media-download" title="Download image">⬇️</a>
+                            </div>
+                        `;
+                    } else if (isVideo) {
+                        mediaHTML = `
+                            <div class="whatsapp-media-container">
+                                <video controls class="whatsapp-media-video">
+                                    <source src="${msg.mediaUrl}" type="${msg.mediaMimetype}">
+                                </video>
+                                <a href="${msg.mediaUrl}" download="${msg.mediaFilename || 'video'}" class="whatsapp-media-download" title="Download video">⬇️</a>
+                            </div>
+                        `;
+                    } else {
+                        // File/document
+                        const fileIcon = getFileIcon(msg.mediaMimetype);
+                        mediaHTML = `
+                            <div class="whatsapp-media-container whatsapp-file-container">
+                                <div class="whatsapp-file-icon">${fileIcon}</div>
+                                <div class="whatsapp-file-info">
+                                    <div class="whatsapp-file-name">${escapeHtml(msg.mediaFilename || 'File')}</div>
+                                    <div class="whatsapp-file-type">${msg.mediaMimetype || 'Unknown type'}</div>
+                                </div>
+                                <a href="${msg.mediaUrl}" download="${msg.mediaFilename || 'file'}" class="whatsapp-media-download" title="Download file">⬇️</a>
+                            </div>
+                        `;
+                    }
+                } else if (msg.hasMedia && !msg.mediaUrl) {
+                    mediaHTML = '<div class="whatsapp-media-loading">Loading media...</div>';
+                }
+
+                // Build action buttons for sent messages
+                let actionButtonsHTML = '';
+                if (isSent) {
+                    actionButtonsHTML = `
+                        <div class="whatsapp-message-actions">
+                            <button class="whatsapp-action-btn" onclick="editWhatsAppMessage('${msg.id}')" title="Edit message">✏️</button>
+                            <button class="whatsapp-action-btn" onclick="deleteWhatsAppMessage('${msg.id}')" title="Delete message">🗑️</button>
+                        </div>
+                    `;
+                }
+
                 // Message bubble
                 html += `
-                    <div class="whatsapp-message-wrapper ${isSent ? 'sent' : 'received'}">
+                    <div class="whatsapp-message-wrapper ${isSent ? 'sent' : 'received'}" data-message-id="${msg.id}" data-timestamp="${msg.timestamp}">
                         <div class="whatsapp-message-bubble">
+                            ${mediaHTML}
                             <div class="whatsapp-message-text">${formattedBody || '<em>No content</em>'}</div>
-                            <div class="whatsapp-message-time">${timeStr}</div>
+                            <div class="whatsapp-message-footer">
+                                <div class="whatsapp-message-time">${timeStr}</div>
+                                ${actionButtonsHTML}
+                            </div>
                         </div>
                     </div>
                 `;
