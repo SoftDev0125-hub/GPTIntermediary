@@ -1,310 +1,495 @@
-# ChatGPT Backend Broker
+# GPT Intermediary - AI-Powered Automation Platform
 
-A scalable Python backend service that enables ChatGPT to perform email operations and launch applications **using the email account logged into ChatGPT**. This service acts as a broker between ChatGPT and your system.
+A comprehensive desktop application that combines AI chat capabilities with real-time messaging integrations, document management, and system automation. Built with Python (FastAPI), Node.js, and modern web technologies.
 
-## Features
+## 🚀 Features
 
-- 📧 **Email Management via User's Gmail Account**
-  - Send emails using the ChatGPT user's Gmail account
-  - Retrieve unread emails from the user's inbox
-  - Reply to emails from the user's account
-  - **No separate OAuth flow needed** - uses credentials from ChatGPT
-  
-- 🚀 **Application Launcher**
-  - Launch applications on Windows, macOS, and Linux
-  - Support for common apps (Chrome, VS Code, Notepad, etc.)
-  
-- 🔌 **ChatGPT Integration**
-  - Function calling definitions for seamless ChatGPT integration
-  - RESTful API endpoints
-  - Operates on the user's email account logged into ChatGPT
-  
-- 📊 **Scalable Architecture**
-  - Built with FastAPI for high performance
-  - Async/await support
-  - Clean separation of concerns
+### 🤖 AI Chat Interface
+- **OpenAI GPT Integration**: Chat with GPT-3.5/GPT-4 through a modern web interface
+- **Function Calling**: AI can execute system commands, send emails, manage documents, and more
+- **Conversation History**: Persistent chat history with database storage
+- **Context-Aware Responses**: Intelligent context analysis for better conversations
 
-## Prerequisites
+### 📧 Email Management
+- **Gmail Integration**: Send, receive, and manage emails through Gmail API
+- **OAuth 2.0 Authentication**: Secure authentication using Google OAuth
+- **Unread Email Retrieval**: View and manage unread emails
+- **Email Replies**: Quick reply functionality
+- **User-Specific Operations**: Each user's emails are handled separately
 
-- Python 3.8 or higher
-- Google Cloud Platform project with Gmail API enabled
-- OAuth 2.0 Client ID and Secret (for ChatGPT to authenticate users)
+### 💬 Real-Time Messaging Platforms
 
-## How It Works
+#### WhatsApp Integration
+- **QR Code Authentication**: Scan QR code to connect WhatsApp Web
+- **Session Persistence**: Auto-connect on app restart (like WhatsApp Web)
+- **Real-Time Chat**: Instant message delivery via WebSocket
+- **Media Support**: View and download images, videos, and files
+- **Message Management**: Edit and delete sent messages
+- **Contact Management**: View contacts and chat history
+- **Node.js Backend**: Powered by `whatsapp-web.js` and Socket.IO
 
-1. **User authenticates with Gmail in ChatGPT** - The user logs into their Gmail account through ChatGPT
-2. **ChatGPT receives OAuth tokens** - ChatGPT gets the user's access token and refresh token
-3. **ChatGPT calls this backend** - When the user requests an email operation, ChatGPT calls this API with the user's tokens
-4. **Backend performs operation** - This service uses the provided tokens to access the user's Gmail account
-5. **Results returned to ChatGPT** - The operation results are sent back to ChatGPT and displayed to the user
+#### Telegram Integration
+- **Telegram Bot API**: Connect via Telegram Bot API
+- **Message Retrieval**: Get messages from chats and groups
+- **Send Messages**: Send messages to contacts and groups
+- **Session Management**: Persistent Telegram session
 
-## Setup Instructions
+#### Slack Integration
+- **Slack API Integration**: Connect to Slack workspaces
+- **Channel Messages**: View messages from public and private channels
+- **Direct Messages**: Access DM conversations
+- **Send Messages**: Post messages to channels and DMs
 
-### 1. Google Cloud Console Setup
+### 📄 Document Management
 
-1. Go to [Google Cloud Console](https://console.cloud.google.com/)
-2. Create a new project or select an existing one
-3. Enable the Gmail API:
-   - Navigate to "APIs & Services" > "Library"
-   - Search for "Gmail API" and enable it
-4. Create OAuth 2.0 credentials:
-   - Go to "APIs & Services" > "Credentials"
-   - Click "Create Credentials" > "OAuth client ID"
-   - Configure OAuth consent screen if needed
-   - Choose application type (Web application for ChatGPT integration)
-   - Add authorized redirect URIs for ChatGPT
-   - Save the **Client ID** and **Client Secret**
+#### Microsoft Word
+- **Create Documents**: Create new Word documents
+- **Open Documents**: Open existing Word files
+- **Text Editing**: Add, format, and edit text
+- **Advanced Features**:
+  - Headings and paragraphs
+  - Lists (bulleted and numbered)
+  - Tables
+  - Find and replace
+  - Page setup
+  - Save as HTML
+- **Windows COM Automation**: Full Word application control
 
-### 2. Install Dependencies
+#### Microsoft Excel
+- **Create Spreadsheets**: Create new Excel workbooks
+- **Open Spreadsheets**: Open existing Excel files
+- **Sheet Management**: Add, delete, and manage worksheets
+- **Data Operations**: Read and write cell data
+- **Save Functionality**: Save workbooks in various formats
+- **Windows COM Automation**: Full Excel application control
 
-```powershell
-# Create a virtual environment (recommended)
+### 🚀 Application Launcher
+- **Cross-Platform Support**: Launch applications on Windows, macOS, and Linux
+- **Common Apps**: Pre-configured shortcuts for popular applications
+- **Custom Paths**: Launch applications from custom paths
+- **Command Arguments**: Pass arguments to launched applications
+
+### 🔐 Authentication & Security
+- **User Registration**: Create user accounts with secure password hashing
+- **JWT Tokens**: Secure authentication using JSON Web Tokens
+- **Session Management**: Persistent user sessions
+- **Password Requirements**: Enforced password security policies
+- **Email Verification**: Optional email verification system
+
+### 💾 Database Support
+- **PostgreSQL**: Full PostgreSQL database support
+- **SQLite**: Lightweight SQLite for development
+- **User Management**: Store user accounts and sessions
+- **Chat History**: Persistent conversation storage
+- **Message Logging**: Track all operations and messages
+
+### 🎨 Modern UI
+- **Web-Based Interface**: Beautiful, responsive web interface
+- **Tab-Based Navigation**: Easy switching between features
+- **Real-Time Updates**: Live updates via WebSocket
+- **Dark Theme**: Modern dark theme design
+- **Responsive Design**: Works on different screen sizes
+
+## 📋 Prerequisites
+
+### Required Software
+- **Python 3.8+**: [Download Python](https://www.python.org/downloads/)
+- **Node.js 16+**: [Download Node.js](https://nodejs.org/)
+- **npm**: Comes with Node.js
+- **PostgreSQL** (optional): For production database
+- **Microsoft Office** (optional): For Word/Excel features on Windows
+
+### Required Accounts & APIs
+- **OpenAI API Key**: [Get API Key](https://platform.openai.com/api-keys)
+- **Google Cloud Project**: For Gmail API access
+- **Telegram Bot Token**: [Create Bot](https://core.telegram.org/bots/tutorial)
+- **Slack App** (optional): For Slack integration
+- **WhatsApp**: Your WhatsApp account (QR code authentication)
+
+## 🛠️ Installation
+
+### 1. Clone the Repository
+```bash
+git clone https://github.com/SoftDev0125-hub/GPTIntermediary.git
+cd GPTIntermediary
+```
+
+### 2. Install Python Dependencies
+```bash
+# Create virtual environment (recommended)
 python -m venv venv
 
 # Activate virtual environment
-.\venv\Scripts\Activate.ps1
+# Windows:
+venv\Scripts\activate
+# Linux/Mac:
+source venv/bin/activate
 
-# Install required packages
+# Install dependencies
 pip install -r requirements.txt
 ```
 
-### 3. Configure Environment
-
-```powershell
-# Copy the example environment file (if available)
-Copy-Item .env.example .env
-
-# Edit .env and add your Google OAuth credentials
-# GOOGLE_CLIENT_ID=your_client_id_here
-# GOOGLE_CLIENT_SECRET=your_client_secret_here
+### 3. Install Node.js Dependencies
+```bash
+npm install
 ```
 
-### 4. **IMPORTANT: Authorize Gmail Account**
+### 4. Configure Environment Variables
+Create a `.env` file in the root directory:
 
-Before running the app, you MUST authorize your Gmail account:
+```env
+# OpenAI Configuration
+OPENAI_API_KEY=sk-your-openai-api-key-here
 
-```powershell
+# Google OAuth (for Gmail)
+GOOGLE_CLIENT_ID=your-google-client-id
+GOOGLE_CLIENT_SECRET=your-google-client-secret
+
+# Telegram Configuration
+TELEGRAM_API_ID=your-telegram-api-id
+TELEGRAM_API_HASH=your-telegram-api-hash
+TELEGRAM_BOT_TOKEN=your-telegram-bot-token
+
+# Database Configuration (optional)
+DATABASE_URL=postgresql://user:password@localhost:5432/gptintermediary
+# Or for SQLite:
+# DATABASE_URL=sqlite:///./gptintermediary.db
+
+# JWT Secret (generate a random string)
+JWT_SECRET=your-random-secret-key-here
+
+# Server Configuration
+BACKEND_PORT=8000
+CHAT_SERVER_PORT=5000
+WHATSAPP_NODE_PORT=3000
+DJANGO_PORT=8001
+```
+
+### 5. Set Up Gmail API (Optional)
+```bash
+# Run the Gmail token setup script
 python get_gmail_token.py
 ```
 
 This will:
-1. Open your browser automatically
+1. Open your browser
 2. Ask you to sign into Gmail
-3. Grant permissions to the app
-4. Save your OAuth tokens to `.env`
+3. Grant permissions
+4. Save OAuth tokens to `.env`
 
-**⚠️ If you skip this step, email features will not work!**
+### 6. Set Up Database (Optional)
+```bash
+# Initialize database tables
+python init_tables.py
 
-See [GMAIL_SETUP.md](GMAIL_SETUP.md) for detailed Gmail setup instructions.
+# Or connect to existing database
+python connect_database.py
+```
 
-### 5. Run the Application
+## 🎯 Quick Start
 
-```powershell
-# Start the application
+### Option 1: All-in-One Launcher (Recommended)
+```bash
 python app.py
 ```
 
-For desktop app with UI, run:
-```powershell
-python app.py
+This will:
+- Start the FastAPI backend server (port 8000)
+- Start the chat server (port 5000)
+- Start the Node.js WhatsApp server (port 3000)
+- Start Django service if available (port 8001)
+- Open the application in your default browser
+
+### Option 2: Manual Start
+
+**Terminal 1 - Backend Server:**
+```bash
+python main.py
 ```
 
-This will launch the desktop application with a modern UI.
+**Terminal 2 - Chat Server:**
+```bash
+python chat_server.py
+```
 
-### 6. Optional: Run the Django Service
+**Terminal 3 - WhatsApp Server:**
+```bash
+npm start
+# or
+node whatsapp_server.js
+```
 
-The project now includes a lightweight Django service (for future admin/pages). It runs independently from FastAPI/Flask.
-
-```powershell
-# From the repo root
+**Terminal 4 - Django Service (Optional):**
+```bash
 cd django_app
-
-# Apply migrations (creates SQLite db)
-python manage.py migrate
-
-# Run on a non-conflicting port (FastAPI uses 8000, Flask uses 5000)
 python manage.py runserver 8001
 ```
 
-Then visit http://127.0.0.1:8001 to see the Django health endpoint.
+Then open `chat_interface.html` in your browser.
 
-## API Endpoints
+## 📖 Usage Guide
 
-### Email Operations
+### AI Chat
+1. Click on the **Chat** tab
+2. Type your message or command
+3. The AI will respond and can execute functions like:
+   - "Launch Chrome"
+   - "Send an email to john@example.com"
+   - "Show me my unread emails"
+   - "Create a Word document"
 
-**Important:** All email endpoints now require user credentials from ChatGPT's OAuth flow.
+### WhatsApp
+1. Click on the **WhatsApp** tab
+2. Click **Refresh** to load contacts
+3. Scan the QR code with your WhatsApp mobile app (first time only)
+4. Select a contact to view messages
+5. Send messages, view media, edit/delete messages
 
-#### Send Email
-```http
-POST /api/email/send
-Content-Type: application/json
+### Telegram
+1. Click on the **Telegram** tab
+2. Click **Refresh** to load chats
+3. Select a chat to view messages
+4. Send messages to contacts or groups
 
-{
-  "user_credentials": {
-    "access_token": "user_oauth_access_token_from_chatgpt",
-    "refresh_token": "user_oauth_refresh_token",
-    "email": "user@gmail.com"
-  },
-  "to": "recipient@gmail.com",
-  "subject": "Hello from ChatGPT",
-  "body": "This is the email content"
-}
+### Slack
+1. Click on the **Slack** tab
+2. Configure your Slack app credentials
+3. Click **Refresh** to load channels
+4. Select a channel to view messages
+5. Send messages to channels or DMs
+
+### Word Documents
+1. Click on the **Word** tab
+2. Create a new document or open an existing one
+3. Use the editor to add and format text
+4. Save your document
+
+### Excel Spreadsheets
+1. Click on the **Excel** tab
+2. Create a new spreadsheet or open an existing one
+3. Manage worksheets and data
+4. Save your spreadsheet
+
+### Email Management
+1. Set up Gmail API credentials
+2. Authorize your Gmail account
+3. Use the AI chat to send emails:
+   - "Send an email to user@example.com saying Hello"
+   - "Show me my unread emails"
+   - "Reply to the email from boss@company.com"
+
+## 🏗️ Architecture
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    Frontend (Browser)                    │
+│              chat_interface.html + styles.css            │
+└───────────────┬─────────────────────────────────────────┘
+                │
+                ├─────────────────┬─────────────────┬──────────────┐
+                │                 │                 │              │
+        ┌───────▼──────┐  ┌──────▼──────┐  ┌──────▼──────┐  ┌───▼──────┐
+        │  Chat Server │  │ Backend API │  │ WhatsApp    │  │ Django   │
+        │  (Port 5000) │  │ (Port 8000) │  │ Node Server │  │ (8001)   │
+        │              │  │             │  │ (Port 3000) │  │          │
+        └───────┬──────┘  └──────┬──────┘  └──────┬──────┘  └──────────┘
+                │                 │                 │
+                ├─────────────────┴─────────────────┤
+                │                                   │
+        ┌───────▼────────┐                ┌────────▼────────┐
+        │   OpenAI API   │                │  External APIs  │
+        │   (GPT-3.5/4)  │                │  Gmail/Telegram│
+        └────────────────┘                │  Slack/WhatsApp│
+                                           └────────────────┘
 ```
 
-#### Get Unread Emails
-```http
-POST /api/email/unread
-Content-Type: application/json
-
-{
-  "user_credentials": {
-    "access_token": "user_oauth_access_token_from_chatgpt",
-    "refresh_token": "user_oauth_refresh_token"
-  },
-  "limit": 10
-}
-```
-
-#### Reply to Email
-```http
-POST /api/email/reply
-Content-Type: application/json
-
-{
-  "user_credentials": {
-    "access_token": "user_oauth_access_token_from_chatgpt",
-    "refresh_token": "user_oauth_refresh_token"
-  },
-  "sender_email": "sender@gmail.com",
-  "body": "Thank you for your email!"
-}
-```
-
-### Application Launcher
-
-#### Launch App
-```http
-POST /api/app/launch
-Content-Type: application/json
-
-{
-  "app_name": "notepad",
-  "args": []
-}
-```
-
-Common app names:
-- Windows: `notepad`, `calc`, `chrome`, `vscode`, `excel`, `word`
-- macOS: `Safari`, `Chrome`, `TextEdit`
-- Linux: `firefox`, `gedit`, `nautilus`
-
-### ChatGPT Functions
-
-#### Get Function Definitions
-```http
-GET /api/chatgpt/functions
-```
-
-Returns OpenAI-compatible function definitions for ChatGPT integration.
-
-## ChatGPT Integration
-
-This service is designed to work with ChatGPT's function calling feature, **using the email account that the user has logged into ChatGPT**.
-
-### How It Works:
-
-1. **User logs into Gmail via ChatGPT** - User authenticates their Gmail account in ChatGPT
-2. **ChatGPT receives OAuth tokens** - ChatGPT gets access_token and refresh_token for the user
-3. **User makes requests** - User asks ChatGPT to perform email operations
-4. **ChatGPT calls your API** - ChatGPT includes the user's OAuth tokens in the API call
-5. **Backend uses user's account** - This service performs operations on the user's Gmail account
-6. **Results returned** - Email operation results are sent back to ChatGPT and shown to the user
-
-### Example ChatGPT Conversation:
-```
-User: Send an email to john@example.com saying "Meeting at 3 PM"
-ChatGPT: [Calls send_email function with user's OAuth tokens]
-System: Email sent successfully from your account!
-
-User: Show me my unread emails
-ChatGPT: [Calls get_unread_emails function with user's OAuth tokens]
-System: You have 5 unread emails:
-  1. From: boss@company.com - Subject: Q4 Report
-  2. From: friend@gmail.com - Subject: Weekend plans
-  ...
-
-User: Reply to the email from my boss saying "I'll have it ready by Friday"
-ChatGPT: [Calls reply_to_email function with user's OAuth tokens]
-System: Reply sent successfully from your account!
-
-User: Launch Chrome
-ChatGPT: [Calls launch_app function]
-System: Chrome launched successfully!
-```
-
-### Integration Notes:
-
-- **No separate authentication required** - Uses the user's ChatGPT-authenticated Gmail account
-- **Secure** - OAuth tokens are passed directly from ChatGPT, never stored by this service
-- **User-specific** - Each request operates on the specific user's email account
-- **Scalable** - Can handle multiple users simultaneously, each with their own credentials
-
-## Project Structure
+## 📁 Project Structure
 
 ```
 GPTIntermediary/
-├── main.py                 # FastAPI application entry point
-├── requirements.txt        # Python dependencies
-├── .env.example           # Environment variables template
-├── .gitignore            # Git ignore rules
-├── credentials.json      # Gmail API credentials (not in git)
-├── token.json           # Gmail API token (generated, not in git)
-├── django_app/            # Django service (optional)
+├── app.py                      # Main application launcher
+├── main.py                      # FastAPI backend server
+├── chat_server.py               # Chat server with OpenAI
+├── chat_interface.html          # Frontend interface
+├── styles.css                   # Frontend styles
+├── whatsapp_server.js           # Node.js WhatsApp server
+├── package.json                 # Node.js dependencies
+├── requirements.txt             # Python dependencies
+├── .env                         # Environment variables (create this)
+│
+├── services/                    # Service modules
+│   ├── email_service.py        # Gmail API operations
+│   ├── telegram_service.py     # Telegram Bot API
+│   ├── slack_service.py        # Slack API
+│   ├── whatsapp_service.py    # WhatsApp (Playwright - legacy)
+│   ├── word_service.py         # Microsoft Word automation
+│   ├── excel_service.py       # Microsoft Excel automation
+│   ├── app_launcher.py        # Application launcher
+│   └── context_analyzer.py    # AI context analysis
+│
+├── models/                      # Data models
+│   └── schemas.py              # Pydantic models
+│
+├── config/                      # Configuration
+│   └── chatgpt_functions.py   # ChatGPT function definitions
+│
+├── django_app/                  # Django service (optional)
 │   ├── manage.py
-│   ├── djproject/        # Django project settings/urls
-│   └── core/             # Core app with health endpoint
-├── models/
-│   ├── __init__.py
-│   └── schemas.py       # Pydantic models for request/response
-├── services/
-│   ├── __init__.py
-│   ├── email_service.py # Gmail API operations
-│   └── app_launcher.py  # Application launching logic
-├── config/
-│   ├── __init__.py
-│   └── chatgpt_functions.py # ChatGPT function definitions
-└── .github/
-    └── copilot-instructions.md
+│   └── djproject/
+│
+├── telegram_session/           # Telegram session files
+├── whatsapp_session/            # WhatsApp session (Playwright)
+├── whatsapp_session_node/       # WhatsApp session (Node.js)
+└── logs/                        # Application logs
 ```
 
-## Security Considerations
+## 🔌 API Endpoints
 
-- **OAuth tokens are transient** - Tokens are passed per-request and not stored by the backend
-- **User-specific operations** - Each user's tokens only access their own Gmail account
-- Keep your `.env` file secure with your Google OAuth Client ID and Secret
-- Use environment-specific configurations for production
-- Consider implementing rate limiting for production use
-- Restrict CORS origins in production
-- **Never log or store user access tokens**
-- Validate token expiration and handle refresh tokens securely
+### Chat & AI
+- `POST /chat` - Send chat message to AI
+- `GET /api/chatgpt/functions` - Get ChatGPT function definitions
 
-## Troubleshooting
+### Email
+- `POST /api/email/send` - Send email via Gmail
+- `POST /api/email/unread` - Get unread emails
+- `POST /api/email/reply` - Reply to email
 
-### Gmail API Authentication Issues
-- Ensure your Google Cloud project has Gmail API enabled
-- Verify `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` are set in `.env`
-- Check that OAuth consent screen is properly configured
-- Ensure ChatGPT is providing valid access tokens
+### Telegram
+- `POST /api/telegram/messages` - Get Telegram messages
+- `POST /api/telegram/send` - Send Telegram message
 
-### Application Launch Issues
-- Verify the application name or path is correct
-- Check if the application is installed on your system
-- On Windows, some apps may require full paths
+### Slack
+- `POST /api/slack/messages` - Get Slack messages
+- `POST /api/slack/send` - Send Slack message
 
-## License
+### WhatsApp (Node.js Backend - Port 3000)
+- `GET /api/whatsapp/status` - Check connection status
+- `GET /api/whatsapp/qr-code` - Get QR code for authentication
+- `POST /api/whatsapp/initialize` - Initialize WhatsApp service
+- `POST /api/whatsapp/contacts` - Get contacts/chats
+- `POST /api/whatsapp/messages` - Get messages for a contact
+- `POST /api/whatsapp/send` - Send WhatsApp message
+- `GET /api/whatsapp/media/:messageId` - Download media
+- `PUT /api/whatsapp/message/:messageId` - Edit message
+- `DELETE /api/whatsapp/message/:messageId` - Delete message
+
+### Word Documents
+- `POST /api/word/create` - Create Word document
+- `POST /api/word/open` - Open Word document
+- `POST /api/word/add-text` - Add text to document
+- `POST /api/word/format` - Format paragraph
+- `POST /api/word/add-heading` - Add heading
+- `POST /api/word/add-list` - Add list
+- `POST /api/word/add-table` - Add table
+- `POST /api/word/find-replace` - Find and replace
+- `POST /api/word/save` - Save document
+
+### Excel Spreadsheets
+- `POST /api/excel/create` - Create Excel spreadsheet
+- `POST /api/excel/open` - Open Excel spreadsheet
+- `POST /api/excel/add-sheet` - Add worksheet
+- `POST /api/excel/delete-sheet` - Delete worksheet
+- `POST /api/excel/save` - Save spreadsheet
+
+### Application Launcher
+- `POST /api/app/launch` - Launch application
+
+### Authentication
+- `POST /api/auth/register` - Register new user
+- `POST /api/auth/login` - Login user
+- `GET /api/auth/me` - Get current user info
+
+## 🔒 Security Considerations
+
+- **Environment Variables**: Never commit `.env` file to version control
+- **API Keys**: Keep all API keys secure and rotate them regularly
+- **OAuth Tokens**: Tokens are passed per-request, not stored permanently
+- **Password Hashing**: Passwords are hashed using bcrypt
+- **JWT Tokens**: Use strong JWT secrets in production
+- **CORS**: Configure CORS properly for production
+- **Rate Limiting**: Implement rate limiting for production use
+- **HTTPS**: Use HTTPS in production environments
+
+## 🐛 Troubleshooting
+
+### WhatsApp Connection Issues
+- **QR Code not appearing**: Check if Node.js server is running on port 3000
+- **Session not persisting**: Check `whatsapp_session_node` directory permissions
+- **Messages not loading**: Verify WhatsApp Web is authenticated
+
+### Telegram Connection Issues
+- **Authentication failed**: Check `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` in `.env`
+- **Session expired**: Delete `telegram_session/telegram_session.session` and re-authenticate
+
+### Email Issues
+- **Gmail API errors**: Verify OAuth credentials and re-run `get_gmail_token.py`
+- **Token expired**: Refresh tokens are handled automatically
+
+### Database Issues
+- **Connection failed**: Check `DATABASE_URL` in `.env`
+- **Tables not created**: Run `python init_tables.py`
+
+### General Issues
+- **Port already in use**: Stop other services using ports 3000, 5000, 8000, or 8001
+- **Module not found**: Run `pip install -r requirements.txt` and `npm install`
+- **OpenAI errors**: Verify `OPENAI_API_KEY` is set correctly
+
+## 🧪 Testing
+
+```bash
+# Test database connection
+python test_connection.py
+
+# Test Telegram messages
+python test_telegram_messages.py
+
+# Test context analyzer
+python test_context_analyzer.py
+```
+
+## 📝 Development
+
+### Adding New Features
+1. Create service in `services/` directory
+2. Add API endpoints in `main.py`
+3. Update `config/chatgpt_functions.py` for AI integration
+4. Add frontend UI in `chat_interface.html`
+5. Update styles in `styles.css`
+
+### Code Style
+- Follow PEP 8 for Python code
+- Use async/await for I/O operations
+- Add type hints where possible
+- Document functions and classes
+
+## 🤝 Contributing
+
+Contributions are welcome! Please feel free to submit issues and pull requests.
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Submit a pull request
+
+## 📄 License
 
 This project is open source and available for personal and commercial use.
 
-## Contributing
+## 🙏 Acknowledgments
 
-Contributions are welcome! Please feel free to submit issues and pull requests.
+- OpenAI for GPT API
+- whatsapp-web.js for WhatsApp integration
+- FastAPI for the backend framework
+- All contributors and users
+
+## 📞 Support
+
+For issues, questions, or contributions:
+- Open an issue on GitHub
+- Check existing documentation
+- Review the codebase
+
+---
+
+**Made with ❤️ for automation and productivity**
+
