@@ -58,6 +58,8 @@ credentials.json
 user_session.session
 telegram_session/
 whatsapp_session/
+whatsapp_session_node/
+.wwebjs_cache/
 
 # Node modules
 node_modules/

@@ -26,6 +26,7 @@
             <button class="tab-button" data-tab="word">Word</button>
             <button class="tab-button" data-tab="excel">Excel</button>
             <button class="tab-button" data-tab="telegram">Telegram</button>
+            <button class="tab-button" data-tab="whatsapp">WhatsApp</button>
             <button class="tab-button" data-tab="slack">Slack</button>
         </div>
 
@@ -578,6 +579,69 @@
             </div>
         </div>
 
+        <div id="whatsapp" class="tab-content">
+            <div class="whatsapp-container">
+                <!-- WhatsApp Sidebar (Address Book) -->
+                <div class="whatsapp-sidebar">
+                    <div class="whatsapp-sidebar-header">
+                        <h2>Chats</h2>
+                        <button id="whatsappShowButton" class="whatsapp-refresh-btn">Refresh</button>
+                    </div>
+                    <div class="whatsapp-sidebar-content" id="whatsappChatsList">
+                        <div class="whatsapp-sidebar-empty">Click "Refresh" to load chats</div>
+                    </div>
+                </div>
+
+                <!-- WhatsApp Main Area -->
+                <div class="whatsapp-main">
+                    <div class="whatsapp-header">
+                        <div class="whatsapp-header-content">
+                            <h2 id="whatsappCurrentChat">WhatsApp</h2>
+                            <div class="whatsapp-header-info" id="whatsappStatus">Not connected</div>
+                        </div>
+                    </div>
+                    <div class="whatsapp-messages-container" id="whatsappMessagesContainer">
+                        <!-- QR Code Display (shown when not authenticated) -->
+                        <div class="whatsapp-qr-container" id="whatsappQrContainer" style="display: none;">
+                            <div class="whatsapp-qr-content">
+                                <div class="whatsapp-qr-icon">📱</div>
+                                <h3 id="whatsappQrTitle">Scan QR Code to Connect</h3>
+                                <p id="whatsappQrDescription">Open WhatsApp on your phone and scan this code</p>
+                                <div class="whatsapp-qr-image-wrapper" id="whatsappQrImageWrapper">
+                                    <img id="whatsappQrImage" src="" alt="WhatsApp QR Code" class="whatsapp-qr-image" />
+                                </div>
+                                <p class="whatsapp-qr-status" id="whatsappQrStatus">Loading QR code...</p>
+                                <button id="whatsappQrRefreshBtn" class="whatsapp-qr-refresh-btn" style="display: none;">Refresh QR Code</button>
+                            </div>
+                        </div>
+                        
+                        <!-- Authenticated State (shown when authenticated but no chat selected) -->
+                        <div class="whatsapp-empty-state" id="whatsappEmptyState">
+                            <div class="whatsapp-empty-icon">💬</div>
+                            <h3>Welcome to WhatsApp</h3>
+                            <p>Click "Refresh" in the sidebar to load your chats</p>
+                            <p style="color: #8696a0; font-size: 14px; margin-top: 10px;">You are connected to WhatsApp. You can send and receive messages.</p>
+                        </div>
+                    </div>
+                    <div class="whatsapp-input-container" id="whatsappInputContainer" style="display: none;">
+                        <div class="whatsapp-input-wrapper">
+                            <textarea 
+                                id="whatsappMessageInput" 
+                                class="whatsapp-message-input" 
+                                placeholder="Type a message..."
+                                rows="1"
+                            ></textarea>
+                            <button id="whatsappSendButton" class="whatsapp-send-button" disabled>
+                                <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                                    <path d="M18 2L9 11M18 2L12 18L9 11M18 2L2 8L9 11" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                </div>                
+            </div>
+        </div>
+
         <div id="slack" class="tab-content">
             <div class="slack-container">
                 <!-- Slack Sidebar -->
@@ -627,29 +691,84 @@
     </div>
 
     <script>
-        document.querySelectorAll('.tab-button').forEach(button => {
-            button.addEventListener('click', (e) => {
-                // Prevent any keyboard shortcuts from triggering when clicking tabs
-                e.preventDefault();
-                e.stopPropagation();
-                
-                const tabName = button.dataset.tab;
-                
-                document.querySelectorAll('.tab-button').forEach(b => b.classList.remove('active'));
-                document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-                
+        // Main tab switching function - defined globally so it's accessible everywhere
+        function switchTab(tabName) {
+            if (!tabName) {
+                console.error('switchTab called without tabName');
+                return;
+            }
+            
+            console.log('Switching to tab:', tabName);
+            
+            // Remove active class from all tabs and buttons
+            document.querySelectorAll('.tab-button').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            
+            // Add active class to selected tab and button
+            const button = document.querySelector(`.tab-button[data-tab="${tabName}"]`);
+            const content = document.getElementById(tabName);
+            
+            if (button) {
                 button.classList.add('active');
-                document.getElementById(tabName).classList.add('active');
-                
-                if (tabName === 'chat') {
-                    document.getElementById('messageInput').focus();
+                console.log('Button activated:', tabName);
+            } else {
+                console.error('Button not found for tab:', tabName);
+            }
+            
+            if (content) {
+                content.classList.add('active');
+                console.log('Content activated:', tabName);
+            } else {
+                console.error('Content not found for tab:', tabName);
+            }
+            
+            if (tabName === 'chat') {
+                const messageInput = document.getElementById('messageInput');
+                if (messageInput) messageInput.focus();
+            }
+        }
+        
+        // Initialize tab switching when DOM is ready
+        function initTabSwitching() {
+            // Add event listeners to all tab buttons
+            const tabButtons = document.querySelectorAll('.tab-button');
+            console.log('Found tab buttons:', tabButtons.length);
+            
+            tabButtons.forEach(button => {
+                // Remove any existing listeners by using a flag
+                if (button.dataset.listenerAdded === 'true') {
+                    return; // Already has listener
                 }
                 
-                // Explicitly ensure no save is triggered when switching tabs
-                // The save function should only be called explicitly via the Save button or Ctrl+S
-                return false;
+                button.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    
+                    const tabName = this.dataset.tab;
+                    console.log('Tab button clicked:', tabName);
+                    
+                    if (tabName) {
+                        switchTab(tabName);
+                    } else {
+                        console.error('No tab name found for button');
+                    }
+                    
+                    return false;
+                });
+                
+                button.dataset.listenerAdded = 'true';
             });
-        });
+            
+            console.log('Tab switching initialized');
+        }
+        
+        // Initialize when DOM is ready
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', initTabSwitching);
+        } else {
+            // DOM is already loaded
+            initTabSwitching();
+        }
 
         const chatContainer = document.getElementById('chatContainer');
         const messageInput = document.getElementById('messageInput');
@@ -1798,6 +1917,713 @@
 
         telegramShowButton.addEventListener('click', loadTelegramMessages);
 
+        // WhatsApp functionality
+        const whatsappShowButton = document.getElementById('whatsappShowButton');
+        const whatsappChatsList = document.getElementById('whatsappChatsList');
+        const whatsappMessagesContainer = document.getElementById('whatsappMessagesContainer');
+        const whatsappCurrentChat = document.getElementById('whatsappCurrentChat');
+        const whatsappCount = document.getElementById('whatsappCount');
+        const whatsappStatus = document.getElementById('whatsappStatus');
+        const whatsappMessageInput = document.getElementById('whatsappMessageInput');
+        const whatsappSendButton = document.getElementById('whatsappSendButton');
+        const whatsappInputContainer = document.getElementById('whatsappInputContainer');
+        const whatsappQrContainer = document.getElementById('whatsappQrContainer');
+        const whatsappQrImage = document.getElementById('whatsappQrImage');
+        const whatsappQrStatus = document.getElementById('whatsappQrStatus');
+        const whatsappQrTitle = document.getElementById('whatsappQrTitle');
+        const whatsappQrDescription = document.getElementById('whatsappQrDescription');
+        const whatsappQrImageWrapper = document.getElementById('whatsappQrImageWrapper');
+        const whatsappQrRefreshBtn = document.getElementById('whatsappQrRefreshBtn');
+        const whatsappEmptyState = document.getElementById('whatsappEmptyState');
+
+        let allWhatsAppMessages = [];
+        let whatsappMessagesByChat = {};
+        let currentWhatsAppChatId = null;
+        let whatsappAuthCheckInterval = null;
+        let whatsappQrRefreshInterval = null;
+        let whatsappIsAuthenticated = false;
+
+        async function checkWhatsAppStatus() {
+            if (whatsappIsAuthenticated) {
+                return true;
+            }
+            try {
+                console.log('[*] Checking WhatsApp authentication status...');
+                const response = await fetch('http://localhost:3000/api/whatsapp/status', {
+                    method: 'GET',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+
+                const data = await response.json();
+                console.log('[*] WhatsApp status response:', data);
+
+                // Check if connected (authenticated)
+                if (data.success && data.is_connected) {
+                    console.log('[*] WhatsApp authenticated! Hiding QR code and showing connected state.');
+                    whatsappIsAuthenticated = true;
+                    
+                    // Stop all intervals
+                    if (whatsappAuthCheckInterval) {
+                        clearInterval(whatsappAuthCheckInterval);
+                        whatsappAuthCheckInterval = null;
+                    }
+                    if (whatsappQrRefreshInterval) {
+                        clearInterval(whatsappQrRefreshInterval);
+                        whatsappQrRefreshInterval = null;
+                    }
+                    
+                    // Hide QR code container
+                    if (whatsappQrContainer) {
+                        whatsappQrContainer.style.display = 'none';
+                    }
+                    
+                    // Show empty state (ready for chats)
+                    if (whatsappEmptyState) {
+                        whatsappEmptyState.style.display = 'flex';
+                    }
+                    
+                    // Update status
+                    if (whatsappCurrentChat) {
+                        whatsappCurrentChat.textContent = 'WhatsApp';
+                    }
+                    if (whatsappStatus) {
+                        whatsappStatus.textContent = 'Connected';
+                    }
+                    if (whatsappCount) {
+                        whatsappCount.textContent = 'Ready';
+                    }
+                    
+                    console.log('[*] WhatsApp UI updated to connected state');
+                    return true;
+                }
+                
+                // Check if session exists but not connected yet (restoring)
+                if (data.has_session && !data.is_connected) {
+                    console.log('[*] WhatsApp session exists - waiting for authentication to restore');
+                    
+                    // Show restoring message
+                    if (whatsappQrContainer) {
+                        whatsappQrContainer.style.display = 'flex';
+                    }
+                    if (whatsappQrImageWrapper) {
+                        whatsappQrImageWrapper.style.display = 'none';
+                    }
+                    if (whatsappQrTitle) {
+                        whatsappQrTitle.textContent = 'Restoring Connection...';
+                    }
+                    if (whatsappQrDescription) {
+                        whatsappQrDescription.textContent = 'Your WhatsApp session is being restored';
+                    }
+                    if (whatsappQrStatus) {
+                        whatsappQrStatus.textContent = 'Session found - restoring authentication. Please wait...';
+                        whatsappQrStatus.style.color = '#3390ec';
+                    }
+                    if (whatsappEmptyState) {
+                        whatsappEmptyState.style.display = 'none';
+                    }
+                    
+                    // Start polling for authentication
+                    if (!whatsappAuthCheckInterval) {
+                        whatsappAuthCheckInterval = setInterval(async () => {
+                            if (whatsappIsAuthenticated) {
+                                clearInterval(whatsappAuthCheckInterval);
+                                whatsappAuthCheckInterval = null;
+                                return;
+                            }
+                            const isAuth = await checkWhatsAppStatus();
+                            if (isAuth) {
+                                clearInterval(whatsappAuthCheckInterval);
+                                whatsappAuthCheckInterval = null;
+                            }
+                        }, 3000); // Check every 3 seconds
+                    }
+                    return false;
+                }
+                
+                // No session - show QR code for first-time authentication
+                if (!data.has_session) {
+                    console.log('[*] WhatsApp is not authenticated and no session exists - showing QR code');
+                    
+                    // Show QR code container
+                    if (whatsappQrContainer) {
+                        whatsappQrContainer.style.display = 'flex';
+                    }
+                    if (whatsappEmptyState) {
+                        whatsappEmptyState.style.display = 'none';
+                    }
+                    
+                    // Load QR code
+                    await loadWhatsAppQRCode();
+                    
+                    // Start monitoring for authentication
+                    if (!whatsappAuthCheckInterval) {
+                        whatsappAuthCheckInterval = setInterval(async () => {
+                            if (whatsappIsAuthenticated) {
+                                clearInterval(whatsappAuthCheckInterval);
+                                whatsappAuthCheckInterval = null;
+                                if (whatsappQrRefreshInterval) {
+                                    clearInterval(whatsappQrRefreshInterval);
+                                    whatsappQrRefreshInterval = null;
+                                }
+                                return;
+                            }
+                            const isAuth = await checkWhatsAppStatus();
+                            if (isAuth) {
+                                clearInterval(whatsappAuthCheckInterval);
+                                whatsappAuthCheckInterval = null;
+                                if (whatsappQrRefreshInterval) {
+                                    clearInterval(whatsappQrRefreshInterval);
+                                    whatsappQrRefreshInterval = null;
+                                }
+                            }
+                        }, 3000); // Check every 3 seconds
+                    }
+                } else {
+                    // Session exists but not connected yet - wait longer for restoration
+                    console.log('[*] Session exists but not connected yet - continuing to wait for restoration');
+                }
+                
+                return false;
+            } catch (error) {
+                console.error('[!] Error checking WhatsApp status:', error);
+                if (whatsappQrStatus) {
+                    whatsappQrStatus.textContent = `Error: ${error.message}`;
+                    whatsappQrStatus.style.color = '#ff4444';
+                }
+                return false;
+            }
+        }
+
+        async function loadWhatsAppQRCode(forceRefresh = false) {
+            try {
+                console.log(`[*] Requesting WhatsApp QR code (forceRefresh=${forceRefresh})...`);
+                const url = forceRefresh 
+                    ? 'http://localhost:3000/api/whatsapp/qr-code?force_refresh=true'
+                    : 'http://localhost:3000/api/whatsapp/qr-code';
+                const response = await fetch(url, {
+                    method: 'GET',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+
+                const data = await response.json();
+                console.log('[*] QR code response:', data);
+
+                if (data.success && data.qr_code) {
+                    if (whatsappQrImage) {
+                        whatsappQrImage.src = data.qr_code;
+                    }
+                    if (whatsappQrContainer) {
+                        whatsappQrContainer.style.display = 'flex';
+                    }
+                    if (whatsappQrImageWrapper) {
+                        whatsappQrImageWrapper.style.display = 'block';
+                    }
+                    if (whatsappEmptyState) {
+                        whatsappEmptyState.style.display = 'none';
+                    }
+                    if (whatsappQrStatus) {
+                        whatsappQrStatus.textContent = 'Scan the QR code with WhatsApp to connect';
+                        whatsappQrStatus.style.color = '#8696a0';
+                    }
+                    if (whatsappQrTitle) {
+                        whatsappQrTitle.textContent = 'Scan QR Code to Connect';
+                    }
+                    if (whatsappQrDescription) {
+                        whatsappQrDescription.textContent = 'Open WhatsApp on your phone and scan this code';
+                    }
+                    if (whatsappQrRefreshBtn) {
+                        whatsappQrRefreshBtn.style.display = 'inline-block';
+                    }
+
+                    // Auto-refresh QR code every 20 seconds (QR codes expire after ~20 seconds)
+                    if (!whatsappQrRefreshInterval && !whatsappIsAuthenticated) {
+                        console.log('[*] Starting QR code auto-refresh (every 20 seconds)...');
+                        whatsappQrRefreshInterval = setInterval(async () => {
+                            if (whatsappIsAuthenticated) {
+                                console.log('[*] Authenticated - stopping QR code refresh');
+                                if (whatsappQrRefreshInterval) {
+                                    clearInterval(whatsappQrRefreshInterval);
+                                    whatsappQrRefreshInterval = null;
+                                }
+                                return;
+                            }
+                            
+                            // Force refresh QR code only if still not authenticated
+                            console.log('[*] Refreshing QR code (not authenticated yet)...');
+                            await loadWhatsAppQRCode(true);
+                        }, 20000); // Refresh every 20 seconds
+                    }
+                } else if (data.is_authenticated) {
+                    // Already authenticated
+                    whatsappIsAuthenticated = true;
+                    if (whatsappQrContainer) {
+                        whatsappQrContainer.style.display = 'none';
+                    }
+                    if (whatsappEmptyState) {
+                        whatsappEmptyState.style.display = 'flex';
+                    }
+                } else {
+                    if (whatsappQrStatus) {
+                        whatsappQrStatus.textContent = data.message || 'QR code not available. Please wait...';
+                        whatsappQrStatus.style.color = '#8696a0';
+                    }
+                }
+            } catch (error) {
+                console.error('[!] Error loading WhatsApp QR code:', error);
+                if (whatsappQrStatus) {
+                    whatsappQrStatus.textContent = `Error: ${error.message}`;
+                    whatsappQrStatus.style.color = '#ff4444';
+                }
+            }
+        }
+
+        async function loadWhatsAppMessages() {
+            if (!whatsappShowButton) return;
+            
+            whatsappShowButton.disabled = true;
+            whatsappShowButton.textContent = 'Loading...';
+            allWhatsAppMessages = [];
+            whatsappMessagesByChat = {};
+            currentWhatsAppChatId = null;
+
+            try {
+                const isAuth = await checkWhatsAppStatus();
+                if (!isAuth) {
+                    whatsappShowButton.disabled = false;
+                    whatsappShowButton.textContent = 'Refresh';
+                    return;
+                }
+
+                const contactsResponse = await fetch('http://localhost:3000/api/whatsapp/contacts', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        limit: 100
+                    })
+                });
+
+                if (!contactsResponse.ok) {
+                    throw new Error(`HTTP ${contactsResponse.status}: ${contactsResponse.statusText}`);
+                }
+
+                const contactsData = await contactsResponse.json();
+                console.log('[*] WhatsApp contacts:', contactsData);
+
+                if (contactsData.success && contactsData.contacts && contactsData.contacts.length > 0) {
+                    if (whatsappChatsList) {
+                        whatsappChatsList.innerHTML = '';
+                        contactsData.contacts.forEach(contact => {
+                            const chatItem = document.createElement('div');
+                            chatItem.className = 'whatsapp-chat-item';
+                            chatItem.dataset.contactId = contact.contact_id || contact.name;
+                            
+                            const avatar = document.createElement('div');
+                            avatar.className = 'whatsapp-chat-avatar';
+                            const initials = (contact.name || '?').split(' ').map(n => n[0]).join('').toUpperCase().substring(0, 2);
+                            avatar.textContent = initials;
+                            
+                            const info = document.createElement('div');
+                            info.className = 'whatsapp-chat-info';
+                            
+                            const name = document.createElement('div');
+                            name.className = 'whatsapp-chat-name';
+                            name.textContent = contact.name || 'Unknown';
+                            
+                            const preview = document.createElement('div');
+                            preview.className = 'whatsapp-chat-preview';
+                            preview.textContent = contact.last_message || (contact.is_group ? 'Group' : 'Chat');
+                            
+                            info.appendChild(name);
+                            info.appendChild(preview);
+                            chatItem.appendChild(avatar);
+                            chatItem.appendChild(info);
+                            
+                            // Add click handler to load messages for this contact
+                            chatItem.addEventListener('click', () => {
+                                selectWhatsAppContact(contact.contact_id, contact.name);
+                            });
+                            
+                            whatsappChatsList.appendChild(chatItem);
+                        });
+                    }
+                } else {
+                    if (whatsappChatsList) {
+                        whatsappChatsList.innerHTML = '<div class="whatsapp-sidebar-empty">No chats found</div>';
+                    }
+                }
+            } catch (error) {
+                console.error('[!] WhatsApp error:', error);
+                if (whatsappChatsList) {
+                    whatsappChatsList.innerHTML = '<div class="whatsapp-sidebar-empty">Error loading chats</div>';
+                }
+            } finally {
+                if (whatsappShowButton) {
+                    whatsappShowButton.disabled = false;
+                    whatsappShowButton.textContent = 'Refresh';
+                }
+            }
+        }
+
+        /**
+         * Select a WhatsApp contact and load their messages
+         */
+        async function selectWhatsAppContact(contactId, contactName) {
+            currentWhatsAppChatId = contactId;
+            
+            // Update UI to show selected contact
+            if (whatsappCurrentChat) {
+                whatsappCurrentChat.textContent = contactName || 'Unknown';
+            }
+            if (whatsappStatus) {
+                whatsappStatus.textContent = 'Loading messages...';
+            }
+            
+            // Hide empty state and QR code
+            if (whatsappEmptyState) {
+                whatsappEmptyState.style.display = 'none';
+            }
+            if (whatsappQrContainer) {
+                whatsappQrContainer.style.display = 'none';
+            }
+            
+            // Show input container
+            if (whatsappInputContainer) {
+                whatsappInputContainer.style.display = 'block';
+            }
+            
+            // Update active state in sidebar
+            document.querySelectorAll('.whatsapp-chat-item').forEach(item => {
+                item.classList.toggle('active', item.dataset.contactId === contactId);
+            });
+            
+            // Load messages for this contact
+            await loadWhatsAppContactMessages(contactId, contactName);
+        }
+
+        /**
+         * Load messages for a specific WhatsApp contact
+         */
+        async function loadWhatsAppContactMessages(contactId, contactName) {
+            try {
+                console.log(`[*] Loading messages for contact: ${contactName} (${contactId})`);
+                
+                const response = await fetch('http://localhost:3000/api/whatsapp/messages', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        contact_id: contactId,
+                        limit: 100
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+
+                const data = await response.json();
+                console.log('[*] WhatsApp messages response:', data);
+
+                if (data.success && data.messages) {
+                    // Update status
+                    if (whatsappStatus) {
+                        whatsappStatus.textContent = `${data.count} messages`;
+                    }
+                    if (whatsappCount) {
+                        whatsappCount.textContent = `${data.count} messages`;
+                    }
+                    
+                    // Display messages
+                    displayWhatsAppMessages(data.messages, contactName);
+                } else {
+                    throw new Error(data.error || 'Failed to load messages');
+                }
+            } catch (error) {
+                console.error('[!] Error loading WhatsApp messages:', error);
+                if (whatsappMessagesContainer) {
+                    whatsappMessagesContainer.innerHTML = `
+                        <div class="whatsapp-empty-state">
+                            <div class="whatsapp-empty-icon">⚠️</div>
+                            <h3>Error Loading Messages</h3>
+                            <p>${error.message}</p>
+                        </div>
+                    `;
+                }
+                if (whatsappStatus) {
+                    whatsappStatus.textContent = 'Error';
+                }
+            }
+        }
+
+        /**
+         * Display WhatsApp messages in the messages container
+         */
+        function displayWhatsAppMessages(messages, contactName) {
+            if (!whatsappMessagesContainer) return;
+            
+            if (!messages || messages.length === 0) {
+                whatsappMessagesContainer.innerHTML = `
+                    <div class="whatsapp-empty-state">
+                        <div class="whatsapp-empty-icon">💬</div>
+                        <h3>No messages</h3>
+                        <p>Start a conversation with ${contactName || 'this contact'}</p>
+                    </div>
+                `;
+                return;
+            }
+
+            let lastDate = null;
+            const messagesHTML = messages.map((msg) => {
+                const msgDate = new Date(msg.timestamp * 1000); // WhatsApp timestamps are in seconds
+                const currentDate = msgDate.toDateString();
+                const showDateDivider = lastDate !== currentDate;
+                lastDate = currentDate;
+
+                const timeStr = formatWhatsAppTime(msg.timestamp);
+                const formattedBody = escapeHtml(msg.body || '');
+                const isSent = msg.fromMe || false;
+
+                let html = '';
+                
+                // Date divider
+                if (showDateDivider) {
+                    const dateStr = msgDate.toLocaleDateString('en-US', { 
+                        weekday: 'long', 
+                        year: 'numeric', 
+                        month: 'long', 
+                        day: 'numeric' 
+                    });
+                    html += `<div class="whatsapp-date-divider"><span>${dateStr}</span></div>`;
+                }
+
+                // Message bubble
+                html += `
+                    <div class="whatsapp-message-wrapper ${isSent ? 'sent' : 'received'}">
+                        <div class="whatsapp-message-bubble">
+                            <div class="whatsapp-message-text">${formattedBody || '<em>No content</em>'}</div>
+                            <div class="whatsapp-message-time">${timeStr}</div>
+                        </div>
+                    </div>
+                `;
+
+                return html;
+            }).join('');
+
+            whatsappMessagesContainer.innerHTML = messagesHTML;
+            whatsappMessagesContainer.scrollTop = whatsappMessagesContainer.scrollHeight;
+        }
+
+        /**
+         * Format WhatsApp timestamp
+         */
+        function formatWhatsAppTime(timestamp) {
+            if (!timestamp) return '';
+            const date = new Date(timestamp * 1000); // Convert from seconds to milliseconds
+            const now = new Date();
+            const diffMs = now - date;
+            const diffMins = Math.floor(diffMs / 60000);
+            const diffHours = Math.floor(diffMs / 3600000);
+            const diffDays = Math.floor(diffMs / 86400000);
+
+            if (diffMins < 1) return 'now';
+            if (diffMins < 60) return `${diffMins}m ago`;
+            if (diffHours < 24) return `${diffHours}h ago`;
+            if (diffDays < 7) return `${diffDays}d ago`;
+            
+            return date.toLocaleDateString('en-US', { 
+                month: 'short', 
+                day: 'numeric',
+                year: date.getFullYear() !== now.getFullYear() ? 'numeric' : undefined
+            });
+        }
+
+        /**
+         * Escape HTML to prevent XSS
+         */
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        async function sendWhatsAppMessage() {
+            if (!currentWhatsAppChatId || !whatsappMessageInput) return;
+            
+            const messageText = whatsappMessageInput.value.trim();
+            if (!messageText) return;
+            
+            if (whatsappSendButton) whatsappSendButton.disabled = true;
+            
+            try {
+                console.log(`[*] Sending message to ${currentWhatsAppChatId}: ${messageText}`);
+                const response = await fetch('http://localhost:3000/api/whatsapp/send', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        contact_id: currentWhatsAppChatId,
+                        text: messageText
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+
+                const data = await response.json();
+                console.log('[*] Message sent:', data);
+
+                if (data.success) {
+                    whatsappMessageInput.value = '';
+                    // Message loading removed - just clear input after sending
+                } else {
+                    throw new Error(data.message || 'Failed to send message');
+                }
+            } catch (error) {
+                console.error('[!] Error sending WhatsApp message:', error);
+                alert(`Error sending message: ${error.message}`);
+            } finally {
+                if (whatsappSendButton) whatsappSendButton.disabled = false;
+            }
+        }
+
+        if (whatsappSendButton) {
+            whatsappSendButton.addEventListener('click', sendWhatsAppMessage);
+        }
+        if (whatsappMessageInput) {
+            whatsappMessageInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    sendWhatsAppMessage();
+                }
+            });
+        }
+
+        if (whatsappShowButton) {
+            whatsappShowButton.addEventListener('click', async () => {
+                const isAuth = await checkWhatsAppStatus();
+                if (isAuth) {
+                    await loadWhatsAppMessages();
+                }
+            });
+        }
+
+
+        // Manual QR code refresh button
+        if (whatsappQrRefreshBtn) {
+            whatsappQrRefreshBtn.addEventListener('click', async () => {
+                whatsappQrRefreshBtn.disabled = true;
+                whatsappQrRefreshBtn.textContent = 'Refreshing...';
+                await loadWhatsAppQRCode(true);
+                whatsappQrRefreshBtn.disabled = false;
+                whatsappQrRefreshBtn.textContent = 'Refresh QR Code';
+            });
+        }
+
+        // Check WhatsApp status when tab is switched (using a MutationObserver or event delegation)
+        // This ensures it doesn't interfere with the main tab switching
+        const handleTabSwitch = async (tabName) => {
+            if (tabName === 'whatsapp') {
+                console.log('[*] WhatsApp tab activated - initializing WhatsApp service...');
+                
+                // Initialize WhatsApp service first (lazy initialization)
+                try {
+                    const initResponse = await fetch('http://localhost:3000/api/whatsapp/initialize', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        }
+                    });
+                    
+                    if (!initResponse.ok) {
+                        throw new Error(`Initialization failed: HTTP ${initResponse.status}`);
+                    }
+                    
+                    const initData = await initResponse.json();
+                    console.log('[*] WhatsApp initialization response:', initData);
+                    
+                    // After initialization, check status and handle QR code display
+                    await checkWhatsAppStatus();
+                } catch (error) {
+                    console.error('[*] Error initializing WhatsApp:', error);
+                    if (whatsappQrStatus) {
+                        whatsappQrStatus.textContent = 'Error initializing WhatsApp. Please try again.';
+                        whatsappQrStatus.style.color = '#ff4444';
+                    }
+                }
+            } else {
+                if (whatsappAuthCheckInterval) {
+                    clearInterval(whatsappAuthCheckInterval);
+                    whatsappAuthCheckInterval = null;
+                    console.log('[*] Stopped WhatsApp authentication polling (switched to another tab)');
+                }
+                if (whatsappQrRefreshInterval) {
+                    clearInterval(whatsappQrRefreshInterval);
+                    whatsappQrRefreshInterval = null;
+                    console.log('[*] Stopped WhatsApp QR code auto-refresh (switched to another tab)');
+                }
+            }
+        };
+        
+        // Observe tab content changes to detect tab switches
+        const tabObserver = new MutationObserver((mutations) => {
+            mutations.forEach((mutation) => {
+                if (mutation.type === 'attributes' && mutation.attributeName === 'class') {
+                    const target = mutation.target;
+                    if (target.classList.contains('tab-content') && target.classList.contains('active')) {
+                        const tabName = target.id;
+                        handleTabSwitch(tabName);
+                    }
+                }
+            });
+        });
+        
+        // Observe all tab content elements
+        document.querySelectorAll('.tab-content').forEach(tab => {
+            tabObserver.observe(tab, { attributes: true, attributeFilter: ['class'] });
+        });
+        
+        // Also handle initial tab state
+        const activeTab = document.querySelector('.tab-content.active');
+        if (activeTab) {
+            handleTabSwitch(activeTab.id);
+        }
+        
+        // Check WhatsApp status on page load if WhatsApp tab is active
+        document.addEventListener('DOMContentLoaded', async () => {
+            const activeTab = document.querySelector('.tab-content.active');
+            if (activeTab && activeTab.id === 'whatsapp') {
+                console.log('[*] WhatsApp tab is active on page load - checking status...');
+                await checkWhatsAppStatus();
+            }
+        });
+        
+        // Also check immediately if DOM is already loaded
+        if (document.readyState === 'complete' || document.readyState === 'interactive') {
+            const activeTab = document.querySelector('.tab-content.active');
+            if (activeTab && activeTab.id === 'whatsapp') {
+                console.log('[*] DOM already loaded - checking WhatsApp status...');
+                setTimeout(async () => {
+                    await checkWhatsAppStatus();
+                }, 1000); // Wait 1 second for backend to initialize
+            }
+        }
 
         // Slack functionality
         const slackViewButton = document.getElementById('slackViewButton');

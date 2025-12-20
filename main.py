@@ -21,6 +21,7 @@ from services.email_service import EmailService
 from services.app_launcher import AppLauncher
 from services.telegram_service import TelegramService
 from services.slack_service import SlackService
+from services.whatsapp_service import WhatsAppService
 from services.word_service import WordService
 from services.excel_service import ExcelService
 
@@ -72,6 +73,11 @@ from models.schemas import (
     SlackListResponse,
     SendSlackMessageRequest,
     SendSlackMessageResponse,
+    GetWhatsAppContactsRequest,
+    WhatsAppContactsResponse,
+    SendWhatsAppMessageRequest,
+    SendWhatsAppMessageResponse,
+    WhatsAppStatusResponse,
     CreateWordDocumentRequest,
     OpenWordDocumentRequest,
     AddTextToWordRequest,
@@ -154,6 +160,7 @@ email_service = EmailService()
 app_launcher = AppLauncher()
 telegram_service = TelegramService()
 slack_service = SlackService()
+whatsapp_service = WhatsAppService()
 word_service = WordService()
 excel_service = ExcelService()
 
@@ -201,6 +208,10 @@ async def startup_event():
         logger.warning(f"Telegram service initialization failed: {e} - continuing without it")
     
     await slack_service.initialize()
+    
+    # WhatsApp service will be initialized lazily when the WhatsApp tab is clicked
+    # This prevents unnecessary initialization on app startup
+    logger.info("WhatsApp service will be initialized when WhatsApp tab is accessed")
     await word_service.initialize()
     logger.info("Services initialized successfully")
 
@@ -212,6 +223,11 @@ async def shutdown_event():
     await email_service.cleanup()
     await telegram_service.cleanup()
     await slack_service.cleanup()
+    if whatsapp_service:
+        try:
+            await whatsapp_service.cleanup()
+        except Exception as e:
+            logger.warning(f"Error cleaning up WhatsApp service: {e}")
     await word_service.cleanup()
     await excel_service.cleanup()
 
@@ -975,6 +991,173 @@ async def send_slack_message(request: SendSlackMessageRequest):
         import traceback
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=error_msg)
+
+
+# WhatsApp API Endpoints
+@app.post("/api/whatsapp/initialize")
+async def initialize_whatsapp():
+    """Initialize WhatsApp service (lazy initialization when tab is clicked)"""
+    try:
+        # Check if already initialized
+        if whatsapp_service.page and whatsapp_service.is_connected:
+            return {"success": True, "message": "Already initialized and connected", "is_connected": True}
+        
+        # Initialize if not already done
+        if not whatsapp_service.page:
+            logger.info("Initializing WhatsApp service (triggered by tab click)...")
+            await whatsapp_service.initialize()
+        
+        # Check connection status
+        is_connected = whatsapp_service.is_connected
+        has_session = whatsapp_service.has_session
+        
+        if is_connected:
+            return {"success": True, "message": "Connected to WhatsApp", "is_connected": True, "has_session": has_session}
+        else:
+            # Return status indicating QR code may be needed
+            return {
+                "success": True, 
+                "message": "Initialized - authentication may be required", 
+                "is_connected": False,
+                "has_session": has_session
+            }
+    except Exception as e:
+        logger.error(f"Error initializing WhatsApp: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/whatsapp/status", response_model=WhatsAppStatusResponse)
+async def get_whatsapp_status():
+    """Check WhatsApp connection and authentication status"""
+    try:
+        # Fast path: if already connected, return immediately
+        if whatsapp_service.is_connected:
+            return WhatsAppStatusResponse(
+                success=True,
+                is_connected=True,
+                is_authenticated=True,
+                message="Connected to WhatsApp"
+            )
+        
+        # Check connection status - this will check authentication
+        is_connected, status_message = await whatsapp_service.check_connection_status()
+        
+        # If connected, we're authenticated
+        if is_connected:
+            is_authenticated = True
+            # Ensure session is saved
+            if not whatsapp_service.has_session:
+                whatsapp_service.has_session = True
+                try:
+                    await whatsapp_service._save_session()
+                    logger.info("Session saved in status endpoint")
+                except Exception as e:
+                    logger.error(f"Error saving session in status endpoint: {e}")
+            status_message = "Connected to WhatsApp"
+        else:
+            # Not connected - check if we have a session that's restoring
+            is_authenticated = False
+            if whatsapp_service.has_session:
+                status_message = "Session found - authentication is restoring. Please wait..."
+        
+        return WhatsAppStatusResponse(
+            success=True,
+            is_connected=is_connected,
+            is_authenticated=is_authenticated,
+            message=status_message,
+            has_session=whatsapp_service.has_session
+        )
+    except Exception as e:
+        logger.error(f"Error checking WhatsApp status: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/whatsapp/contacts", response_model=WhatsAppContactsResponse)
+async def get_whatsapp_contacts(request: GetWhatsAppContactsRequest):
+    """Get WhatsApp contacts/chats"""
+    try:
+        contacts = await whatsapp_service.get_contacts()
+        # Apply limit if needed
+        if request.limit > 0:
+            contacts = contacts[:request.limit]
+        return WhatsAppContactsResponse(
+            success=True,
+            count=len(contacts),
+            contacts=contacts
+        )
+    except Exception as e:
+        logger.error(f"Error fetching WhatsApp contacts: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# WhatsApp messages endpoint removed - message loading functionality disabled
+
+
+@app.get("/api/whatsapp/debug")
+async def debug_whatsapp():
+    """Debug endpoint to check WhatsApp page state"""
+    try:
+        debug_info = await whatsapp_service.page.evaluate("""
+            () => {
+                const info = {
+                    url: window.location.href,
+                    title: document.title,
+                    readyState: document.readyState,
+                    hasChatList: !!document.querySelector('div[data-testid="chatlist"]'),
+                    hasConversationPanel: !!document.querySelector('div[data-testid="conversation-panel-wrapper"]'),
+                    chatCount: document.querySelectorAll('div[data-testid="chat"]').length,
+                    selectableTextCount: document.querySelectorAll('span.selectable-text').length,
+                    msgContainerCount: document.querySelectorAll('div[data-testid="msg-container"]').length,
+                    allDivsCount: document.querySelectorAll('div').length,
+                    conversationAreaExists: !!document.querySelector('div[data-testid="conversation-panel-wrapper"]') ||
+                                          !!document.querySelector('div[role="application"]')
+                };
+                
+                // Try to get some sample text from selectable-text spans
+                const textSpans = document.querySelectorAll('span.selectable-text');
+                info.sampleTexts = Array.from(textSpans).slice(0, 5).map(span => span.textContent.trim()).filter(t => t.length > 0);
+                
+                return info;
+            }
+        """) if whatsapp_service.page else {"error": "Page not initialized"}
+        
+        return {
+            "success": True,
+            "is_connected": whatsapp_service.is_connected,
+            "has_session": whatsapp_service.has_session,
+            "page_info": debug_info
+        }
+    except Exception as e:
+        logger.error(f"Debug error: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return {
+            "success": False,
+            "error": str(e),
+            "is_connected": whatsapp_service.is_connected if hasattr(whatsapp_service, 'is_connected') else False,
+            "has_session": whatsapp_service.has_session if hasattr(whatsapp_service, 'has_session') else False
+        }
+
+
+@app.post("/api/whatsapp/send", response_model=SendWhatsAppMessageResponse)
+async def send_whatsapp_message(request: SendWhatsAppMessageRequest):
+    """Send a WhatsApp message to a contact"""
+    try:
+        message_id = await whatsapp_service.send_message(
+            contact_id=request.contact_id,
+            text=request.text
+        )
+        return SendWhatsAppMessageResponse(
+            success=True,
+            message="Message sent successfully",
+            message_id=message_id
+        )
+    except Exception as e:
+        logger.error(f"Error sending WhatsApp message: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/word/create", response_model=OperationResponse)

@@ -145,6 +145,78 @@ class SendSlackMessageResponse(BaseModel):
     message_ts: Optional[str] = None
 
 
+# WhatsApp Models
+class WhatsAppMessage(BaseModel):
+    """WhatsApp message model"""
+    message_id: str
+    from_id: str
+    from_name: Optional[str] = None
+    body: str
+    timestamp: str
+    is_sent: bool = False  # True if sent by current user, False if received
+    contact_id: Optional[str] = None
+    contact_name: Optional[str] = None
+
+
+class WhatsAppContact(BaseModel):
+    """WhatsApp contact/chat model"""
+    contact_id: str
+    name: str
+    is_group: bool = False
+    last_message: Optional[str] = None
+    last_message_time: Optional[str] = None
+    unread_count: int = 0
+
+
+class GetWhatsAppMessagesRequest(BaseModel):
+    """Request model for getting WhatsApp messages"""
+    contact_id: str = Field(..., description="Contact ID to get messages for")
+    limit: int = 50
+
+
+class WhatsAppMessagesResponse(BaseModel):
+    """Response model for WhatsApp message list operations"""
+    success: bool
+    count: int
+    total_count: int
+    messages: List[WhatsAppMessage]
+    message: Optional[str] = None  # Optional error or info message
+
+
+class GetWhatsAppContactsRequest(BaseModel):
+    """Request model for getting WhatsApp contacts"""
+    limit: int = 100
+
+
+class WhatsAppContactsResponse(BaseModel):
+    """Response model for WhatsApp contacts"""
+    success: bool
+    count: int
+    contacts: List[WhatsAppContact]
+
+
+class SendWhatsAppMessageRequest(BaseModel):
+    """Request model for sending WhatsApp messages"""
+    contact_id: str = Field(..., description="Contact ID to send the message to")
+    text: str = Field(..., description="Message text to send")
+
+
+class SendWhatsAppMessageResponse(BaseModel):
+    """Response model for sending WhatsApp messages"""
+    success: bool
+    message: str
+    message_id: Optional[str] = None
+
+
+class WhatsAppStatusResponse(BaseModel):
+    """Response model for WhatsApp status check"""
+    success: bool
+    is_connected: bool
+    is_authenticated: bool
+    message: str
+    has_session: Optional[bool] = False
+
+
 # Word Document Models
 class CreateWordDocumentRequest(BaseModel):
     """Request model for creating a Word document"""

@@ -19,6 +19,7 @@ except ImportError:
 backend_process = None
 chat_process = None
 django_process = None
+whatsapp_node_process = None
 servers_running = False
 backend_log = None
 
@@ -28,7 +29,7 @@ DJANGO_PORT = 8001
 
 def start_servers():
     """Start all backend servers in separate processes"""
-    global backend_process, chat_process, django_process, servers_running
+    global backend_process, chat_process, django_process, whatsapp_node_process, servers_running
     
     # Make sure we're in the right directory
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -191,11 +192,56 @@ def start_servers():
                 print(f"[!] Django directory not found: {DJANGO_DIR} (skipping)")
         except Exception as e:
             print(f"[!] Django start error (skipping): {e}")
+        
+        # Start Node.js WhatsApp server (whatsapp_server.js on port 3000)
+        print("[*] Starting Node.js WhatsApp server (port 3000)...")
+        whatsapp_server_file = "whatsapp_server.js"
+        if os.path.exists(os.path.join(os.path.dirname(os.path.abspath(__file__)), whatsapp_server_file)):
+            try:
+                # Check if Node.js is available
+                try:
+                    node_check = subprocess.run(
+                        ['node', '--version'],
+                        capture_output=True,
+                        timeout=2
+                    )
+                    if node_check.returncode != 0:
+                        raise FileNotFoundError("Node.js not found")
+                    print(f"[*] Node.js version: {node_check.stdout.decode('utf-8', errors='ignore').strip()}")
+                except FileNotFoundError:
+                    print("[!] Node.js not found. WhatsApp server will not start.")
+                    print("[!] Install Node.js from https://nodejs.org/")
+                    whatsapp_node_process = None
+                else:
+                    whatsapp_node_process = subprocess.Popen(
+                        ['node', whatsapp_server_file],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        cwd=os.path.dirname(os.path.abspath(__file__)),
+                        creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
+                    )
+                    time.sleep(3)  # Wait for WhatsApp server to start
+                    if whatsapp_node_process.poll() is not None:
+                        stdout, stderr = whatsapp_node_process.communicate()
+                        print("[!] WhatsApp Node.js server failed to start!")
+                        if stderr:
+                            error_msg = stderr.decode('utf-8', errors='ignore')[:300]
+                            print(f"[!] Error: {error_msg}")
+                        whatsapp_node_process = None
+                    else:
+                        print("[OK] WhatsApp Node.js server started on http://localhost:3000")
+            except Exception as e:
+                print(f"[!] Error starting WhatsApp Node.js server: {e}")
+                whatsapp_node_process = None
+        else:
+            print(f"[!] WhatsApp server file not found: {whatsapp_server_file} (skipping)")
 
         print("[OK] All servers started successfully!")
         print("[*] Server status:")
         print(f"    - Backend API: http://localhost:8000")
         print(f"    - Chat Server: http://localhost:5000")
+        if whatsapp_node_process and whatsapp_node_process.poll() is None:
+            print(f"    - WhatsApp Server: http://localhost:3000")
         if django_process and django_process.poll() is None:
             print(f"    - Django Server: http://localhost:{DJANGO_PORT}")
         print("[*] You can now use the application interface.")
@@ -268,13 +314,14 @@ def kill_process_by_port(port):
 
 def stop_servers():
     """Stop all servers"""
-    global backend_process, chat_process, django_process, servers_running, backend_log
+    global backend_process, chat_process, django_process, whatsapp_node_process, servers_running, backend_log
     
     if not servers_running:
         # Even if servers_running is False, try to kill processes by port
         print("[*] Attempting to stop any remaining server processes...")
         kill_process_by_port(8000)  # Backend
         kill_process_by_port(5000)  # Chat
+        kill_process_by_port(3000)  # WhatsApp Node.js
         kill_process_by_port(DJANGO_PORT)  # Django
         return
     
@@ -293,6 +340,7 @@ def stop_servers():
     processes_to_stop = [
         (backend_process, "backend server", 8000),
         (chat_process, "chat server", 5000),
+        (whatsapp_node_process, "WhatsApp Node.js server", 3000),
         (django_process, "Django server", DJANGO_PORT)
     ]
     
@@ -356,11 +404,13 @@ def stop_servers():
     print("[*] Checking for any remaining processes on server ports...")
     kill_process_by_port(8000)  # Backend
     kill_process_by_port(5000)  # Chat
+    kill_process_by_port(3000)  # WhatsApp Node.js
     kill_process_by_port(DJANGO_PORT)  # Django
     
     # Reset process variables
     backend_process = None
     chat_process = None
+    whatsapp_node_process = None
     django_process = None
     
     print("[OK] All servers stopped")
