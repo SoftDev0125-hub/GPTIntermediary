@@ -6,6 +6,7 @@
     <title>ChatGPT Assistant - AI-Powered Automation</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="styles.css">
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
 </head>
 <body>
     <script>
@@ -1939,9 +1940,12 @@
         let allWhatsAppMessages = [];
         let whatsappMessagesByChat = {};
         let currentWhatsAppChatId = null;
+        let currentWhatsAppContactName = null;
         let whatsappAuthCheckInterval = null;
         let whatsappQrRefreshInterval = null;
         let whatsappIsAuthenticated = false;
+        let whatsappSocket = null;
+        let currentChatMessages = []; // Store messages for currently open chat
 
         async function checkWhatsAppStatus() {
             if (whatsappIsAuthenticated) {
@@ -2279,10 +2283,215 @@
         }
 
         /**
+         * Initialize WebSocket connection for real-time messages
+         */
+        function initializeWhatsAppWebSocket() {
+            if (whatsappSocket && whatsappSocket.connected) {
+                console.log('[*] WhatsApp WebSocket already connected');
+                return;
+            }
+
+            // Disconnect existing socket if any
+            if (whatsappSocket) {
+                whatsappSocket.disconnect();
+            }
+
+            console.log('[*] Initializing WhatsApp WebSocket connection...');
+            whatsappSocket = io('http://localhost:3000', {
+                reconnection: true,
+                reconnectionDelay: 1000,
+                reconnectionDelayMax: 5000,
+                reconnectionAttempts: Infinity,
+                timeout: 20000,
+                transports: ['websocket', 'polling']
+            });
+
+            whatsappSocket.on('connect', () => {
+                console.log('[*] WhatsApp WebSocket connected - Real-time messaging active');
+            });
+
+            whatsappSocket.on('disconnect', (reason) => {
+                console.log('[*] WhatsApp WebSocket disconnected:', reason);
+                if (reason === 'io server disconnect') {
+                    // Server disconnected, reconnect manually
+                    setTimeout(() => {
+                        if (!whatsappSocket.connected) {
+                            initializeWhatsAppWebSocket();
+                        }
+                    }, 1000);
+                }
+            });
+
+            whatsappSocket.on('connect_error', (error) => {
+                console.error('[*] WhatsApp WebSocket connection error:', error);
+            });
+
+            whatsappSocket.on('reconnect', (attemptNumber) => {
+                console.log('[*] WhatsApp WebSocket reconnected after', attemptNumber, 'attempts');
+            });
+
+            whatsappSocket.on('whatsapp_status', (data) => {
+                console.log('[*] WhatsApp status update:', data);
+                if (data.is_connected && data.is_authenticated) {
+                    whatsappIsAuthenticated = true;
+                }
+            });
+
+            // Listen for incoming messages (instant display)
+            whatsappSocket.on('whatsapp_message', (message) => {
+                console.log('[*] Real-time WhatsApp message received:', message);
+                // Display immediately without waiting
+                handleIncomingWhatsAppMessage(message, true); // true = instant display
+            });
+            
+            // Listen for message updates (with full contact info)
+            whatsappSocket.on('whatsapp_message_update', (message) => {
+                console.log('[*] WhatsApp message update received:', message);
+                // Update existing message with full info
+                handleIncomingWhatsAppMessage(message, false); // false = update existing
+            });
+        }
+
+        /**
+         * Handle incoming real-time WhatsApp message
+         * @param {Object} message - The message object
+         * @param {boolean} isInstant - If true, display immediately; if false, update existing
+         */
+        function handleIncomingWhatsAppMessage(message, isInstant = true) {
+            // Check if message is for currently open chat
+            const isForCurrentChat = currentWhatsAppChatId && (
+                message.contact_id === currentWhatsAppChatId || 
+                message.from === currentWhatsAppChatId ||
+                message.to === currentWhatsAppChatId
+            );
+            
+            // Check if message already exists (avoid duplicates)
+            const existingIndex = currentChatMessages.findIndex(msg => msg.id === message.id);
+            const messageExists = existingIndex !== -1;
+            
+            if (isForCurrentChat) {
+                if (!messageExists && isInstant) {
+                    // Add new message immediately
+                    const msgData = {
+                        id: message.id,
+                        body: message.body,
+                        from: message.from,
+                        fromMe: message.fromMe,
+                        timestamp: message.timestamp,
+                        type: message.type,
+                        hasMedia: message.hasMedia
+                    };
+                    
+                    currentChatMessages.push(msgData);
+                    
+                    // Sort by timestamp
+                    currentChatMessages.sort((a, b) => a.timestamp - b.timestamp);
+                    
+                    // Append new message to display INSTANTLY
+                    appendWhatsAppMessage(message);
+                    
+                    // Update message count
+                    if (whatsappStatus) {
+                        whatsappStatus.textContent = `${currentChatMessages.length} messages`;
+                    }
+                    if (whatsappCount) {
+                        whatsappCount.textContent = `${currentChatMessages.length} messages`;
+                    }
+                } else if (messageExists && !isInstant) {
+                    // Update existing message with full contact info
+                    currentChatMessages[existingIndex] = {
+                        id: message.id,
+                        body: message.body,
+                        from: message.from,
+                        fromMe: message.fromMe,
+                        timestamp: message.timestamp,
+                        type: message.type,
+                        hasMedia: message.hasMedia
+                    };
+                }
+            }
+            
+            // Always update contact preview in sidebar (even if chat not open)
+            updateContactPreview(message);
+        }
+
+        /**
+         * Append a single message to the messages display (INSTANT)
+         */
+        function appendWhatsAppMessage(message) {
+            if (!whatsappMessagesContainer) return;
+
+            const msgDate = new Date(message.timestamp * 1000);
+            const timeStr = formatWhatsAppTime(message.timestamp);
+            const formattedBody = escapeHtml(message.body || '');
+            const isSent = message.fromMe || false;
+
+            // Check if we need a date divider (check last visible message)
+            let needsDateDivider = false;
+            const lastMessageElement = whatsappMessagesContainer.querySelector('.whatsapp-message-wrapper:last-child');
+            if (lastMessageElement) {
+                const lastTimeAttr = lastMessageElement.getAttribute('data-timestamp');
+                if (lastTimeAttr) {
+                    const lastDate = new Date(parseInt(lastTimeAttr) * 1000);
+                    needsDateDivider = msgDate.toDateString() !== lastDate.toDateString();
+                } else {
+                    needsDateDivider = true;
+                }
+            } else {
+                needsDateDivider = true;
+            }
+
+            let html = '';
+            
+            // Date divider if needed
+            if (needsDateDivider) {
+                const dateStr = msgDate.toLocaleDateString('en-US', { 
+                    weekday: 'long', 
+                    year: 'numeric', 
+                    month: 'long', 
+                    day: 'numeric' 
+                });
+                html += `<div class="whatsapp-date-divider"><span>${dateStr}</span></div>`;
+            }
+
+            // Message bubble with timestamp attribute for future reference
+            html += `
+                <div class="whatsapp-message-wrapper ${isSent ? 'sent' : 'received'}" data-message-id="${message.id}" data-timestamp="${message.timestamp}">
+                    <div class="whatsapp-message-bubble">
+                        <div class="whatsapp-message-text">${formattedBody || '<em>No content</em>'}</div>
+                        <div class="whatsapp-message-time">${timeStr}</div>
+                    </div>
+                </div>
+            `;
+
+            // Append to container INSTANTLY using insertAdjacentHTML (fastest method)
+            whatsappMessagesContainer.insertAdjacentHTML('beforeend', html);
+            
+            // Scroll to bottom smoothly
+            requestAnimationFrame(() => {
+                whatsappMessagesContainer.scrollTop = whatsappMessagesContainer.scrollHeight;
+            });
+        }
+
+        /**
+         * Update contact preview in sidebar when new message arrives
+         */
+        function updateContactPreview(message) {
+            const contactItem = document.querySelector(`.whatsapp-chat-item[data-contact-id="${message.contact_id}"]`);
+            if (contactItem) {
+                const previewElement = contactItem.querySelector('.whatsapp-chat-preview');
+                if (previewElement) {
+                    previewElement.textContent = message.body?.substring(0, 50) || 'New message';
+                }
+            }
+        }
+
+        /**
          * Select a WhatsApp contact and load their messages
          */
         async function selectWhatsAppContact(contactId, contactName) {
             currentWhatsAppChatId = contactId;
+            currentWhatsAppContactName = contactName;
             
             // Update UI to show selected contact
             if (whatsappCurrentChat) {
@@ -2340,6 +2549,9 @@
                 console.log('[*] WhatsApp messages response:', data);
 
                 if (data.success && data.messages) {
+                    // Store messages for current chat
+                    currentChatMessages = data.messages;
+                    
                     // Update status
                     if (whatsappStatus) {
                         whatsappStatus.textContent = `${data.count} messages`;
@@ -2349,7 +2561,7 @@
                     }
                     
                     // Display messages
-                    displayWhatsAppMessages(data.messages, contactName);
+                    displayWhatsAppMessages(currentChatMessages, contactName);
                 } else {
                     throw new Error(data.error || 'Failed to load messages');
                 }
@@ -2469,6 +2681,27 @@
             
             if (whatsappSendButton) whatsappSendButton.disabled = true;
             
+            // Clear input immediately for better UX
+            whatsappMessageInput.value = '';
+            
+            // Create optimistic message (will be replaced by real message from WebSocket)
+            const tempMessageId = 'temp_' + Date.now();
+            const optimisticMessage = {
+                id: tempMessageId,
+                body: messageText,
+                from: currentWhatsAppChatId,
+                fromMe: true,
+                timestamp: Math.floor(Date.now() / 1000),
+                type: 'chat',
+                hasMedia: false,
+                contact_id: currentWhatsAppChatId,
+                contact_name: currentWhatsAppContactName || 'You',
+                is_group: false
+            };
+            
+            // Display message instantly (optimistic update)
+            handleIncomingWhatsAppMessage(optimisticMessage, true);
+            
             try {
                 console.log(`[*] Sending message to ${currentWhatsAppChatId}: ${messageText}`);
                 const response = await fetch('http://localhost:3000/api/whatsapp/send', {
@@ -2489,14 +2722,25 @@
                 const data = await response.json();
                 console.log('[*] Message sent:', data);
 
-                if (data.success) {
-                    whatsappMessageInput.value = '';
-                    // Message loading removed - just clear input after sending
-                } else {
-                    throw new Error(data.message || 'Failed to send message');
+                // Remove temporary message (real one will come via WebSocket)
+                const tempElement = whatsappMessagesContainer?.querySelector(`[data-message-id="${tempMessageId}"]`);
+                if (tempElement) {
+                    tempElement.remove();
                 }
+                
+                // Real message will arrive via WebSocket and display instantly
             } catch (error) {
                 console.error('[!] Error sending WhatsApp message:', error);
+                
+                // Remove optimistic message on error
+                const tempElement = whatsappMessagesContainer?.querySelector(`[data-message-id="${tempMessageId}"]`);
+                if (tempElement) {
+                    tempElement.remove();
+                }
+                
+                // Restore message text
+                whatsappMessageInput.value = messageText;
+                
                 alert(`Error sending message: ${error.message}`);
             } finally {
                 if (whatsappSendButton) whatsappSendButton.disabled = false;
@@ -2541,6 +2785,9 @@
         const handleTabSwitch = async (tabName) => {
             if (tabName === 'whatsapp') {
                 console.log('[*] WhatsApp tab activated - initializing WhatsApp service...');
+                
+                // Initialize WebSocket connection for real-time messages
+                initializeWhatsAppWebSocket();
                 
                 // Initialize WhatsApp service first (lazy initialization)
                 try {

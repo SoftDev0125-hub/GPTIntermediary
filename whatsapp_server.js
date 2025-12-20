@@ -9,8 +9,18 @@ const qrcode = require('qrcode');
 const path = require('path');
 const fs = require('fs');
 const cors = require('cors');
+const http = require('http');
+const { Server } = require('socket.io');
 
 const app = express();
+const server = http.createServer(app);
+const io = new Server(server, {
+    cors: {
+        origin: "*",
+        methods: ["GET", "POST"]
+    }
+});
+
 const PORT = 3000;
 
 // Middleware
@@ -90,6 +100,116 @@ function initializeWhatsApp() {
         isAuthenticated = true;
         isReady = true;
         qrCodeData = null; // Clear QR code when authenticated
+        
+        // Emit ready event to all connected clients
+        io.emit('whatsapp_status', {
+            is_connected: true,
+            is_authenticated: true,
+            message: 'Connected to WhatsApp'
+        });
+    });
+    
+    // Message event - fired when a message is received
+    client.on('message', async (message) => {
+        try {
+            console.log('[WhatsApp] New message received:', message.from, message.body?.substring(0, 50));
+            
+            // Emit immediately with basic info (don't wait for async operations)
+            const quickMessage = {
+                id: message.id._serialized,
+                body: message.body || '',
+                from: message.from,
+                fromMe: message.fromMe,
+                timestamp: message.timestamp,
+                type: message.type,
+                hasMedia: message.hasMedia,
+                contact_id: message.from, // Use from as contact_id initially
+                contact_name: 'Loading...', // Will be updated
+                is_group: false
+            };
+            
+            // Emit immediately for instant display
+            io.emit('whatsapp_message', quickMessage);
+            
+            // Get chat info asynchronously and emit update
+            try {
+                const chat = await message.getChat();
+                const contact = await message.getContact();
+                
+                const formattedMessage = {
+                    id: message.id._serialized,
+                    body: message.body || '',
+                    from: message.from,
+                    fromMe: message.fromMe,
+                    timestamp: message.timestamp,
+                    type: message.type,
+                    hasMedia: message.hasMedia,
+                    contact_id: chat.id._serialized,
+                    contact_name: chat.name || contact.name || 'Unknown',
+                    is_group: chat.isGroup
+                };
+                
+                // Emit updated message with full info
+                io.emit('whatsapp_message_update', formattedMessage);
+            } catch (chatError) {
+                console.error('[WhatsApp] Error getting chat info:', chatError);
+            }
+            
+            console.log('[WhatsApp] Message emitted via WebSocket');
+        } catch (error) {
+            console.error('[WhatsApp] Error processing incoming message:', error);
+        }
+    });
+    
+    // Message create event - fired when a message is created (sent or received)
+    client.on('message_create', async (message) => {
+        // Only handle sent messages here (received messages are handled by 'message' event)
+        if (message.fromMe) {
+            try {
+                // Emit immediately with basic info
+                const quickMessage = {
+                    id: message.id._serialized,
+                    body: message.body || '',
+                    from: message.from,
+                    fromMe: true,
+                    timestamp: message.timestamp,
+                    type: message.type,
+                    hasMedia: message.hasMedia,
+                    contact_id: message.to, // Use 'to' for sent messages
+                    contact_name: 'Loading...',
+                    is_group: false
+                };
+                
+                // Emit immediately for instant display
+                io.emit('whatsapp_message', quickMessage);
+                
+                // Get chat info and emit update
+                try {
+                    const chat = await message.getChat();
+                    const contact = await message.getContact();
+                    
+                    const formattedMessage = {
+                        id: message.id._serialized,
+                        body: message.body || '',
+                        from: message.from,
+                        fromMe: true,
+                        timestamp: message.timestamp,
+                        type: message.type,
+                        hasMedia: message.hasMedia,
+                        contact_id: chat.id._serialized,
+                        contact_name: chat.name || contact.name || 'Unknown',
+                        is_group: chat.isGroup
+                    };
+                    
+                    // Emit updated message with full info
+                    io.emit('whatsapp_message_update', formattedMessage);
+                } catch (chatError) {
+                    console.error('[WhatsApp] Error getting chat info for sent message:', chatError);
+                }
+            } catch (error) {
+                console.error('[WhatsApp] Error processing sent message:', error);
+            }
+        }
     });
 
     // Authentication event - fired when authentication is successful
@@ -427,9 +547,30 @@ app.get('/health', (req, res) => {
     res.json({ status: 'ok', service: 'whatsapp-server' });
 });
 
+// Socket.IO connection handling
+io.on('connection', (socket) => {
+    console.log('[WhatsApp] Client connected via WebSocket:', socket.id);
+    
+    // Send current status when client connects
+    const sessionPath = path.join(SESSION_DIR, '.wwebjs_auth');
+    const hasSession = fs.existsSync(sessionPath);
+    
+    socket.emit('whatsapp_status', {
+        is_connected: isReady && isAuthenticated,
+        is_authenticated: isAuthenticated,
+        has_session: hasSession,
+        message: isReady ? 'Connected to WhatsApp' : (hasSession ? 'Session found - connecting...' : 'QR code authentication required')
+    });
+    
+    socket.on('disconnect', () => {
+        console.log('[WhatsApp] Client disconnected from WebSocket:', socket.id);
+    });
+});
+
 // Start server
-app.listen(PORT, () => {
+server.listen(PORT, () => {
     console.log(`[WhatsApp Server] Server running on http://localhost:${PORT}`);
+    console.log(`[WhatsApp Server] WebSocket server ready`);
     console.log(`[WhatsApp Server] WhatsApp client initializing...`);
 });
 
