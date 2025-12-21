@@ -9,7 +9,7 @@ from typing import List, Optional, Tuple
 from datetime import datetime
 from dotenv import load_dotenv
 
-from models.schemas import SlackMessage
+from models.schemas import SlackMessage, SlackChannel
 
 # Try to import Slack SDK
 try:
@@ -244,10 +244,193 @@ class SlackService:
             logger.error(f"Error fetching Slack messages: {str(e)}")
             raise Exception(f"Failed to fetch Slack messages: {str(e)}")
     
+    async def get_channels(self) -> List[SlackChannel]:
+        """
+        Get list of Slack channels/conversations (without messages) - fast operation
+        
+        Returns:
+            List of SlackChannel objects
+        """
+        try:
+            if not SLACK_SDK_AVAILABLE:
+                raise Exception("slack_sdk not installed")
+            
+            if not self.is_configured:
+                raise Exception("Slack API token not configured")
+            
+            if not self.client:
+                raise Exception("Slack client not initialized")
+            
+            logger.info("Fetching Slack channels list...")
+            
+            # Get all conversations (channels, DMs, groups) - this is fast, no messages loaded
+            channels_response = self.client.conversations_list(
+                types="public_channel,private_channel,im,mpim",
+                limit=1000  # Get all conversations
+            )
+            
+            if not channels_response["ok"]:
+                raise Exception(f"Failed to list conversations: {channels_response.get('error', 'Unknown error')}")
+            
+            conversations = channels_response.get("channels", [])
+            channels = []
+            
+            for conv in conversations:
+                try:
+                    conv_id = conv["id"]
+                    conv_name = conv.get("name", conv.get("user", "Unknown"))
+                    conv_type = conv.get("is_im", False) and "DM" or (conv.get("is_private", False) and "Private" or "Channel")
+                    
+                    # Get last message info (lightweight - just the latest message)
+                    last_message = None
+                    last_message_time = None
+                    unread_count = 0
+                    
+                    try:
+                        # Get only the latest message for preview
+                        messages_response = self.client.conversations_history(
+                            channel=conv_id,
+                            limit=1
+                        )
+                        if messages_response["ok"]:
+                            messages = messages_response.get("messages", [])
+                            if messages:
+                                msg = messages[0]
+                                last_message = msg.get("text", "")[:100]  # First 100 chars
+                                ts = msg.get("ts", "")
+                                if ts:
+                                    timestamp = datetime.fromtimestamp(float(ts))
+                                    last_message_time = timestamp.strftime("%Y-%m-%d %H:%M:%S")
+                    except:
+                        pass  # Ignore errors getting last message
+                    
+                    # Get unread count
+                    try:
+                        info_response = self.client.conversations_info(channel=conv_id)
+                        if info_response["ok"]:
+                            channel_info = info_response.get("channel", {})
+                            unread_count = channel_info.get("unread_count", 0) or 0
+                    except:
+                        pass  # Ignore errors getting unread count
+                    
+                    channel = SlackChannel(
+                        channel_id=conv_id,
+                        channel_name=conv_name,
+                        channel_type=conv_type,
+                        last_message=last_message,
+                        last_message_time=last_message_time,
+                        unread_count=unread_count,
+                        is_thread=False
+                    )
+                    channels.append(channel)
+                except Exception as e:
+                    logger.debug(f"Error processing conversation {conv.get('name', conv.get('id', 'unknown'))}: {e}")
+                    continue
+            
+            logger.info(f"Retrieved {len(channels)} Slack channels")
+            return channels
+        
+        except Exception as e:
+            logger.error(f"Error fetching Slack channels: {str(e)}")
+            raise Exception(f"Failed to fetch Slack channels: {str(e)}")
+    
+    async def get_channel_messages(
+        self,
+        channel_id: str,
+        limit: int = 50
+    ) -> tuple[List[SlackMessage], int]:
+        """
+        Get messages for a specific Slack channel - on-demand loading
+        
+        Args:
+            channel_id: The channel ID to get messages from
+            limit: Maximum number of messages to retrieve
+        
+        Returns:
+            Tuple of (list of messages, total count)
+        """
+        try:
+            if not SLACK_SDK_AVAILABLE:
+                raise Exception("slack_sdk not installed")
+            
+            if not self.is_configured:
+                raise Exception("Slack API token not configured")
+            
+            if not self.client:
+                raise Exception("Slack client not initialized")
+            
+            logger.info(f"Fetching messages for channel {channel_id} (limit: {limit})")
+            
+            # Get channel info for name
+            channel_info_response = self.client.conversations_info(channel=channel_id)
+            if not channel_info_response["ok"]:
+                raise Exception(f"Failed to get channel info: {channel_info_response.get('error', 'Unknown error')}")
+            
+            channel_info = channel_info_response.get("channel", {})
+            channel_name = channel_info.get("name", channel_info.get("user", "Unknown"))
+            channel_type = channel_info.get("is_im", False) and "DM" or (channel_info.get("is_private", False) and "Private" or "Channel")
+            
+            # Get messages from this specific channel only
+            messages_response = self.client.conversations_history(
+                channel=channel_id,
+                limit=limit
+            )
+            
+            if not messages_response["ok"]:
+                raise Exception(f"Failed to get messages: {messages_response.get('error', 'Unknown error')}")
+            
+            messages = messages_response.get("messages", [])
+            all_messages = []
+            
+            for msg in messages:
+                try:
+                    slack_msg = self._parse_slack_message(msg, channel_id, channel_name, channel_type)
+                    all_messages.append(slack_msg)
+                except Exception as e:
+                    logger.debug(f"Error parsing message: {e}")
+                    continue
+            
+            # Sort messages by timestamp (oldest first for chat display)
+            all_messages.sort(key=lambda x: x.timestamp)
+            
+            logger.info(f"Retrieved {len(all_messages)} messages for channel {channel_id}")
+            return all_messages, len(all_messages)
+        
+        except Exception as e:
+            logger.error(f"Error fetching messages for channel {channel_id}: {str(e)}")
+            raise Exception(f"Failed to fetch messages for channel: {str(e)}")
+    
     def _parse_slack_message(self, msg: dict, channel_id: str, channel_name: str, channel_type: str) -> SlackMessage:
         """Parse Slack message into SlackMessage model"""
         # Get message text
         text = msg.get("text", "")
+        
+        # Check for files/media
+        has_media = False
+        media_type = None
+        media_filename = None
+        media_mimetype = None
+        file_id = None
+        
+        files = msg.get("files", [])
+        if files:
+            has_media = True
+            file = files[0]  # Get first file
+            file_id = file.get("id")
+            media_filename = file.get("name")
+            media_mimetype = file.get("mimetype")
+            
+            # Determine media type
+            if file.get("mimetype", "").startswith("image/"):
+                media_type = "image"
+            elif file.get("mimetype", "").startswith("video/"):
+                media_type = "video"
+            else:
+                media_type = "file"
+            
+            # Update text if no text but has file
+            if not text:
+                text = f"[{media_type.title()}] {media_filename or 'File'}"
         
         # Handle message formatting (remove Slack markdown formatting if needed)
         # For now, keep as-is
@@ -300,7 +483,13 @@ class SlackService:
             channel_id=channel_id,
             channel_name=display_channel,
             is_thread=is_thread,
-            thread_ts=thread_ts
+            thread_ts=thread_ts,
+            has_media=has_media,
+            media_type=media_type,
+            media_url=None,  # Will be set when downloading
+            media_filename=media_filename,
+            media_mimetype=media_mimetype,
+            file_id=file_id
         )
     
     async def send_message(

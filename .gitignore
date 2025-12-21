@@ -57,6 +57,7 @@ credentials.json
 # Session files
 user_session.session
 telegram_session/
+telegram_session_node/
 whatsapp_session/
 whatsapp_session_node/
 .wwebjs_cache/

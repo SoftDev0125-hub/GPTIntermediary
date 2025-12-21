@@ -65,46 +65,6 @@ class OperationResponse(BaseModel):
     data: Optional[Dict[str, Any]] = None
 
 
-class TelegramMessage(BaseModel):
-    """Telegram message model"""
-    message_id: str
-    from_id: str
-    from_name: Optional[str] = None
-    body: str
-    timestamp: str
-    is_read: bool = False
-    is_sent: bool = False  # True if sent by current user, False if received
-    chat_id: Optional[str] = None
-    chat_name: Optional[str] = None
-
-
-class GetTelegramMessagesRequest(BaseModel):
-    """Request model for getting Telegram messages"""
-    limit: int = 50
-
-
-class TelegramListResponse(BaseModel):
-    """Response model for Telegram message list operations"""
-    success: bool
-    count: int
-    total_count: int
-    messages: List[TelegramMessage]
-
-
-class SendTelegramMessageRequest(BaseModel):
-    """Request model for sending Telegram messages"""
-    chat_id: str = Field(..., description="Chat ID to send the message to")
-    text: str = Field(..., description="Message text to send")
-    reply_to_message_id: Optional[str] = Field(None, description="Optional message ID to reply to")
-
-
-class SendTelegramMessageResponse(BaseModel):
-    """Response model for sending Telegram messages"""
-    success: bool
-    message_id: str
-    message: str
-
-
 class SlackMessage(BaseModel):
     """Slack message model"""
     message_id: str
@@ -116,11 +76,29 @@ class SlackMessage(BaseModel):
     channel_name: Optional[str] = None
     is_thread: bool = False
     thread_ts: Optional[str] = None
+    has_media: bool = False
+    media_type: Optional[str] = None  # 'image', 'video', 'file'
+    media_url: Optional[str] = None  # URL to download media
+    media_filename: Optional[str] = None
+    media_mimetype: Optional[str] = None
+    file_id: Optional[str] = None  # Slack file ID for downloads
 
 
 class GetSlackMessagesRequest(BaseModel):
     """Request model for getting Slack messages"""
     limit: int = 50
+    channel_id: Optional[str] = None  # If provided, get messages for specific channel only
+
+
+class SlackChannel(BaseModel):
+    """Slack channel/conversation model"""
+    channel_id: str
+    channel_name: str
+    channel_type: str  # "Channel", "Private", "DM"
+    last_message: Optional[str] = None
+    last_message_time: Optional[str] = None
+    unread_count: int = 0
+    is_thread: bool = False
 
 
 class SlackListResponse(BaseModel):
@@ -129,6 +107,13 @@ class SlackListResponse(BaseModel):
     count: int
     total_count: int
     messages: List[SlackMessage]
+
+
+class SlackChannelsResponse(BaseModel):
+    """Response model for Slack channels list"""
+    success: bool
+    count: int
+    channels: List[SlackChannel]
 
 
 class SendSlackMessageRequest(BaseModel):

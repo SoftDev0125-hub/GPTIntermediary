@@ -110,39 +110,6 @@ class UserPreference(Base):
         return f"<UserPreference(user_id={self.user_id})>"
 
 
-class TelegramSession(Base):
-    """Telegram session data and authentication"""
-    __tablename__ = "telegram_sessions"
-
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    
-    # Telegram account info
-    phone_number = Column(String(20), unique=True, nullable=False)
-    telegram_user_id = Column(String(50), nullable=True)
-    telegram_username = Column(String(100), nullable=True)
-    first_name = Column(String(100), nullable=True)
-    last_name = Column(String(100), nullable=True)
-    
-    # Session data (encrypted in production!)
-    session_string = Column(Text, nullable=True)  # Encrypted Telegram session
-    is_active = Column(Boolean, default=True)
-    
-    # Timestamps
-    authenticated_at = Column(DateTime(timezone=True), nullable=True)
-    last_used = Column(DateTime(timezone=True), nullable=True)
-    expires_at = Column(DateTime(timezone=True), nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-
-    # Relationships
-    # Note: back_populates removed because User model doesn't have telegram_sessions relationship
-    user = relationship("User", foreign_keys=[user_id])
-
-    def __repr__(self):
-        return f"<TelegramSession(id={self.id}, phone='{self.phone_number}')>"
-
-
 class ExcelFile(Base):
     """Excel file metadata and history"""
     __tablename__ = "excel_files"

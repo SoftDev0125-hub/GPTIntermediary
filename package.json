@@ -5,14 +5,17 @@
   "main": "whatsapp_server.js",
   "scripts": {
     "start": "node whatsapp_server.js",
-    "whatsapp": "node whatsapp_server.js"
+    "whatsapp": "node whatsapp_server.js",
+    "telegram": "node telegram_server.js"
   },
   "dependencies": {
-    "whatsapp-web.js": "^1.34.2",
-    "qrcode": "^1.5.3",
-    "express": "^4.18.2",
     "cors": "^2.8.5",
-    "socket.io": "^4.7.2"
+    "dotenv": "^16.6.1",
+    "express": "^4.18.2",
+    "qrcode": "^1.5.3",
+    "socket.io": "^4.7.2",
+    "telegram": "^2.26.22",
+    "whatsapp-web.js": "^1.34.2"
   },
   "keywords": [
     "whatsapp",
@@ -22,4 +25,3 @@
   "author": "",
   "license": "ISC"
 }
-

@@ -317,6 +317,10 @@
                         <div class="telegram-header-content">
                             <h2 id="telegramCurrentChat">Select a chat</h2>
                             <div class="telegram-header-info" id="telegramCount">-- messages</div>
+                            <div class="telegram-header-actions">
+                                <button id="telegramEditLastBtn" class="telegram-header-btn" disabled>Edit last</button>
+                                <button id="telegramClearChatBtn" class="telegram-header-btn telegram-header-btn-danger" disabled>Clear</button>
+                            </div>
                         </div>
                     </div>
                     <div class="telegram-messages-container" id="telegramMessagesContainer">
@@ -328,6 +332,8 @@
                         </div>
                     <div class="telegram-input-container" id="telegramInputContainer" style="display: none;">
                         <div class="telegram-input-wrapper">
+                            <button id="telegramAttachButton" class="telegram-attach-button" title="Attach file" disabled>📎</button>
+                            <input type="file" id="telegramFileInput" style="display: none;" />
                             <textarea 
                                 id="telegramMessageInput" 
                                 class="telegram-message-input" 
@@ -701,74 +707,100 @@
             
             console.log('Switching to tab:', tabName);
             
-            // Remove active class from all tabs and buttons
-            document.querySelectorAll('.tab-button').forEach(b => b.classList.remove('active'));
-            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-            
-            // Add active class to selected tab and button
-            const button = document.querySelector(`.tab-button[data-tab="${tabName}"]`);
-            const content = document.getElementById(tabName);
-            
-            if (button) {
-                button.classList.add('active');
-                console.log('Button activated:', tabName);
-            } else {
-                console.error('Button not found for tab:', tabName);
-            }
-            
-            if (content) {
-                content.classList.add('active');
-                console.log('Content activated:', tabName);
-            } else {
-                console.error('Content not found for tab:', tabName);
-            }
-            
-            if (tabName === 'chat') {
-                const messageInput = document.getElementById('messageInput');
-                if (messageInput) messageInput.focus();
+            try {
+                // Remove active class from all tabs and buttons
+                const allButtons = document.querySelectorAll('.tab-button');
+                const allContents = document.querySelectorAll('.tab-content');
+                
+                allButtons.forEach(b => {
+                    b.classList.remove('active');
+                });
+                
+                allContents.forEach(c => {
+                    c.classList.remove('active');
+                });
+                
+                // Add active class to selected tab and button
+                const button = document.querySelector(`.tab-button[data-tab="${tabName}"]`);
+                const content = document.getElementById(tabName);
+                
+                if (button) {
+                    button.classList.add('active');
+                    console.log('Button activated:', tabName);
+                } else {
+                    console.error('Button not found for tab:', tabName);
+                    console.log('Available tabs:', Array.from(document.querySelectorAll('.tab-button')).map(b => b.dataset.tab));
+                }
+                
+                if (content) {
+                    content.classList.add('active');
+                    console.log('Content activated:', tabName);
+                } else {
+                    console.error('Content not found for tab:', tabName);
+                    console.log('Available content divs:', Array.from(document.querySelectorAll('.tab-content')).map(c => c.id));
+                }
+                
+                if (tabName === 'chat') {
+                    const messageInput = document.getElementById('messageInput');
+                    if (messageInput) {
+                        setTimeout(() => messageInput.focus(), 100);
+                    }
+                }
+            } catch (error) {
+                console.error('Error in switchTab:', error);
             }
         }
         
         // Initialize tab switching when DOM is ready
         function initTabSwitching() {
-            // Add event listeners to all tab buttons
-            const tabButtons = document.querySelectorAll('.tab-button');
-            console.log('Found tab buttons:', tabButtons.length);
-            
-            tabButtons.forEach(button => {
-                // Remove any existing listeners by using a flag
-                if (button.dataset.listenerAdded === 'true') {
-                    return; // Already has listener
+            try {
+                // Add event listeners to all tab buttons
+                const tabButtons = document.querySelectorAll('.tab-button');
+                console.log('Found tab buttons:', tabButtons.length);
+                
+                if (tabButtons.length === 0) {
+                    console.warn('No tab buttons found! Retrying in 100ms...');
+                    setTimeout(initTabSwitching, 100);
+                    return;
                 }
                 
-                button.addEventListener('click', function(e) {
-                    e.preventDefault();
-                    e.stopPropagation();
+                tabButtons.forEach(button => {
+                    // Remove any existing listeners by cloning and replacing
+                    const newButton = button.cloneNode(true);
+                    button.parentNode.replaceChild(newButton, button);
                     
-                    const tabName = this.dataset.tab;
-                    console.log('Tab button clicked:', tabName);
-                    
-                    if (tabName) {
-                        switchTab(tabName);
-                    } else {
-                        console.error('No tab name found for button');
-                    }
-                    
-                    return false;
+                    // Add click listener to the new button
+                    newButton.addEventListener('click', function(e) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        
+                        const tabName = this.dataset.tab;
+                        console.log('Tab button clicked:', tabName);
+                        
+                        if (tabName) {
+                            switchTab(tabName);
+                        } else {
+                            console.error('No tab name found for button');
+                        }
+                        
+                        return false;
+                    });
                 });
                 
-                button.dataset.listenerAdded = 'true';
-            });
-            
-            console.log('Tab switching initialized');
+                console.log('Tab switching initialized successfully');
+            } catch (error) {
+                console.error('Error initializing tab switching:', error);
+            }
         }
         
         // Initialize when DOM is ready
         if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', initTabSwitching);
+            document.addEventListener('DOMContentLoaded', function() {
+                setTimeout(initTabSwitching, 50);
+            });
         } else {
             // DOM is already loaded
-            initTabSwitching();
+            setTimeout(initTabSwitching, 50);
         }
 
         const chatContainer = document.getElementById('chatContainer');
@@ -1315,62 +1347,237 @@
         messageInput.focus();
 
 
-        // Telegram functionality
-        
-        // Telegram message sending
+        // Telegram functionality - Node.js backend
+        const TELEGRAM_API_URL = 'http://localhost:3001';
         let currentTelegramChatId = null;
         const telegramMessageInput = document.getElementById('telegramMessageInput');
         const telegramSendButton = document.getElementById('telegramSendButton');
+        const telegramAttachButton = document.getElementById('telegramAttachButton');
+        const telegramFileInput = document.getElementById('telegramFileInput');
+        const telegramEditLastBtn = document.getElementById('telegramEditLastBtn');
+        const telegramClearChatBtn = document.getElementById('telegramClearChatBtn');
+        let telegramSocket = null;
 
-        // Auto-resize textarea
-        if (telegramMessageInput) {
-            telegramMessageInput.addEventListener('input', function() {
-                this.style.height = 'auto';
-                this.style.height = Math.min(this.scrollHeight, 150) + 'px';
-                if (telegramSendButton) {
-                    telegramSendButton.disabled = !this.value.trim() || !currentTelegramChatId;
-                }
-            });
-
-            telegramMessageInput.addEventListener('keydown', function(e) {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    if (telegramSendButton && !telegramSendButton.disabled) {
-                        sendTelegramMessage();
-                    }
-                }
-            });
+        // Track socket connection state / throttling
+        let telegramSocketRetryDisabled = false; // (kept for backward-compat; no longer permanently disables retries)
+        let telegramSocketConnecting = false;
+        
+        // Check if Telegram server is available before connecting
+        async function checkTelegramServerAvailable() {
+            try {
+                const response = await fetch(`${TELEGRAM_API_URL}/health`, {
+                    method: 'GET',
+                    signal: AbortSignal.timeout(2000)
+                });
+                return response.ok;
+            } catch (error) {
+                return false;
+            }
         }
-
-        // Send button click handler
-        if (telegramSendButton) {
-            telegramSendButton.addEventListener('click', sendTelegramMessage);
-        }
-
-        async function sendTelegramMessage() {
-            console.log(`[DEBUG] sendTelegramMessage called, currentTelegramChatId: ${currentTelegramChatId}`);
-            if (!currentTelegramChatId || !telegramMessageInput) {
-                console.error('[DEBUG] Cannot send: missing currentTelegramChatId or telegramMessageInput');
-                alert('Please select a chat first');
-                return;
+        
+        // Connect to Telegram WebSocket with retry logic
+        async function connectTelegramWebSocket(retryCount = 0) {
+            if (telegramSocket && telegramSocket.connected) return;
+            
+            if (telegramSocketConnecting) return;
+            telegramSocketConnecting = true;
+            
+            const maxRetries = 3; // Reduced retries
+            const retryDelay = 3000; // 3 seconds
+            
+            // Check if server is available first
+            if (retryCount === 0) {
+                const serverAvailable = await checkTelegramServerAvailable();
+                if (!serverAvailable) {
+                    console.log('[Telegram] Server not available, will not connect WebSocket');
+                    telegramSocketConnecting = false;
+                    // Don't permanently disable: allow later reconnect (tab open/refresh)
+                    return;
+                }
             }
             
-            const text = telegramMessageInput.value.trim();
-            if (!text) {
-                console.error('[DEBUG] Cannot send: empty message text');
-                return;
-            }
-
-            // Disable input while sending
-            telegramMessageInput.disabled = true;
-            if (telegramSendButton) {
-                telegramSendButton.disabled = true;
-                telegramSendButton.innerHTML = '<div class="telegram-send-spinner"></div>';
-            }
-
             try {
-                console.log(`[*] Sending message to Telegram chat ${currentTelegramChatId}...`);
-                const response = await fetch('http://localhost:8000/api/telegram/send', {
+                if (telegramSocket) {
+                    telegramSocket.disconnect();
+                    telegramSocket = null;
+                }
+                
+                telegramSocket = io(`${TELEGRAM_API_URL}`, {
+                    reconnection: true,
+                    reconnectionDelay: 1000,
+                    reconnectionDelayMax: 5000,
+                    reconnectionAttempts: 10,
+                    timeout: 5000,
+                    transports: ['websocket', 'polling'],
+                    autoConnect: true
+                });
+                
+                telegramSocket.on('connect', () => {
+                    console.log('[Telegram] WebSocket connected');
+                    retryCount = 0; // Reset retry count on successful connection
+                    telegramSocketRetryDisabled = false;
+                    telegramSocketConnecting = false;
+                });
+                
+                telegramSocket.on('telegram_status', (data) => {
+                    console.log('[Telegram] Status update:', data);
+                    if (data.is_connected && data.is_authenticated) {
+                        // Auto-refresh if connected
+                        const _btn = document.getElementById('telegramShowButton');
+                        if (_btn && !_btn.disabled) {
+                            loadTelegramMessages();
+                        }
+                    }
+                });
+                
+                telegramSocket.on('telegram_message', (message) => {
+                    console.log('[Telegram] New message:', message);
+                    // Best-effort status defaults
+                    if (message && message.fromMe && !message.delivery_status) {
+                        message.delivery_status = 'sent';
+                    }
+                    // Update UI with new message
+                    if (message.contact_id === currentTelegramChatId) {
+                        // Add message to current chat
+                        telegramChatMessages[message.contact_id] = telegramChatMessages[message.contact_id] || [];
+                        telegramChatMessages[message.contact_id].push(message);
+                        renderTelegramMessages(telegramChatMessages[message.contact_id]);
+                    }
+                    // Update chat list if needed
+                    updateTelegramChatInList(message.contact_id, message);
+                });
+
+                telegramSocket.on('telegram_message_update', (message) => {
+                    // Media downloaded async; patch message in cache if present
+                    if (!message || !message.contact_id || !message.id) return;
+                    const list = telegramChatMessages[message.contact_id];
+                    if (!list || !Array.isArray(list)) return;
+                    const idx = list.findIndex(m => String(m.id) === String(message.id));
+                    if (idx >= 0) {
+                        list[idx] = { ...list[idx], ...message };
+                        if (message.contact_id === currentTelegramChatId) {
+                            renderTelegramMessages(list);
+                        }
+                    }
+                });
+
+                telegramSocket.on('telegram_outgoing_sent', (data) => {
+                    // Mark outgoing as sent (single-check)
+                    if (!data || !data.contact_id || !data.message_id) return;
+                    const list = telegramChatMessages[data.contact_id];
+                    if (!list || !Array.isArray(list)) return;
+                    const idx = list.findIndex(m => String(m.id) === String(data.message_id));
+                    if (idx >= 0) {
+                        list[idx].delivery_status = 'sent';
+                        if (data.contact_id === currentTelegramChatId) renderTelegramMessages(list);
+                    }
+                });
+
+                telegramSocket.on('telegram_receipt', (data) => {
+                    // Best-effort "read" receipt: mark all outgoing <= max_id as read
+                    if (!data || data.kind !== 'read' || !data.contact_id || !data.max_id) return;
+                    // Persist latest read max on chat (so loaded history renders ✓✓ correctly)
+                    const chat = telegramChats.find(c => c.contact_id === data.contact_id);
+                    if (chat) {
+                        const maxId = parseInt(String(data.max_id), 10);
+                        if (Number.isFinite(maxId)) chat.read_outbox_max_id = maxId;
+                    }
+                    const list = telegramChatMessages[data.contact_id];
+                    if (!list || !Array.isArray(list)) return;
+                    const maxId = parseInt(String(data.max_id), 10);
+                    if (!Number.isFinite(maxId)) return;
+                    let changed = false;
+                    for (const m of list) {
+                        const mid = parseInt(String(m.id), 10);
+                        if (m.fromMe && Number.isFinite(mid) && mid <= maxId && m.delivery_status !== 'read') {
+                            m.delivery_status = 'read';
+                            changed = true;
+                        }
+                    }
+                    if (changed && data.contact_id === currentTelegramChatId) {
+                        renderTelegramMessages(list);
+                    }
+                });
+                
+                telegramSocket.on('disconnect', (reason) => {
+                    console.log('[Telegram] WebSocket disconnected:', reason);
+                    telegramSocketConnecting = false;
+                });
+                
+                telegramSocket.on('connect_error', (error) => {
+                    // Suppress console errors for connection refused (server not running)
+                    if (error.message && (error.message.includes('ERR_CONNECTION_REFUSED') || 
+                        error.message.includes('xhr poll error') || 
+                        error.message.includes('transport error'))) {
+                        // Server is not running, don't spam console
+                        if (retryCount === 0) {
+                            console.log('[Telegram] Server not available - WebSocket connection disabled');
+                        }
+                        telegramSocketConnecting = false;
+                        return;
+                    }
+                    
+                    // For other errors, log them
+                    console.warn('[Telegram] WebSocket connection error:', error.message);
+                    
+                    telegramSocketConnecting = false;
+                    if (retryCount < maxRetries) {
+                        setTimeout(() => {
+                            console.log(`[Telegram] Retrying connection (${retryCount + 1}/${maxRetries})...`);
+                            connectTelegramWebSocket(retryCount + 1);
+                        }, retryDelay);
+                    } else {
+                        console.log('[Telegram] Stopped retrying. Server may not be running.');
+                        telegramSocketRetryDisabled = false; // allow future manual reconnect
+                    }
+                });
+            } catch (error) {
+                // Suppress errors when server is not running
+                if (error.message && error.message.includes('ERR_CONNECTION_REFUSED')) {
+                    if (retryCount === 0) {
+                        console.log('[Telegram] Server not available - WebSocket connection disabled');
+                    }
+                    telegramSocketConnecting = false;
+                    return;
+                }
+                
+                console.error('[Telegram] Error connecting WebSocket:', error);
+                telegramSocketConnecting = false;
+                if (retryCount < maxRetries) {
+                    setTimeout(() => {
+                        console.log(`[Telegram] Retrying connection (${retryCount + 1}/${maxRetries})...`);
+                        connectTelegramWebSocket(retryCount + 1);
+                    }, retryDelay);
+                }
+            }
+        }
+        
+        // Function to manually reconnect (can be called when server comes back online)
+        window.reconnectTelegramWebSocket = function() {
+            telegramSocketRetryDisabled = false;
+            telegramSocketConnecting = false;
+            if (telegramSocket) {
+                telegramSocket.disconnect();
+                telegramSocket = null;
+            }
+            connectTelegramWebSocket();
+        };
+
+        // Connect WebSocket on page load (with delay to ensure server is ready)
+        setTimeout(() => {
+            connectTelegramWebSocket();
+        }, 1000);
+
+        async function sendTelegramMessage() {
+            if (!currentTelegramChatId || !telegramMessageInput) return;
+            
+            const text = telegramMessageInput.value.trim();
+            if (!text) return;
+            
+            if (telegramSendButton) telegramSendButton.disabled = true;
+            
+            try {
+                const response = await fetch(`${TELEGRAM_API_URL}/api/telegram/send`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -1380,56 +1587,380 @@
                         text: text
                     })
                 });
-
-                console.log('[*] Response status:', response.status);
-                const data = await response.json();
-                console.log('[*] Response data:', data);
-
-                if (response.ok && data.success) {
-                    // Clear input
+                
+                if (response.ok) {
+                    const respData = await response.json().catch(() => null);
                     telegramMessageInput.value = '';
-                    telegramMessageInput.style.height = 'auto';
-                    
-                    // Reload messages to show the new one
-                    await loadTelegramMessages();
-                    
-                    // Re-select the current chat
-                    if (currentTelegramChatId) {
-                        selectTelegramChat(currentTelegramChatId);
+                    // Optimistic append (in case realtime isn't connected)
+                    if (respData && respData.message_id) {
+                        const list = telegramChatMessages[currentTelegramChatId] || (telegramChatMessages[currentTelegramChatId] = []);
+                        const exists = list.some(m => String(m.id) === String(respData.message_id));
+                        if (!exists) {
+                            list.push({
+                                id: String(respData.message_id),
+                                body: text,
+                                fromMe: true,
+                                timestamp: respData.timestamp || Math.floor(Date.now() / 1000),
+                                type: 'text',
+                                hasMedia: false,
+                                delivery_status: 'sent'
+                            });
+                            updateTelegramChatInList(currentTelegramChatId, { body: text, timestamp: respData.timestamp || Math.floor(Date.now() / 1000), fromMe: true });
+                            if (currentTelegramChatId === currentChatId) {
+                                renderTelegramMessages(list);
+                            }
+                        }
                     }
                 } else {
-                    const errorMsg = data.error || data.detail || JSON.stringify(data);
-                    console.error('[!] Backend error:', errorMsg);
-                    alert(`Failed to send message: ${errorMsg}`);
+                    const data = await response.json();
+                    alert('Failed to send message: ' + (data.error || 'Unknown error'));
                 }
             } catch (error) {
-                console.error('[!] Exception:', error);
-                alert(`Failed to send message: ${error.message}`);
+                console.error('[Telegram] Error sending message:', error);
+                alert('Error sending message: ' + error.message);
             } finally {
-                // Re-enable input
-                telegramMessageInput.disabled = false;
                 if (telegramSendButton) {
                     telegramSendButton.disabled = !telegramMessageInput.value.trim() || !currentTelegramChatId;
-                    telegramSendButton.innerHTML = `
-                        <svg width="20" height="20" viewBox="0 0 20 20" viewBox="0 0 20 20" fill="none">
-                            <path d="M18 2L9 11M18 2L12 18L9 11M18 2L2 8L9 11" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                        </svg>
-                    `;
                 }
             }
         }
 
-        // Telegram functionality
+        // On-demand media load (keeps API fast by default)
+        window.telegramLoadMedia = async function(chatId, messageId) {
+            try {
+                if (!chatId || !messageId) return;
+                const list = telegramChatMessages[chatId];
+                if (!list || !Array.isArray(list)) return;
+                const idx = list.findIndex(m => String(m.id) === String(messageId));
+                if (idx < 0) return;
+                
+                const resp = await fetch(`${TELEGRAM_API_URL}/api/telegram/media`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ chat_id: chatId, message_id: messageId }),
+                    signal: AbortSignal.timeout(30000)
+                });
+                const data = await resp.json().catch(() => null);
+                if (!resp.ok || !data || !data.success) {
+                    alert('Failed to load media: ' + ((data && data.error) ? data.error : `HTTP ${resp.status}`));
+                    return;
+                }
+                list[idx].mediaUrl = data.mediaUrl;
+                list[idx].mediaMimetype = data.mediaMimetype;
+                list[idx].mediaFilename = data.mediaFilename;
+                if (chatId === currentTelegramChatId) renderTelegramMessages(list);
+            } catch (e) {
+                alert('Failed to load media: ' + (e.message || String(e)));
+            }
+        };
+
+        // Attach/send files
+        if (telegramAttachButton && telegramFileInput) {
+            telegramAttachButton.addEventListener('click', () => {
+                if (!currentTelegramChatId) return;
+                telegramFileInput.click();
+            });
+            telegramFileInput.addEventListener('change', async () => {
+                try {
+                    const file = telegramFileInput.files && telegramFileInput.files[0];
+                    if (!file || !currentTelegramChatId) return;
+                    
+                    // Read as base64
+                    const base64 = await new Promise((resolve, reject) => {
+                        const reader = new FileReader();
+                        reader.onload = () => {
+                            const result = String(reader.result || '');
+                            const commaIdx = result.indexOf(',');
+                            resolve(commaIdx >= 0 ? result.slice(commaIdx + 1) : result);
+                        };
+                        reader.onerror = () => reject(reader.error || new Error('File read failed'));
+                        reader.readAsDataURL(file);
+                    });
+                    
+                    const resp = await fetch(`${TELEGRAM_API_URL}/api/telegram/sendFile`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            chat_id: currentTelegramChatId,
+                            data_base64: base64,
+                            caption: undefined
+                        }),
+                        signal: AbortSignal.timeout(60000)
+                    });
+                    const data = await resp.json().catch(() => null);
+                    if (!resp.ok || !data || !data.success) {
+                        alert('Failed to send file: ' + ((data && data.error) ? data.error : `HTTP ${resp.status}`));
+                        return;
+                    }
+                    // Clear the input so the same file can be selected again
+                    telegramFileInput.value = '';
+                } catch (e) {
+                    alert('Failed to send file: ' + (e.message || String(e)));
+                }
+            });
+        }
+
+        // Edit last sent message
+        if (telegramEditLastBtn) {
+            telegramEditLastBtn.addEventListener('click', async () => {
+                try {
+                    const chatId = currentTelegramChatId;
+                    if (!chatId) return;
+                    const list = telegramChatMessages[chatId] || [];
+                    const lastMine = [...list].reverse().find(m => m && m.fromMe && m.body && String(m.id).match(/^\d+$/));
+                    if (!lastMine) {
+                        alert('No editable outgoing message found in this chat.');
+                        return;
+                    }
+                    const nextText = prompt('Edit last message:', lastMine.body);
+                    if (nextText === null) return;
+                    const resp = await fetch(`${TELEGRAM_API_URL}/api/telegram/edit`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ chat_id: chatId, message_id: lastMine.id, text: String(nextText) }),
+                        signal: AbortSignal.timeout(20000)
+                    });
+                    const data = await resp.json().catch(() => null);
+                    if (!resp.ok || !data || !data.success) {
+                        alert('Failed to edit: ' + ((data && data.error) ? data.error : `HTTP ${resp.status}`));
+                        return;
+                    }
+                    lastMine.body = String(nextText);
+                    if (chatId === currentTelegramChatId) renderTelegramMessages(list);
+                } catch (e) {
+                    alert('Failed to edit: ' + (e.message || String(e)));
+                }
+            });
+        }
+
+        // Clear chat history (best-effort)
+        if (telegramClearChatBtn) {
+            telegramClearChatBtn.addEventListener('click', async () => {
+                try {
+                    const chatId = currentTelegramChatId;
+                    if (!chatId) return;
+                    const ok = confirm('Clear chat history? This may not be reversible.');
+                    if (!ok) return;
+                    
+                    const resp = await fetch(`${TELEGRAM_API_URL}/api/telegram/clear`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ chat_id: chatId, revoke: true }),
+                        signal: AbortSignal.timeout(30000)
+                    });
+                    const data = await resp.json().catch(() => null);
+                    if (!resp.ok || !data || !data.success) {
+                        alert('Failed to clear chat: ' + ((data && data.error) ? data.error : `HTTP ${resp.status}`));
+                        return;
+                    }
+                    telegramChatMessages[chatId] = [];
+                    if (telegramCount) telegramCount.textContent = '0 messages';
+                    renderTelegramMessages([]);
+                } catch (e) {
+                    alert('Failed to clear chat: ' + (e.message || String(e)));
+                }
+            });
+        }
+
+        async function loadOlderTelegramMessages(chatId) {
+            if (!chatId) return;
+            const paging = telegramChatPaging[chatId] || (telegramChatPaging[chatId] = { loadingOlder: false, reachedStart: false, oldestId: null });
+            if (paging.loadingOlder || paging.reachedStart) return;
+            if (!paging.oldestId) return;
+            
+            paging.loadingOlder = true;
+            try {
+                const container = document.getElementById('telegramMessagesContainer');
+                const prevScrollHeight = container ? container.scrollHeight : 0;
+                const prevScrollTop = container ? container.scrollTop : 0;
+                
+                const resp = await fetch(`${TELEGRAM_API_URL}/api/telegram/messages`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ chat_id: chatId, limit: 50, before_id: paging.oldestId }),
+                    signal: AbortSignal.timeout(20000)
+                });
+                const data = await resp.json().catch(() => null);
+                if (!resp.ok || !data || !data.success) {
+                    return;
+                }
+                
+                const older = data.messages || [];
+                applyReadStatusFromChat(chatId, older);
+                
+                const list = telegramChatMessages[chatId] || (telegramChatMessages[chatId] = []);
+                // Prepend, de-dupe by id
+                const existingIds = new Set(list.map(m => String(m.id)));
+                const merged = [...older.filter(m => !existingIds.has(String(m.id))), ...list];
+                telegramChatMessages[chatId] = merged;
+                
+                paging.oldestId = data.oldest_id || (merged[0] ? merged[0].id : paging.oldestId);
+                paging.reachedStart = !!data.reached_start || older.length === 0;
+                
+                if (chatId === currentTelegramChatId) {
+                    renderTelegramMessages(telegramChatMessages[chatId], false);
+                    // Maintain scroll position after prepend
+                    if (container) {
+                        const newScrollHeight = container.scrollHeight;
+                        container.scrollTop = (newScrollHeight - prevScrollHeight) + prevScrollTop;
+                    }
+                }
+            } finally {
+                paging.loadingOlder = false;
+            }
+        }
+
+        // Infinite scroll: load older messages when scrolled near top
+        {
+            const _container = document.getElementById('telegramMessagesContainer');
+            if (_container) _container.addEventListener('scroll', () => {
+                if (!currentTelegramChatId) return;
+                if (_container.scrollTop <= 40) {
+                    loadOlderTelegramMessages(currentTelegramChatId);
+                }
+            });
+        }
+
+        // Long-press (2s) to edit an unread outgoing message
+        (function setupTelegramLongPressAndContextMenu() {
+            const telegramMessagesContainer = document.getElementById('telegramMessagesContainer');
+            if (!telegramMessagesContainer) return;
+            let pressTimer = null;
+            let pressTarget = null;
+            const PRESS_MS = 2000;
+            
+            function clearPress() {
+                if (pressTimer) clearTimeout(pressTimer);
+                pressTimer = null;
+                pressTarget = null;
+            }
+            
+            function getMsgEl(e) {
+                const el = e.target && e.target.closest ? e.target.closest('.telegram-message[data-msg-id]') : null;
+                return el;
+            }
+            
+            async function editMessageByEl(msgEl) {
+                const chatId = currentTelegramChatId;
+                if (!chatId || !msgEl) return;
+                const msgId = msgEl.dataset.msgId;
+                const isMe = msgEl.dataset.fromMe === '1';
+                const status = msgEl.dataset.status || '';
+                if (!isMe) return;
+                if (status === 'read') return; // only unread outgoing
+                
+                const list = telegramChatMessages[chatId] || [];
+                const msg = list.find(m => String(m.id) === String(msgId));
+                if (!msg || !msg.body) return;
+                
+                const nextText = prompt('Edit message:', msg.body);
+                if (nextText === null) return;
+                
+                const resp = await fetch(`${TELEGRAM_API_URL}/api/telegram/edit`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ chat_id: chatId, message_id: msgId, text: String(nextText) }),
+                    signal: AbortSignal.timeout(20000)
+                });
+                const data = await resp.json().catch(() => null);
+                if (!resp.ok || !data || !data.success) {
+                    alert('Failed to edit: ' + ((data && data.error) ? data.error : `HTTP ${resp.status}`));
+                    return;
+                }
+                msg.body = String(nextText);
+                renderTelegramMessages(list);
+            }
+            
+            telegramMessagesContainer.addEventListener('mousedown', (e) => {
+                if (e.button !== 0) return;
+                const el = getMsgEl(e);
+                if (!el) return;
+                pressTarget = el;
+                clearPress();
+                pressTimer = setTimeout(() => {
+                    editMessageByEl(pressTarget);
+                    clearPress();
+                }, PRESS_MS);
+            });
+            telegramMessagesContainer.addEventListener('mouseup', clearPress);
+            telegramMessagesContainer.addEventListener('mouseleave', clearPress);
+            telegramMessagesContainer.addEventListener('mousemove', (e) => {
+                // cancel on drag
+                if (pressTimer) clearPress();
+            });
+            telegramMessagesContainer.addEventListener('touchstart', (e) => {
+                const el = getMsgEl(e);
+                if (!el) return;
+                pressTarget = el;
+                clearPress();
+                pressTimer = setTimeout(() => {
+                    editMessageByEl(pressTarget);
+                    clearPress();
+                }, PRESS_MS);
+            }, { passive: true });
+            telegramMessagesContainer.addEventListener('touchend', clearPress);
+            telegramMessagesContainer.addEventListener('touchcancel', clearPress);
+            
+            // Right-click delete
+            telegramMessagesContainer.addEventListener('contextmenu', async (e) => {
+                const el = getMsgEl(e);
+                if (!el) return;
+                e.preventDefault();
+                const chatId = currentTelegramChatId;
+                const msgId = el.dataset.msgId;
+                if (!chatId || !msgId) return;
+                const ok = confirm('Delete this message?');
+                if (!ok) return;
+                const resp = await fetch(`${TELEGRAM_API_URL}/api/telegram/delete`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ chat_id: chatId, message_id: msgId, revoke: true }),
+                    signal: AbortSignal.timeout(20000)
+                });
+                const data = await resp.json().catch(() => null);
+                if (!resp.ok || !data || !data.success) {
+                    alert('Failed to delete: ' + ((data && data.error) ? data.error : `HTTP ${resp.status}`));
+                    return;
+                }
+                const list = telegramChatMessages[chatId] || [];
+                telegramChatMessages[chatId] = list.filter(m => String(m.id) !== String(msgId));
+                if (chatId === currentTelegramChatId) renderTelegramMessages(telegramChatMessages[chatId]);
+            });
+        })();
+
+        if (telegramMessageInput) {
+            telegramMessageInput.addEventListener('input', () => {
+                if (telegramSendButton) {
+                    telegramSendButton.disabled = !telegramMessageInput.value.trim() || !currentTelegramChatId;
+                }
+            });
+            
+            telegramMessageInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    sendTelegramMessage();
+                }
+            });
+        }
+
+        if (telegramSendButton) {
+            telegramSendButton.addEventListener('click', sendTelegramMessage);
+        }
+
+        // Telegram functionality - Node.js backend
         const telegramShowButton = document.getElementById('telegramShowButton');
         const telegramMessagesContainer = document.getElementById('telegramMessagesContainer');
         const telegramChatsList = document.getElementById('telegramChatsList');
         const telegramCurrentChat = document.getElementById('telegramCurrentChat');
         const telegramCount = document.getElementById('telegramCount');
-        let allTelegramMessages = [];
-        let messagesByChat = {};
+        
+        // Telegram state variables
+        let telegramChats = [];
+        let telegramChatMessages = {};
         let currentChatId = null;
-        let totalTelegramCount = 0;
-
+        let telegramChatPaging = {}; // chatId -> { oldestId, reachedStart, loadingOlder }
+        
+        // Helper functions
         function getTelegramInitials(name) {
             if (!name) return '?';
             const parts = name.trim().split(' ');
@@ -1438,7 +1969,7 @@
             }
             return name.substring(0, 2).toUpperCase();
         }
-
+        
         function getTelegramAvatarColor(name) {
             if (!name) return '#3390ec';
             let hash = 0;
@@ -1446,477 +1977,643 @@
                 hash = name.charCodeAt(i) + ((hash << 5) - hash);
             }
             const colors = [
-                '#3390ec', '#e17076', '#fdcb6e', '#6c5ce7', '#a29bfe',
-                '#fd79a8', '#00b894', '#00cec9', '#55efc4', '#74b9ff'
+                '#3390ec', '#e17076', '#6c5ce7', '#00b894', '#fdcb6e',
+                '#e84393', '#0984e3', '#00cec9', '#55a3ff', '#a29bfe'
             ];
             return colors[Math.abs(hash) % colors.length];
         }
-
+        
         function formatTelegramTimestamp(timestamp) {
             if (!timestamp) return '';
-            try {
-                const date = new Date(timestamp);
-                const now = new Date();
-                const diffMs = now - date;
-                const diffMins = Math.floor(diffMs / 60000);
-                const diffHours = Math.floor(diffMs / 3600000);
-                const diffDays = Math.floor(diffMs / 86400000);
-
-                if (diffMins < 1) return 'now';
-                if (diffMins < 60) return `${diffMins}m`;
-                if (diffHours < 24) return `${diffHours}h`;
-                if (diffDays < 7) return `${diffDays}d`;
-                
-                const month = date.toLocaleString('default', { month: 'short' });
-                const day = date.getDate();
-                return `${month} ${day}`;
-            } catch (e) {
-                return timestamp;
+            const date = new Date(timestamp * 1000);
+            const now = new Date();
+            const diff = now - date;
+            const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+            
+            if (days === 0) {
+                return formatTelegramTime(timestamp);
+            } else if (days === 1) {
+                return 'Yesterday';
+            } else if (days < 7) {
+                return date.toLocaleDateString('en-US', { weekday: 'short' });
+            } else {
+                return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
             }
         }
-
+        
         function formatTelegramTime(timestamp) {
             if (!timestamp) return '';
-            try {
-                const date = new Date(timestamp);
-                return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: false });
-            } catch (e) {
-                return timestamp;
-            }
+            const date = new Date(timestamp * 1000);
+            return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
         }
-
+        
         function formatTelegramMessage(text) {
             if (!text) return '';
-            let formatted = text
-                .replace(/&/g, '&amp;')
-                .replace(/</g, '&lt;')
-                .replace(/>/g, '&gt;')
-                .replace(/\n/g, '<br>')
-                .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-                .replace(/\*(.+?)\*/g, '<em>$1</em>')
-                .replace(/`(.+?)`/g, '<code>$1</code>');
-            return formatted;
+            return escapeHtml(text).replace(/\n/g, '<br>');
         }
-
-        function groupMessagesByChat(messages) {
-            const grouped = {};
-            messages.forEach(msg => {
-                const chatId = msg.chat_id || 'unknown';
-                if (!grouped[chatId]) {
-                    grouped[chatId] = {
-                        chatId: chatId,
-                        chatName: msg.chat_name || 'Unknown',
-                        messages: []
-                    };
-                }
-                grouped[chatId].messages.push(msg);
-            });
-            
-            // Sort messages within each chat by timestamp
-            Object.keys(grouped).forEach(chatId => {
-                grouped[chatId].messages.sort((a, b) => {
-                    const timeA = new Date(a.timestamp || 0).getTime();
-                    const timeB = new Date(b.timestamp || 0).getTime();
-                    return timeA - timeB; // Oldest first
-                });
-            });
-            
-            return grouped;
+        
+        function escapeHtml(text) {
+            if (!text) return '';
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
         }
-
+        
         function renderTelegramChats() {
-            const chats = Object.values(messagesByChat);
-            chats.sort((a, b) => {
-                const lastMsgA = a.messages[a.messages.length - 1];
-                const lastMsgB = b.messages[b.messages.length - 1];
-                const timeA = new Date(lastMsgA?.timestamp || 0).getTime();
-                const timeB = new Date(lastMsgB?.timestamp || 0).getTime();
-                return timeB - timeA; // Most recent first
-            });
-
-            if (chats.length === 0) {
+            if (!telegramChatsList) return;
+            
+            if (telegramChats.length === 0) {
                 telegramChatsList.innerHTML = '<div class="telegram-sidebar-empty">No chats found</div>';
                 return;
             }
-
-            const chatsHTML = chats.map(chat => {
-                const lastMsg = chat.messages[chat.messages.length - 1];
-                const preview = lastMsg?.body ? (lastMsg.body.length > 30 ? lastMsg.body.substring(0, 30) + '...' : lastMsg.body) : 'No messages';
-                const time = formatTelegramTimestamp(lastMsg?.timestamp);
-                const isActive = currentChatId === chat.chatId;
-                const initials = getTelegramInitials(chat.chatName);
-                const avatarColor = getTelegramAvatarColor(chat.chatName);
+            
+            telegramChatsList.innerHTML = telegramChats.map(chat => {
+                const initials = getTelegramInitials(chat.name);
+                const avatarColor = getTelegramAvatarColor(chat.name);
+                const lastMessageTime = chat.last_message_time ? formatTelegramTimestamp(chat.last_message_time) : '';
+                const lastMessage = chat.last_message ? (chat.last_message.length > 40 ? chat.last_message.substring(0, 40) + '...' : chat.last_message) : '';
+                const unreadBadge = chat.unread_count > 0 ? `<span class="telegram-unread-badge">${chat.unread_count}</span>` : '';
+                const avatarHtml = chat.avatar_url ? 
+                    `<img src="${chat.avatar_url}" alt="${escapeHtml(chat.name)}" class="telegram-avatar-img">` :
+                    `<div class="telegram-avatar" style="background-color: ${avatarColor}">${initials}</div>`;
                 
                 return `
-                    <div class="telegram-chat-item ${isActive ? 'active' : ''}" data-chat-id="${chat.chatId}">
-                        <div class="telegram-chat-avatar" style="background-color: ${avatarColor}">
-                            ${initials}
-                </div>
+                    <div class="telegram-chat-item" data-chat-id="${chat.contact_id}" onclick="selectTelegramChat('${chat.contact_id}')">
+                        ${avatarHtml}
                         <div class="telegram-chat-info">
-                            <div class="telegram-chat-name">${chat.chatName}</div>
-                            <div class="telegram-chat-preview">${preview}</div>
-                        </div>
-                        <div class="telegram-chat-meta">
-                            <span class="telegram-chat-time">${time}</span>
-                            ${chat.messages.filter(m => !m.is_read && !m.is_sent).length > 0 ? 
-                                `<span class="telegram-chat-unread">${chat.messages.filter(m => !m.is_read && !m.is_sent).length}</span>` : ''}
+                            <div class="telegram-chat-header">
+                                <span class="telegram-chat-name">${escapeHtml(chat.name)}</span>
+                                ${lastMessageTime ? `<span class="telegram-chat-time">${lastMessageTime}</span>` : ''}
+                            </div>
+                            <div class="telegram-chat-preview">
+                                <span class="telegram-chat-last-message">${formatTelegramMessage(lastMessage)}</span>
+                                ${unreadBadge}
+                            </div>
+                            ${chat.username ? `<div class="telegram-chat-username">@${escapeHtml(chat.username)}</div>` : ''}
+                            ${chat.phone ? `<div class="telegram-chat-phone">${escapeHtml(chat.phone)}</div>` : ''}
+                            ${chat.is_group ? `<div class="telegram-chat-type">Group</div>` : ''}
+                            ${chat.is_channel ? `<div class="telegram-chat-type">Channel</div>` : ''}
                         </div>
                     </div>
                 `;
             }).join('');
-
-            telegramChatsList.innerHTML = chatsHTML;
-
-            // Add click handlers
-            document.querySelectorAll('.telegram-chat-item').forEach(item => {
-                item.addEventListener('click', () => {
-                    const chatId = item.dataset.chatId;
-                    selectTelegramChat(chatId);
-                });
-            });
         }
 
-        function selectTelegramChat(chatId) {
+        async function loadTelegramAvatars(maxToLoad = 30) {
+            try {
+                if (!Array.isArray(telegramChats) || telegramChats.length === 0) return;
+                const toLoad = telegramChats
+                    .filter(c => c && c.contact_id && !c.avatar_url)
+                    .slice(0, Math.max(0, maxToLoad));
+
+                const concurrency = 5;
+                for (let i = 0; i < toLoad.length; i += concurrency) {
+                    const batch = toLoad.slice(i, i + concurrency);
+                    await Promise.all(batch.map(async (chat) => {
+                        try {
+                            const resp = await fetch(`${TELEGRAM_API_URL}/api/telegram/avatar?contact_id=${encodeURIComponent(chat.contact_id)}`, {
+                                method: 'GET',
+                                signal: AbortSignal.timeout(15000)
+                            });
+                            if (!resp.ok) return;
+                            const data = await resp.json();
+                            if (data && data.success && data.avatar_url) {
+                                chat.avatar_url = data.avatar_url;
+                            }
+                        } catch (e) {
+                            // ignore avatar errors
+                        }
+                    }));
+                    // Re-render occasionally so avatars pop in
+                    renderTelegramChats();
+                }
+            } catch (e) {
+                // ignore
+            }
+        }
+        
+        function updateTelegramChatInList(chatId, message) {
+            const chat = telegramChats.find(c => c.contact_id === chatId);
+            if (chat) {
+                chat.last_message = message.body || '';
+                chat.last_message_time = message.timestamp;
+                if (!message.fromMe) {
+                    chat.unread_count = (chat.unread_count || 0) + 1;
+                }
+                renderTelegramChats();
+            }
+        }
+
+        function applyReadStatusFromChat(chatId, messages) {
+            const chat = telegramChats.find(c => c.contact_id === chatId);
+            const readMax = chat && typeof chat.read_outbox_max_id === 'number' ? chat.read_outbox_max_id : null;
+            if (!Number.isFinite(readMax)) return;
+            for (const m of messages) {
+                const mid = parseInt(String(m.id), 10);
+                if (m.fromMe && Number.isFinite(mid)) {
+                    m.delivery_status = (mid <= readMax) ? 'read' : (m.delivery_status || 'sent');
+                }
+            }
+        }
+
+        // Make selectTelegramChat globally accessible
+        window.selectTelegramChat = async function(chatId) {
             currentChatId = chatId;
-            currentTelegramChatId = chatId;  // Update for send function
-            const chat = messagesByChat[chatId];
-            if (!chat) return;
+            currentTelegramChatId = chatId;
+            
+            // Find chat info
+            const chatInfo = telegramChats.find(c => c.contact_id === chatId);
+            if (!chatInfo) return;
 
-            telegramCurrentChat.textContent = chat.chatName;
-            telegramCount.textContent = `${chat.messages.length} messages`;
-
-            // Render messages for this chat
-            renderTelegramMessages(chat.messages);
+            if (telegramCurrentChat) telegramCurrentChat.textContent = chatInfo.name;
+            if (telegramMessagesContainer) {
+                telegramMessagesContainer.innerHTML = '<div class="telegram-empty-state"><p>Loading messages...</p></div>';
+            }
 
             // Show input area
             const telegramInputContainer = document.getElementById('telegramInputContainer');
             if (telegramInputContainer) {
                 telegramInputContainer.style.display = 'block';
             }
+            if (telegramAttachButton) telegramAttachButton.disabled = false;
+            if (telegramEditLastBtn) telegramEditLastBtn.disabled = false;
+            if (telegramClearChatBtn) telegramClearChatBtn.disabled = false;
 
             // Update active state
             document.querySelectorAll('.telegram-chat-item').forEach(item => {
                 item.classList.toggle('active', item.dataset.chatId === chatId);
             });
 
-            // Focus input and update send button state
-            const messageInput = document.getElementById('telegramMessageInput');
-            if (messageInput) {
-                messageInput.focus();
-                // Update send button state
-                if (telegramSendButton) {
-                    telegramSendButton.disabled = !messageInput.value.trim() || !currentTelegramChatId;
-                    console.log(`[DEBUG] Chat selected: ${chatId}, currentTelegramChatId: ${currentTelegramChatId}, send button disabled: ${telegramSendButton.disabled}`);
+            // Show cached messages immediately if available
+            if (telegramChatMessages[chatId] && telegramChatMessages[chatId].length > 0) {
+                console.log(`[*] Using cached messages for chat ${chatId} (${telegramChatMessages[chatId].length} messages)`);
+                const cachedMessages = telegramChatMessages[chatId];
+                if (telegramCount) telegramCount.textContent = `${cachedMessages.length} messages`;
+                renderTelegramMessages(cachedMessages);
+                
+                // Focus input immediately
+                if (telegramMessageInput) {
+                    telegramMessageInput.focus();
+                    if (telegramSendButton) {
+                        telegramSendButton.disabled = !telegramMessageInput.value.trim() || !currentTelegramChatId;
+                    }
                 }
-            }
-        }
-
-        function renderTelegramMessages(messages) {
-            if (!messages || messages.length === 0) {
-                telegramMessagesContainer.innerHTML = '<div class="telegram-empty-state"><p>No messages in this chat</p></div>';
+                
+                // Refresh messages in background (non-blocking)
+                setTimeout(async () => {
+                    try {
+                        const response = await fetch(`${TELEGRAM_API_URL}/api/telegram/messages`, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({
+                                chat_id: chatId,
+                                limit: 50
+                            })
+                        });
+                        if (response.ok) {
+                            const data = await response.json();
+                            if (data.success && data.messages) {
+                                telegramChatMessages[chatId] = data.messages;
+                                applyReadStatusFromChat(chatId, telegramChatMessages[chatId]);
+                                telegramChatPaging[chatId] = telegramChatPaging[chatId] || {};
+                                telegramChatPaging[chatId].oldestId = data.oldest_id || (telegramChatMessages[chatId][0] ? telegramChatMessages[chatId][0].id : null);
+                                telegramChatPaging[chatId].reachedStart = !!data.reached_start;
+                                // Only update if still on same chat
+                                if (currentChatId === chatId) {
+                                    if (telegramCount) telegramCount.textContent = `${data.messages.length} messages`;
+                                    renderTelegramMessages(data.messages);
+                                }
+                            }
+                        }
+                    } catch (error) {
+                        console.error('[!] Error refreshing messages:', error);
+                    }
+                }, 100);
                 return;
             }
-
-            let lastDate = null;
-            const messagesHTML = messages.map((msg, index) => {
-                const msgDate = new Date(msg.timestamp || Date.now());
-                const currentDate = msgDate.toDateString();
-                const showDateDivider = lastDate !== currentDate;
-                lastDate = currentDate;
-
-                const timeStr = formatTelegramTime(msg.timestamp);
-                const formattedBody = formatTelegramMessage(msg.body || '');
-                const isSent = msg.is_sent || false;
-
-                let html = '';
-                
-                // Date divider
-                if (showDateDivider) {
-                    const dateStr = msgDate.toLocaleDateString('en-US', { 
-                        weekday: 'long', 
-                        year: 'numeric', 
-                        month: 'long', 
-                        day: 'numeric' 
-                    });
-                    html += `<div class="telegram-date-divider"><span>${dateStr}</span></div>`;
-                }
-
-                // Message bubble
-                html += `
-                    <div class="telegram-message-wrapper ${isSent ? 'sent' : 'received'}">
-                        <div class="telegram-message-bubble">
-                            <div class="telegram-message-text">${formattedBody || '<em>No content</em>'}</div>
-                            <div class="telegram-message-time">${timeStr}</div>
-                        </div>
-                    </div>
-                `;
-
-                return html;
-            }).join('');
-
-            telegramMessagesContainer.innerHTML = messagesHTML;
-            telegramMessagesContainer.scrollTop = telegramMessagesContainer.scrollHeight;
-        }
-
-        function updateTelegramCount() {
-            if (!telegramCount) return;
-            const total = Object.values(messagesByChat).reduce((sum, ch) => sum + ch.messages.length, 0);
-            telegramCount.textContent = `${total} total messages`;
-        }
-
-        async function loadTelegramMessages() {
-            telegramShowButton.disabled = true;
-            telegramShowButton.textContent = 'Loading...';
-            allTelegramMessages = [];
-            messagesByChat = {};
-            currentChatId = null;
-            totalTelegramCount = 0;
-
+            
+            // Load messages for this chat on-demand (if not already cached)
             try {
-                console.log('[*] Requesting Telegram messages from backend...');
-                const response = await fetch('http://localhost:8000/api/telegram/messages', {
+                console.log(`[*] Loading messages for chat ${chatId}...`);
+                const response = await fetch(`${TELEGRAM_API_URL}/api/telegram/messages`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                     },
                     body: JSON.stringify({
-                        limit: 50  // Reduced from 200 to 50 for faster loading
+                        chat_id: chatId,
+                        limit: 50
                     })
                 });
 
-                console.log('[*] Response status:', response.status);
-                
-                // Handle non-OK responses (like 500 errors)
                 if (!response.ok) {
-                    let errorData;
-                    try {
-                        errorData = await response.json();
-                    } catch (e) {
-                        // If response is not JSON, create error object
-                        const errorText = await response.text();
-                        errorData = { detail: errorText || `HTTP ${response.status}: ${response.statusText}` };
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+
+                const data = await response.json();
+                if (data.success) {
+                    telegramChatMessages[chatId] = data.messages || [];
+                    applyReadStatusFromChat(chatId, telegramChatMessages[chatId]);
+                    telegramChatPaging[chatId] = telegramChatPaging[chatId] || {};
+                    telegramChatPaging[chatId].oldestId = data.oldest_id || (telegramChatMessages[chatId][0] ? telegramChatMessages[chatId][0].id : null);
+                    telegramChatPaging[chatId].reachedStart = !!data.reached_start;
+                    telegramChatPaging[chatId].loadingOlder = false;
+                } else {
+                    throw new Error(data.error || 'Failed to load messages');
+                }
+            } catch (error) {
+                console.error('[!] Error loading messages:', error);
+                if (telegramMessagesContainer) {
+                    telegramMessagesContainer.innerHTML = `<div class="telegram-empty-state"><p>Error loading messages: ${error.message}</p></div>`;
+                }
+                return;
+            }
+
+            // Render messages
+            const messages = telegramChatMessages[chatId] || [];
+            if (telegramCount) telegramCount.textContent = `${messages.length} messages`;
+            renderTelegramMessages(messages);
+
+            // Focus input and update send button state
+            if (telegramMessageInput) {
+                telegramMessageInput.focus();
+                if (telegramSendButton) {
+                    telegramSendButton.disabled = !telegramMessageInput.value.trim() || !currentTelegramChatId;
+                }
+            }
+        }
+
+        function renderTelegramMessages(messages, autoScroll = true) {
+            if (!telegramMessagesContainer || !messages || messages.length === 0) {
+                if (telegramMessagesContainer) {
+                    telegramMessagesContainer.innerHTML = '<div class="telegram-empty-state"><p>No messages</p></div>';
+                }
+                return;
+            }
+            
+            telegramMessagesContainer.innerHTML = messages.map(msg => {
+                const isMe = msg.fromMe;
+                const senderName = msg.sender_name || (isMe ? 'You' : 'Unknown');
+                const time = formatTelegramTime(msg.timestamp);
+                const date = formatTelegramTimestamp(msg.timestamp);
+                const messageClass = isMe ? 'telegram-message-out' : 'telegram-message-in';
+                
+                const statusHtml = isMe ? (() => {
+                    const st = msg.delivery_status === 'read' ? '✓✓' : '✓';
+                    const cls = msg.delivery_status === 'read' ? 'telegram-message-status read' : 'telegram-message-status';
+                    return `<span class="${cls}">${st}</span>`;
+                })() : '';
+                
+                let mediaHtml = '';
+                if (msg.hasMedia) {
+                    if (msg.mediaUrl) {
+                        if (msg.mediaMimetype && msg.mediaMimetype.startsWith('image/')) {
+                            mediaHtml = `<img src="${msg.mediaUrl}" alt="Media" class="telegram-message-media" onclick="window.open('${msg.mediaUrl}', '_blank')">`;
+                        } else {
+                            mediaHtml = `<div class="telegram-message-media-file">
+                                <a href="${msg.mediaUrl}" download="${msg.mediaFilename || 'file'}" class="telegram-media-download">
+                                    📎 ${msg.mediaFilename || 'Download file'}
+                                </a>
+                            </div>`;
+                        }
+                    } else {
+                        const label = msg.mediaFilename ? `📎 ${escapeHtml(msg.mediaFilename)}` : '📎 Load file';
+                        mediaHtml = `<div class="telegram-message-media-file">
+                            <button class="telegram-media-download" onclick="window.telegramLoadMedia && window.telegramLoadMedia('${currentTelegramChatId}', '${String(msg.id)}')">${label}</button>
+                        </div>`;
                     }
-                    const errorMsg = errorData.detail || errorData.error || errorData.message || JSON.stringify(errorData);
-                    console.error('[!] Backend error (HTTP ' + response.status + '):', errorMsg);
-                    throw new Error(errorMsg);
                 }
                 
-                const data = await response.json();
-                console.log('[*] Response data:', data);
+                return `
+                    <div class="telegram-message ${messageClass}" data-msg-id="${String(msg.id)}" data-from-me="${isMe ? '1' : '0'}" data-status="${msg.delivery_status || ''}">
+                        <div class="telegram-message-content">
+                            ${!isMe ? `<div class="telegram-message-sender">${escapeHtml(senderName)}</div>` : ''}
+                            ${msg.body ? `<div class="telegram-message-text">${formatTelegramMessage(msg.body)}</div>` : ''}
+                            ${mediaHtml}
+                            <div class="telegram-message-time">${time}${statusHtml}</div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+            
+            // Scroll to bottom unless caller wants to preserve scroll position (e.g. when prepending older messages)
+            if (autoScroll) {
+                telegramMessagesContainer.scrollTop = telegramMessagesContainer.scrollHeight;
+            }
+        }
 
-                if (data.success) {
-                    allTelegramMessages = data.messages || [];
-                    totalTelegramCount = typeof data.total_count === 'number' ? data.total_count : allTelegramMessages.length;
-                    
-                    // Group messages by chat
-                    messagesByChat = groupMessagesByChat(allTelegramMessages);
-                    
-                    // Render chats sidebar
-                    renderTelegramChats();
-                    
-                    // Auto-select first chat if available
-                    const chats = Object.keys(messagesByChat);
-                    if (chats.length > 0) {
-                        selectTelegramChat(chats[0]);
-                    } else {
-                        telegramMessagesContainer.innerHTML = '<div class="telegram-empty-state"><p>No messages found</p></div>';
+        function updateTelegramCount() {
+            if (telegramCount) {
+                const total = telegramChats.reduce((sum, chat) => sum + (chat.unread_count || 0), 0);
+                telegramCount.textContent = total > 0 ? `${total} unread` : 'All read';
+            }
+        }
+
+        async function loadTelegramMessages() {
+            console.log('[DEBUG] loadTelegramMessages called');
+            // Ensure realtime socket attempts are re-enabled when user hits Refresh
+            if (window.reconnectTelegramWebSocket) {
+                window.reconnectTelegramWebSocket();
+            }
+            if (telegramShowButton) {
+                telegramShowButton.disabled = true;
+                telegramShowButton.textContent = 'Loading...';
+            }
+            telegramChats = [];
+            telegramChatMessages = {};
+            currentChatId = null;
+            currentTelegramChatId = null;
+            telegramChatPaging = {};
+            const _tgInput = document.getElementById('telegramInputContainer');
+            if (_tgInput) _tgInput.style.display = 'none';
+            if (telegramAttachButton) telegramAttachButton.disabled = true;
+            if (telegramEditLastBtn) telegramEditLastBtn.disabled = true;
+            if (telegramClearChatBtn) telegramClearChatBtn.disabled = true;
+
+            // Clear previous content
+            if (telegramChatsList) {
+                telegramChatsList.innerHTML = '<div class="telegram-sidebar-empty">Loading chats...</div>';
+            }
+            if (telegramMessagesContainer) {
+                telegramMessagesContainer.innerHTML = '<div class="telegram-empty-state"><p>Loading...</p></div>';
+            }
+
+            try {
+                // Step 1: Check status
+                console.log('[*] Checking Telegram status...');
+                let statusResponse;
+                try {
+                    statusResponse = await fetch(`${TELEGRAM_API_URL}/api/telegram/status`, {
+                        method: 'GET',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        signal: AbortSignal.timeout(10000) // 10 second timeout
+                    });
+                } catch (fetchError) {
+                    if (fetchError.name === 'AbortError') {
+                        throw new Error('Request timeout: Telegram server is not responding');
+                    } else if (fetchError.message.includes('Failed to fetch') || fetchError.message.includes('ERR_CONNECTION_REFUSED')) {
+                        throw new Error('Cannot connect to Telegram server. Make sure the server is running on port 3001.');
                     }
-                    
-                    updateTelegramCount();
-                    console.log(`[OK] Got ${allTelegramMessages.length} Telegram messages in ${chats.length} chats`);
-                } else {
-                    const errorMsg = data.error || data.detail || JSON.stringify(data);
-                    console.error('[!] Backend error:', errorMsg);
-                    
-                    // Check if it's an authentication error
-                    if (errorMsg.includes('not authorized') || errorMsg.includes('authenticate') || errorMsg.includes('AUTH_KEY_UNREGISTERED') || errorMsg.includes('invalid or expired') || errorMsg.includes('too many times') || errorMsg.includes('rate limit')) {
-                        const isInvalidSession = errorMsg.includes('AUTH_KEY_UNREGISTERED') || errorMsg.includes('invalid or expired');
-                        const needsVerificationCode = errorMsg.includes('Verification code') || errorMsg.includes('verification code required');
-                        const isRateLimited = errorMsg.includes('too many times') || errorMsg.includes('rate limit') || errorMsg.includes('tried logging in too many');
-                        
-                        // Format error message - replace newlines with <br> for HTML display
-                        const formattedErrorMsg = errorMsg.replace(/\n/g, '<br>');
-                        
+                    throw fetchError;
+                }
+
+                if (!statusResponse.ok) {
+                    throw new Error(`HTTP ${statusResponse.status}: ${statusResponse.statusText}`);
+                }
+
+                const statusData = await statusResponse.json();
+                console.log('[*] Telegram status:', statusData);
+                
+                // Check if API credentials are missing
+                if (!statusData.has_api_credentials) {
+                    if (telegramMessagesContainer) {
+                        telegramMessagesContainer.innerHTML = `
+                            <div class="telegram-empty-state">
+                                <h3>🔐 API Credentials Required</h3>
+                                <p style="margin-bottom: 20px;">To use Telegram, you need to set up API credentials from Telegram.</p>
+                                <div style="text-align: left; max-width: 600px; margin: 0 auto; background: rgba(0,0,0,0.05); padding: 20px; border-radius: 8px;">
+                                    <h4 style="margin-top: 0;">Step 1: Get API Credentials</h4>
+                                    <ol style="line-height: 1.8;">
+                                        <li>Go to <a href="https://my.telegram.org" target="_blank" style="color: #0088cc;">https://my.telegram.org</a></li>
+                                        <li>Log in with your phone number</li>
+                                        <li>Go to "API development tools"</li>
+                                        <li>Create a new application (if needed)</li>
+                                        <li>Copy your <strong>API ID</strong> and <strong>API Hash</strong></li>
+                                    </ol>
+                                    <h4 style="margin-top: 20px;">Step 2: Add Credentials to Environment</h4>
+                                    <p style="margin-bottom: 10px;">Set environment variables before starting the Telegram server:</p>
+                                    <code style="display: block; background: rgba(0,0,0,0.1); padding: 10px; border-radius: 4px; margin: 10px 0; font-size: 12px; font-family: 'Courier New', monospace;">
+                                        TELEGRAM_API_ID=YOUR_API_ID<br>
+                                        TELEGRAM_API_HASH=YOUR_API_HASH
+                                    </code>
+                                    <p style="margin-top: 10px; font-size: 12px; color: #666;">
+                                        Then start the Telegram server: <code style="background: rgba(0,0,0,0.1); padding: 2px 6px; border-radius: 4px;">npm run telegram</code>
+                                    </p>
+                                </div>
+                            </div>
+                        `;
+                    }
+                    if (telegramShowButton) {
+                        telegramShowButton.disabled = false;
+                        telegramShowButton.textContent = 'Refresh';
+                    }
+                    return;
+                }
+                
+                // Check if authentication is required
+                if (!statusData.is_authenticated || !statusData.is_connected) {
+                    if (telegramMessagesContainer) {
                         telegramMessagesContainer.innerHTML = `
                             <div class="telegram-empty-state">
                                 <div class="telegram-empty-icon">🔐</div>
-                                <h3>${isRateLimited ? 'Rate Limited - Please Wait' : isInvalidSession ? 'Invalid Session File' : needsVerificationCode ? 'Verification Code Required' : 'Authentication Required'}</h3>
-                                <div style="margin-top: 12px; padding: 16px; background: rgba(0,0,0,0.05); border-radius: 8px; max-width: 600px; text-align: left; margin-left: auto; margin-right: auto;">
-                                    <p style="font-size: 13px; color: #2b2b2b; line-height: 1.8; white-space: pre-line; margin: 0; font-family: 'Segoe UI', sans-serif;">${formattedErrorMsg}</p>
-                                </div>
-                                <p style="margin-top: 20px; font-size: 13px; color: #707579; max-width: 500px; line-height: 1.6;">
-                                    ${needsVerificationCode ? 
-                                        'This app doesn\'t have a verification code input. ' : 
-                                        isInvalidSession ? 
-                                            'Your Telegram session file is invalid or expired. ' : 
-                                            'Your Telegram client is not authenticated. '
-                                    }
-                                    ${needsVerificationCode ? 
-                                        'Please run the authentication script in your terminal:' : 
-                                        'Please follow these steps:'
-                                    }
+                                <h3>Authentication Required</h3>
+                                <p style="margin-top: 16px; color: #707579; max-width: 500px; line-height: 1.6;">
+                                    Please authenticate with Telegram. Enter your phone number to receive a verification code.
                                 </p>
-                                ${isRateLimited ? `
-                                    <div style="margin-top: 20px; text-align: left; max-width: 500px; background: rgba(255, 193, 7, 0.1); padding: 16px; border-radius: 8px; border-left: 4px solid #ffc107;">
-                                        <div style="color: #707579; font-size: 13px; line-height: 1.8;">
-                                            <p style="margin-bottom: 12px; font-weight: 600; color: #856404;">⚠️ Rate Limit Active</p>
-                                            <p>Telegram has temporarily blocked authentication attempts. This usually happens when:</p>
-                                            <ul style="margin: 8px 0; padding-left: 20px;">
-                                                <li>Too many verification code requests were made</li>
-                                                <li>Multiple failed authentication attempts occurred</li>
-                                            </ul>
-                                            <p style="margin-top: 12px; font-weight: 600;">What to do:</p>
-                                            <ol style="margin: 8px 0; padding-left: 20px;">
-                                                <li><strong>Wait 24 hours</strong> for the rate limit to reset</li>
-                                                <li>Then try authenticating again: <code style="background: rgba(0,0,0,0.1); padding: 2px 6px; border-radius: 4px;">python authenticate_telegram.py</code></li>
-                                                <li>Make sure to enter the verification code correctly on the first try</li>
-                                            </ol>
-                                        </div>
-                                    </div>
-                                ` : needsVerificationCode ? `
-                                    <div style="margin-top: 20px; text-align: left; max-width: 500px; background: rgba(0,0,0,0.05); padding: 16px; border-radius: 8px;">
-                                        <div style="color: #707579; font-size: 13px; line-height: 1.8;">
-                                            <p style="margin-bottom: 12px; font-weight: 600; color: #2b2b2b;">Run this command in your terminal:</p>
-                                            <code style="display: block; background: rgba(0,0,0,0.1); padding: 12px; border-radius: 6px; font-family: 'Courier New', monospace; font-size: 13px; color: #2b2b2b; margin-bottom: 12px;">
-                                                python authenticate_telegram.py
-                                            </code>
-                                            <p style="margin-top: 12px;">This will open a window where you can enter your verification code from the Telegram app.</p>
-                                        </div>
-                                    </div>
-                                ` : `
-                                    <div style="margin-top: 20px; text-align: left; max-width: 500px; background: rgba(0,0,0,0.05); padding: 16px; border-radius: 8px;">
-                                        <ol style="color: #707579; font-size: 13px; line-height: 1.8; margin-left: 20px;">
-                                            <li>Stop your backend server (Ctrl+C)</li>
-                                            <li>Run: <code style="background: rgba(0,0,0,0.1); padding: 2px 6px; border-radius: 4px;">python authenticate_telegram.py</code></li>
-                                            <li>Follow the prompts to enter your phone number and verification code</li>
-                                            <li>Restart your backend server</li>
-                                            <li>Click "Refresh" again</li>
-                                        </ol>
-                                    </div>
-                                    <button id="deleteTelegramSessionBtn" class="telegram-delete-session-btn" style="margin-top: 20px; padding: 10px 20px; background: #e17076; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500;">
-                                        Delete Session File (requires server restart)
+                                <div style="margin-top: 20px; max-width: 400px;">
+                                    <input type="text" id="telegramPhoneInput" placeholder="+1234567890" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px; margin-bottom: 10px;">
+                                    <button id="telegramAuthPhoneBtn" style="width: 100%; padding: 10px; background: #0088cc; color: white; border: none; border-radius: 6px; cursor: pointer;">
+                                        Send Code
                                     </button>
-                                `}
+                                </div>
+                                <div id="telegramAuthCodeDiv" style="margin-top: 20px; max-width: 400px; display: none;">
+                                    <input type="text" id="telegramCodeInput" placeholder="Verification code" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px; margin-bottom: 10px;">
+                                    <input type="text" id="telegramPasswordInput" placeholder="2FA Password (if required)" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px; margin-bottom: 10px; display: none;">
+                                    <button id="telegramAuthCodeBtn" style="width: 100%; padding: 10px; background: #0088cc; color: white; border: none; border-radius: 6px; cursor: pointer;">
+                                        Verify Code
+                                    </button>
+                                </div>
                             </div>
                         `;
                         
-                        // Add click handler for delete session button
-                        const deleteBtn = document.getElementById('deleteTelegramSessionBtn');
-                        if (deleteBtn) {
-                            deleteBtn.addEventListener('click', async () => {
-                                if (confirm('This will delete your Telegram session file. You will need to restart the server and authenticate again. Continue?')) {
+                        // Phone authentication
+                        const phoneBtn = document.getElementById('telegramAuthPhoneBtn');
+                        const phoneInput = document.getElementById('telegramPhoneInput');
+                        if (phoneBtn && phoneInput) {
+                            phoneBtn.addEventListener('click', async () => {
+                                const phone = phoneInput.value.trim();
+                                if (!phone) {
+                                    alert('Please enter your phone number');
+                                    return;
+                                }
+                                try {
+                                    const response = await fetch(`${TELEGRAM_API_URL}/api/telegram/auth/phone`, {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({ phone_number: phone })
+                                    });
+                                    
+                                    let data;
                                     try {
-                                        const response = await fetch('http://localhost:8000/api/telegram/delete-session', {
-                                            method: 'POST'
-                                        });
-                                        const data = await response.json();
-                                        if (response.ok && data.success) {
-                                            alert(data.message || 'Session file deleted. Please restart your backend server and click Refresh to authenticate.');
+                                        const text = await response.text();
+                                        if (text) {
+                                            data = JSON.parse(text);
                                         } else {
-                                            alert('Failed to delete session file: ' + (data.detail || data.message || 'Unknown error'));
+                                            data = { success: false, error: 'Empty response from server' };
                                         }
-                                    } catch (error) {
-                                        alert('Error deleting session file: ' + error.message);
+                                    } catch (parseError) {
+                                        console.error('[Telegram] Error parsing response:', parseError);
+                                        data = { 
+                                            success: false, 
+                                            error: `Server error (HTTP ${response.status}): ${response.statusText}` 
+                                        };
                                     }
+                                    
+                                    if (!response.ok) {
+                                        // Show detailed error message
+                                        const errorMsg = (data && data.error) ? String(data.error) : `HTTP ${response.status}: ${response.statusText}`;
+                                        console.error('[Telegram] Auth error:', errorMsg);
+                                        alert(`Error: ${errorMsg}\n\nPlease check:\n- Phone number format (include country code, e.g., +1234567890)\n- API credentials are set in .env file\n- Server console for more details`);
+                                        return;
+                                    }
+                                    
+                                    if (data.success) {
+                                        document.getElementById('telegramAuthCodeDiv').style.display = 'block';
+                                        window.telegramPhoneCodeHash = data.phone_code_hash;
+                                        window.telegramPhoneNumber = phone;
+                                        alert('Code sent! Check your Telegram app for the verification code.');
+                                    } else {
+                                        alert('Error: ' + (data.error || 'Failed to send code'));
+                                    }
+                                } catch (error) {
+                                    console.error('[Telegram] Auth request error:', error);
+                                    alert('Error: ' + error.message + '\n\nMake sure the Telegram server is running on port 3001.');
                                 }
                             });
                         }
-                    } else {
-                        telegramMessagesContainer.innerHTML = `<div class="telegram-empty-state"><div class="telegram-empty-icon">⚠️</div><h3>Error</h3><p>${errorMsg}</p></div>`;
-                    }
-                    telegramChatsList.innerHTML = '<div class="telegram-sidebar-empty">Error loading chats</div>';
-                    if (telegramCount) telegramCount.textContent = 'Error';
-        }
-            } catch (error) {
-                console.error('[!] Exception:', error);
-                const errorMsg = error.message || 'Unknown error';
-                
-                // Check if it's an authentication error
-                if (errorMsg.includes('not authorized') || errorMsg.includes('authenticate') || errorMsg.includes('AUTH_KEY_UNREGISTERED') || errorMsg.includes('invalid or expired')) {
-                    const isInvalidSession = errorMsg.includes('AUTH_KEY_UNREGISTERED') || errorMsg.includes('invalid or expired');
-                    const needsVerificationCode = errorMsg.includes('Verification code') || errorMsg.includes('verification code required');
-                    
-                    telegramMessagesContainer.innerHTML = `
-                        <div class="telegram-empty-state">
-                            <div class="telegram-empty-icon">🔐</div>
-                            <h3>${isInvalidSession ? 'Invalid Session File' : needsVerificationCode ? 'Verification Code Required' : 'Authentication Required'}</h3>
-                            <p>Exception: ${errorMsg}</p>
-                                <p style="margin-top: 16px; font-size: 13px; color: #707579; max-width: 500px; line-height: 1.6;">
-                                    ${isRateLimited ? 
-                                        'Telegram has temporarily blocked authentication attempts due to too many login attempts. ' : 
-                                        needsVerificationCode ? 
-                                            'This app doesn\'t have a verification code input. ' : 
-                                            isInvalidSession ? 
-                                                'Your Telegram session file is invalid or expired. ' : 
-                                                'Your Telegram client is not authenticated. '
-                                    }
-                                    ${isRateLimited ? 
-                                        'Please wait 24 hours before trying to authenticate again. ' : 
-                                        needsVerificationCode ? 
-                                            'Please run the authentication script in your terminal:' : 
-                                            'Please follow these steps:'
-                                    }
-                                </p>
-                            ${needsVerificationCode ? `
-                                <div style="margin-top: 20px; text-align: left; max-width: 500px; background: rgba(0,0,0,0.05); padding: 16px; border-radius: 8px;">
-                                    <div style="color: #707579; font-size: 13px; line-height: 1.8;">
-                                        <p style="margin-bottom: 12px; font-weight: 600; color: #2b2b2b;">Run this command in your terminal:</p>
-                                        <code style="display: block; background: rgba(0,0,0,0.1); padding: 12px; border-radius: 6px; font-family: 'Courier New', monospace; font-size: 13px; color: #2b2b2b; margin-bottom: 12px;">
-                                            python authenticate_telegram.py
-                                        </code>
-                                        <p style="margin-top: 12px;">This will open a window where you can enter your verification code from the Telegram app.</p>
-                                    </div>
-                                </div>
-                            ` : `
-                                <div style="margin-top: 20px; text-align: left; max-width: 500px; background: rgba(0,0,0,0.05); padding: 16px; border-radius: 8px;">
-                                    <ol style="color: #707579; font-size: 13px; line-height: 1.8; margin-left: 20px;">
-                                        <li>Stop your backend server (Ctrl+C)</li>
-                                        <li>Run: <code style="background: rgba(0,0,0,0.1); padding: 2px 6px; border-radius: 4px;">python authenticate_telegram.py</code></li>
-                                        <li>Follow the prompts to enter your phone number and verification code</li>
-                                        <li>Restart your backend server</li>
-                                        <li>Click "Refresh" again</li>
-                                    </ol>
-                                </div>
-                                <button id="deleteTelegramSessionBtn2" class="telegram-delete-session-btn" style="margin-top: 20px; padding: 10px 20px; background: #e17076; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500;">
-                                    Delete Session File (requires server restart)
-                                </button>
-                            `}
-                        </div>
-                    `;
-                    
-                    // Add click handler for delete session button
-                    const deleteBtn = document.getElementById('deleteTelegramSessionBtn2');
-                    if (deleteBtn) {
-                        deleteBtn.addEventListener('click', async () => {
-                            if (confirm('This will delete your Telegram session file. You will need to restart the server and authenticate again. Continue?')) {
+                        
+                        // Code verification
+                        const codeBtn = document.getElementById('telegramAuthCodeBtn');
+                        const codeInput = document.getElementById('telegramCodeInput');
+                        const passwordInput = document.getElementById('telegramPasswordInput');
+                        if (codeBtn && codeInput) {
+                            codeBtn.addEventListener('click', async () => {
+                                const code = codeInput.value.trim();
+                                const password = passwordInput ? passwordInput.value.trim() : '';
+                                if (!code && !password) {
+                                    alert('Please enter verification code or password');
+                                    return;
+                                }
                                 try {
-                                    const response = await fetch('http://localhost:8000/api/telegram/delete-session', {
-                                        method: 'POST'
+                                    const response = await fetch(`${TELEGRAM_API_URL}/api/telegram/auth/code`, {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({
+                                            phone_code: code,
+                                            phone_code_hash: window.telegramPhoneCodeHash,
+                                            password: password || undefined
+                                        })
                                     });
                                     const data = await response.json();
-                                    if (response.ok && data.success) {
-                                        alert('Session file deleted. Please restart your backend server and click Refresh to authenticate.');
+                                    if (data.success || data.is_authenticated) {
+                                        alert('Authentication successful! Refreshing...');
+                                        loadTelegramMessages();
+                                    } else if (data.password_required) {
+                                        if (passwordInput) passwordInput.style.display = 'block';
+                                        alert('2FA password required');
                                     } else {
-                                        alert('Failed to delete session file: ' + (data.detail || data.message || 'Unknown error'));
+                                        alert('Error: ' + (data.error || 'Failed to verify code'));
                                     }
                                 } catch (error) {
-                                    alert('Error deleting session file: ' + error.message);
+                                    alert('Error: ' + error.message);
                                 }
-                            }
-                        });
+                            });
+                        }
                     }
-                } else {
-                    telegramMessagesContainer.innerHTML = `<div class="telegram-empty-state"><div class="telegram-empty-icon">⚠️</div><h3>Error</h3><p>Exception: ${errorMsg}</p></div>`;
+                    if (telegramShowButton) {
+                        telegramShowButton.disabled = false;
+                        telegramShowButton.textContent = 'Refresh';
+                    }
+                    return;
                 }
-                telegramChatsList.innerHTML = '<div class="telegram-sidebar-empty">Error loading chats</div>';
-                if (telegramCount) telegramCount.textContent = 'Error';
-            }
 
-            telegramShowButton.disabled = false;
-            telegramShowButton.textContent = 'Refresh';
+                // Step 2: Load contacts/chats
+                console.log('[*] Loading Telegram contacts...');
+                const contactsResponse = await fetch(`${TELEGRAM_API_URL}/api/telegram/contacts`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        limit: 100
+                    })
+                });
+
+                if (!contactsResponse.ok) {
+                    throw new Error(`HTTP ${contactsResponse.status}: ${contactsResponse.statusText}`);
+                }
+
+                const contactsData = await contactsResponse.json();
+                console.log('[*] Contacts data received:', contactsData);
+
+                if (contactsData.success) {
+                    telegramChats = contactsData.contacts || [];
+                    console.log(`[OK] Got ${telegramChats.length} Telegram contacts`);
+                    
+                    // Render chats sidebar
+                    renderTelegramChats();
+                    // Lazy-load real Telegram avatars (cached by backend)
+                    loadTelegramAvatars(40);
+                    
+                    if (telegramMessagesContainer) {
+                        telegramMessagesContainer.innerHTML = '<div class="telegram-empty-state"><p>Select a chat to view messages</p></div>';
+                    }
+                    
+                    updateTelegramCount();
+                } else {
+                    throw new Error(contactsData.error || 'Failed to load contacts');
+                }
+            } catch (error) {
+                console.error('[!] Exception:', error);
+                let errorMsg = error.message || 'Unknown error';
+                
+                // Provide more helpful error messages
+                if (errorMsg.includes('Failed to fetch') || errorMsg.includes('ERR_CONNECTION_REFUSED')) {
+                    errorMsg = 'Cannot connect to Telegram server. Please make sure:\n\n' +
+                        '1. The Telegram server is running (port 3001)\n' +
+                        '2. Run "python app.py" to start all servers\n' +
+                        '3. Wait a few seconds for servers to start\n' +
+                        '4. Refresh this page';
+                } else if (errorMsg.includes('timeout')) {
+                    errorMsg = 'Request timeout: The Telegram server is not responding. Please check if the server is running.';
+                }
+                
+                if (telegramMessagesContainer) {
+                    telegramMessagesContainer.innerHTML = `
+                        <div class="telegram-empty-state">
+                            <div class="telegram-empty-icon">⚠️</div>
+                            <h3>Error Loading Telegram</h3>
+                            <p style="white-space: pre-line; text-align: left; max-width: 600px; margin: 0 auto;">${escapeHtml(errorMsg)}</p>
+                            <button onclick="loadTelegramMessages()" style="margin-top: 20px; padding: 10px 20px; background: #0088cc; color: white; border: none; border-radius: 5px; cursor: pointer;">Retry</button>
+                        </div>
+                    `;
+                }
+                if (telegramChatsList) {
+                    telegramChatsList.innerHTML = '<div class="telegram-sidebar-empty">Error loading chats</div>';
+                }
+                if (telegramCount) telegramCount.textContent = 'Error';
+            } finally {
+                // Always re-enable the button
+                if (telegramShowButton) {
+                    telegramShowButton.disabled = false;
+                    telegramShowButton.textContent = 'Refresh';
+                }
+            }
         }
 
-        telegramShowButton.addEventListener('click', loadTelegramMessages);
+        // Telegram button handler
+        if (telegramShowButton) {
+            telegramShowButton.addEventListener('click', loadTelegramMessages);
+        }
+        
+        // Telegram WebSocket initializer (kept for compatibility with tab activation logic)
+        function initializeTelegramWebSocket() {
+            connectTelegramWebSocket();
+        }
 
         // WhatsApp functionality
         const whatsappShowButton = document.getElementById('whatsappShowButton');
@@ -3083,6 +3780,11 @@
                 
                 // Initialize WebSocket connection for real-time messages
                 initializeWhatsAppWebSocket();
+            } else if (tabName === 'telegram') {
+                console.log('[*] Telegram tab activated - initializing Telegram WebSocket...');
+                
+                // Initialize WebSocket connection for real-time messages
+                initializeTelegramWebSocket();
                 
                 // Initialize WhatsApp service first (lazy initialization)
                 try {
@@ -3173,7 +3875,6 @@
         const slackChannelsList = document.getElementById('slackChannelsList');
         const slackCurrentChannel = document.getElementById('slackCurrentChannel');
         const slackCount = document.getElementById('slackCount');
-        let allSlackMessages = [];
         let messagesByChannel = {};
         let currentChannelId = null;
         let totalSlackCount = 0;
@@ -3277,34 +3978,31 @@
         }
 
         function renderSlackChannels() {
-            const channels = Object.values(messagesByChannel);
-            channels.sort((a, b) => {
-                const lastMsgA = a.messages[a.messages.length - 1];
-                const lastMsgB = b.messages[b.messages.length - 1];
-                const timeA = new Date(lastMsgA?.timestamp || 0).getTime();
-                const timeB = new Date(lastMsgB?.timestamp || 0).getTime();
+            // Sort channels by last message time (most recent first)
+            const sortedChannels = [...slackChannels].sort((a, b) => {
+                const timeA = a.last_message_time ? new Date(a.last_message_time).getTime() : 0;
+                const timeB = b.last_message_time ? new Date(b.last_message_time).getTime() : 0;
                 return timeB - timeA; // Most recent first
             });
 
-            if (channels.length === 0) {
+            if (sortedChannels.length === 0) {
                 slackChannelsList.innerHTML = '<div class="slack-sidebar-empty">No channels found</div>';
                 return;
             }
 
-            const channelsHTML = channels.map(channel => {
-                const lastMsg = channel.messages[channel.messages.length - 1];
-                const preview = lastMsg?.body ? (lastMsg.body.length > 30 ? lastMsg.body.substring(0, 30) + '...' : lastMsg.body) : 'No messages';
-                const time = formatSlackTimestamp(lastMsg?.timestamp);
-                const isActive = currentChannelId === channel.channelId;
+            const channelsHTML = sortedChannels.map(channel => {
+                const preview = channel.last_message ? (channel.last_message.length > 30 ? channel.last_message.substring(0, 30) + '...' : channel.last_message) : 'No messages';
+                const time = channel.last_message_time ? formatSlackTimestamp(channel.last_message_time) : '';
+                const isActive = currentChannelId === channel.channel_id;
                 
                 return `
-                    <div class="slack-channel-item ${isActive ? 'active' : ''}" data-channel-id="${channel.channelId}">
-                        <div class="slack-channel-name">${channel.channelName}</div>
+                    <div class="slack-channel-item ${isActive ? 'active' : ''}" data-channel-id="${channel.channel_id}">
+                        <div class="slack-channel-name">${channel.channel_name}</div>
                         <div class="slack-channel-preview">${preview}</div>
                         <div class="slack-channel-meta">
-                            <span class="slack-channel-count">${channel.messages.length} msgs</span>
+                            ${channel.unread_count > 0 ? `<span class="slack-channel-unread">${channel.unread_count}</span>` : ''}
                             <span class="slack-channel-time">${time}</span>
-                </div>
+                        </div>
                     </div>
                 `;
             }).join('');
@@ -3315,21 +4013,20 @@
             document.querySelectorAll('.slack-channel-item').forEach(item => {
                 item.addEventListener('click', () => {
                     const channelId = item.dataset.channelId;
-                    selectChannel(channelId);
+                    selectSlackChannel(channelId);
                 });
             });
         }
 
-        function selectChannel(channelId) {
+        async function selectSlackChannel(channelId) {
             currentChannelId = channelId;
-            const channel = messagesByChannel[channelId];
-            if (!channel) return;
+            
+            // Find channel info
+            const channelInfo = slackChannels.find(c => c.channel_id === channelId);
+            if (!channelInfo) return;
 
-            slackCurrentChannel.textContent = channel.channelName;
-            slackCount.textContent = `${channel.messages.length} messages`;
-
-            // Render messages for this channel
-            renderSlackMessages(channel.messages);
+            slackCurrentChannel.textContent = channelInfo.channel_name;
+            slackMessagesContainer.innerHTML = '<div class="slack-empty-state"><p>Loading messages...</p></div>';
 
             // Show input area
             const inputContainer = document.getElementById('slackInputContainer');
@@ -3341,6 +4038,52 @@
             document.querySelectorAll('.slack-channel-item').forEach(item => {
                 item.classList.toggle('active', item.dataset.channelId === channelId);
             });
+
+            // Load messages for this channel on-demand (if not already cached)
+            if (!slackChannelMessages[channelId]) {
+                try {
+                    console.log(`[*] Loading messages for channel ${channelId}...`);
+                    const response = await fetch('http://localhost:8000/api/slack/messages', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            channel_id: channelId,
+                            limit: 50
+                        })
+                    });
+
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    }
+
+                    const data = await response.json();
+                    if (data.success) {
+                        slackChannelMessages[channelId] = data.messages || [];
+                        // Update messagesByChannel for compatibility
+                        if (!messagesByChannel[channelId]) {
+                            messagesByChannel[channelId] = {
+                                channelId: channelId,
+                                channelName: channelInfo.channel_name,
+                                messages: []
+                            };
+                        }
+                        messagesByChannel[channelId].messages = slackChannelMessages[channelId];
+                    } else {
+                        throw new Error(data.error || 'Failed to load messages');
+                    }
+                } catch (error) {
+                    console.error('[!] Error loading messages:', error);
+                    slackMessagesContainer.innerHTML = `<div class="slack-empty-state"><p>Error loading messages: ${error.message}</p></div>`;
+                    return;
+                }
+            }
+
+            // Render messages
+            const messages = slackChannelMessages[channelId] || [];
+            slackCount.textContent = `${messages.length} messages`;
+            renderSlackMessages(messages);
 
             // Focus input
             const messageInput = document.getElementById('slackMessageInput');
@@ -3413,56 +4156,77 @@
 
         function updateSlackCount() {
             if (!slackCount) return;
-            const total = Object.values(messagesByChannel).reduce((sum, ch) => sum + ch.messages.length, 0);
-            slackCount.textContent = `${total} total messages`;
+            slackCount.textContent = `${slackChannels.length} channels`;
         }
+
+        // Store Slack channels data
+        let slackChannels = [];
+        let slackChannelMessages = {}; // Cache messages by channel_id
 
         async function loadSlackMessages() {
             slackViewButton.disabled = true;
             slackViewButton.textContent = 'Loading...';
-            allSlackMessages = [];
+            slackChannels = [];
+            slackChannelMessages = {};
             messagesByChannel = {};
             currentChannelId = null;
             totalSlackCount = 0;
 
             try {
-                console.log('[*] Requesting Slack messages from backend...');
-                const response = await fetch('http://localhost:8000/api/slack/messages', {
-                    method: 'POST',
+                // Step 1: Load channels list (fast, no messages)
+                console.log('[*] Loading Slack channels list...');
+                const channelsResponse = await fetch('http://localhost:8000/api/slack/channels', {
+                    method: 'GET',
                     headers: {
                         'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        limit: 50  // Reduced from 200 to 50 for faster loading
-                    })
+                    }
                 });
 
-                console.log('[*] Response status:', response.status);
-                const data = await response.json();
-                console.log('[*] Response data:', data);
+                console.log('[*] Channels response status:', channelsResponse.status);
+                
+                if (!channelsResponse.ok) {
+                    let errorData;
+                    try {
+                        errorData = await channelsResponse.json();
+                    } catch (e) {
+                        const errorText = await channelsResponse.text();
+                        errorData = { detail: errorText || `HTTP ${channelsResponse.status}: ${channelsResponse.statusText}` };
+                    }
+                    const errorMsg = errorData.detail || errorData.error || errorData.message || JSON.stringify(errorData);
+                    console.error('[!] Backend error (HTTP ' + channelsResponse.status + '):', errorMsg);
+                    throw new Error(errorMsg);
+                }
+                
+                const channelsData = await channelsResponse.json();
+                console.log('[*] Channels data:', channelsData);
 
-                if (response.ok && data.success) {
-                    allSlackMessages = data.messages || [];
-                    totalSlackCount = typeof data.total_count === 'number' ? data.total_count : allSlackMessages.length;
+                if (channelsData.success) {
+                    slackChannels = channelsData.channels || [];
+                    console.log(`[OK] Got ${slackChannels.length} Slack channels`);
                     
-                    // Group messages by channel
-                    messagesByChannel = groupMessagesByChannel(allSlackMessages);
+                    // Build messagesByChannel structure from channels (without messages yet)
+                    messagesByChannel = {};
+                    slackChannels.forEach(channel => {
+                        messagesByChannel[channel.channel_id] = {
+                            channelId: channel.channel_id,
+                            channelName: channel.channel_name,
+                            messages: [] // Messages will be loaded on-demand
+                        };
+                    });
                     
-                    // Render channels sidebar
+                    // Render channels sidebar (fast, no messages loaded yet)
                     renderSlackChannels();
                     
-                    // Auto-select first channel if available
-                    const channels = Object.keys(messagesByChannel);
-                    if (channels.length > 0) {
-                        selectChannel(channels[0]);
+                    // Auto-select first channel if available (will load messages on-demand)
+                    if (slackChannels.length > 0) {
+                        await selectSlackChannel(slackChannels[0].channel_id);
                     } else {
-                        slackMessagesContainer.innerHTML = '<div class="slack-empty-state"><p>No messages found</p></div>';
+                        slackMessagesContainer.innerHTML = '<div class="slack-empty-state"><p>No channels found</p></div>';
                     }
                     
                     updateSlackCount();
-                    console.log(`[OK] Got ${allSlackMessages.length} Slack messages in ${channels.length} channels`);
                 } else {
-                    const errorMsg = data.error || data.detail || JSON.stringify(data);
+                    const errorMsg = channelsData.error || channelsData.detail || JSON.stringify(channelsData);
                     console.error('[!] Backend error:', errorMsg);
                     slackMessagesContainer.innerHTML = `<div class="slack-empty-state"><div class="slack-empty-icon">⚠️</div><h3>Error</h3><p>${errorMsg}</p></div>`;
                     slackChannelsList.innerHTML = '<div class="slack-sidebar-empty">Error loading channels</div>';
@@ -4846,12 +5610,11 @@
                     slackMessageInput.value = '';
                     slackMessageInput.style.height = 'auto';
                     
-                    // Reload messages to show the new one
-                    await loadSlackMessages();
-                    
-                    // Re-select the current channel
+                    // Reload messages for this channel to show the new one
                     if (currentChannelId) {
-                        selectChannel(currentChannelId);
+                        // Clear cache and reload messages for this channel
+                        delete slackChannelMessages[currentChannelId];
+                        await selectSlackChannel(currentChannelId);
                     }
                 } else {
                     const errorMsg = data.error || data.detail || JSON.stringify(data);

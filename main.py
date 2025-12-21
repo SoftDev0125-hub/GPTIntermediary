@@ -3,9 +3,13 @@ ChatGPT Backend/Broker - Main Application Entry Point
 Handles email operations, app launching, and other automation tasks
 """
 
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, WebSocket, WebSocketDisconnect, BackgroundTasks, Response
 from fastapi.middleware.cors import CORSMiddleware
+from typing import Set, Dict
 import uvicorn
+import json
+import asyncio
+from contextlib import asynccontextmanager
 from pydantic import BaseModel
 from typing import Optional, List, Union, Dict
 import logging
@@ -19,7 +23,6 @@ from datetime import datetime
 
 from services.email_service import EmailService
 from services.app_launcher import AppLauncher
-from services.telegram_service import TelegramService
 from services.slack_service import SlackService
 from services.whatsapp_service import WhatsAppService
 from services.word_service import WordService
@@ -65,12 +68,10 @@ from models.schemas import (
     EmailListResponse,
     OperationResponse,
     UserCredentials,
-    GetTelegramMessagesRequest,
-    TelegramListResponse,
-    SendTelegramMessageRequest,
-    SendTelegramMessageResponse,
     GetSlackMessagesRequest,
     SlackListResponse,
+    SlackChannelsResponse,
+    SlackChannel,
     SendSlackMessageRequest,
     SendSlackMessageResponse,
     GetWhatsAppContactsRequest,
@@ -142,27 +143,157 @@ app.add_middleware(
 async def cors_null_origin_handler(request, call_next):
     """
     Custom middleware to handle null origin (file:// protocol)
+    Ensures CORS headers are always present, even for error responses
     """
     origin = request.headers.get("origin")
-    response = await call_next(request)
     
-    # If origin is null or doesn't exist, add CORS headers
-    if origin is None or origin == "null":
-        response.headers["Access-Control-Allow-Origin"] = "*"
-        response.headers["Access-Control-Allow-Methods"] = "*"
-        response.headers["Access-Control-Allow-Headers"] = "*"
-        response.headers["Access-Control-Expose-Headers"] = "*"
+    try:
+        response = await call_next(request)
+    except Exception as e:
+        # If an exception occurs, create a response with CORS headers
+        from fastapi.responses import JSONResponse
+        import traceback
+        error_msg = str(e)
+        logger.error(f"Unhandled exception in middleware: {error_msg}")
+        logger.error(traceback.format_exc())
+        response = JSONResponse(
+            status_code=200,  # Use 200 to ensure CORS headers work
+            content={
+                "success": False,
+                "error": error_msg,
+                "is_connected": False,
+                "is_authenticated": False,
+                "has_api_credentials": False,
+                "message": f"Error: {error_msg}"
+            },
+            headers={
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+                "Access-Control-Allow-Headers": "*",
+                "Access-Control-Expose-Headers": "*"
+            }
+        )
+        return response
+    
+    # Always add CORS headers regardless of origin
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    response.headers["Access-Control-Expose-Headers"] = "*"
+    
+    # Handle preflight OPTIONS requests
+    if request.method == "OPTIONS":
+        response.status_code = 200
     
     return response
+
+# Exception handler for HTTPException (raised by FastAPI)
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request, exc: HTTPException):
+    """Handle HTTPException and ensure CORS headers are present"""
+    from fastapi.responses import JSONResponse
+    
+    return JSONResponse(
+        status_code=200,
+        content={"success": False, "error": exc.detail},
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+            "Access-Control-Allow-Headers": "*",
+            "Access-Control-Expose-Headers": "*"
+        }
+    )
+
+# Global exception handler for unhandled exceptions
+@app.exception_handler(Exception)
+async def global_exception_handler(request, exc):
+    """Global exception handler to ensure CORS headers are always present"""
+    from fastapi.responses import JSONResponse
+    import traceback
+    
+    error_msg = str(exc)
+    logger.error(f"Global exception handler caught: {error_msg}")
+    logger.error(traceback.format_exc())
+    
+    return JSONResponse(
+        status_code=200,
+        content={"success": False, "error": error_msg},
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+            "Access-Control-Allow-Headers": "*",
+            "Access-Control-Expose-Headers": "*"
+        }
+    )
 
 # Initialize services
 email_service = EmailService()
 app_launcher = AppLauncher()
-telegram_service = TelegramService()
 slack_service = SlackService()
 whatsapp_service = WhatsAppService()
 word_service = WordService()
 excel_service = ExcelService()
+
+# WebSocket connection managers
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: Dict[str, Set[WebSocket]] = {
+            "slack": set()
+        }
+    
+    async def connect(self, websocket: WebSocket, service: str):
+        await websocket.accept()
+        self.active_connections[service].add(websocket)
+        logger.info(f"WebSocket connected for {service}. Total connections: {len(self.active_connections[service])}")
+    
+    def disconnect(self, websocket: WebSocket, service: str):
+        self.active_connections[service].discard(websocket)
+        logger.info(f"WebSocket disconnected for {service}. Total connections: {len(self.active_connections[service])}")
+    
+    async def broadcast(self, message: dict, service: str):
+        if service not in self.active_connections:
+            return
+        disconnected = set()
+        for connection in self.active_connections[service]:
+            try:
+                await connection.send_json(message)
+            except Exception as e:
+                logger.error(f"Error sending WebSocket message: {e}")
+                disconnected.add(connection)
+        
+        # Remove disconnected connections
+        for conn in disconnected:
+            self.active_connections[service].discard(conn)
+    
+    async def close_all(self, service: str = None):
+        """
+        Close all WebSocket connections for a service or all services
+        
+        Args:
+            service: Service name to close connections for, or None to close all
+        """
+        services_to_close = [service] if service else list(self.active_connections.keys())
+        
+        for svc in services_to_close:
+            if svc not in self.active_connections:
+                continue
+            
+            connections = list(self.active_connections[svc])  # Create a copy to iterate
+            logger.info(f"Closing {len(connections)} WebSocket connections for {svc}...")
+            
+            for connection in connections:
+                try:
+                    await connection.close()
+                    logger.debug(f"Closed WebSocket connection for {svc}")
+                except Exception as e:
+                    logger.error(f"Error closing WebSocket connection for {svc}: {e}")
+                finally:
+                    self.active_connections[svc].discard(connection)
+            
+            logger.info(f"All WebSocket connections for {svc} closed")
+
+# Global connection managers
+slack_manager = ConnectionManager()
 
 
 @app.on_event("startup")
@@ -199,15 +330,10 @@ async def startup_event():
     
     await email_service.initialize()
     
-    # Initialize Telegram service with timeout to prevent blocking startup
-    try:
-        await asyncio.wait_for(telegram_service.initialize(), timeout=10.0)
-    except asyncio.TimeoutError:
-        logger.warning("Telegram service initialization timed out - continuing without it")
-    except Exception as e:
-        logger.warning(f"Telegram service initialization failed: {e} - continuing without it")
-    
     await slack_service.initialize()
+    
+    # Start background task for Slack message monitoring
+    asyncio.create_task(monitor_slack_messages())
     
     # WhatsApp service will be initialized lazily when the WhatsApp tab is clicked
     # This prevents unnecessary initialization on app startup
@@ -215,13 +341,82 @@ async def startup_event():
     await word_service.initialize()
     logger.info("Services initialized successfully")
 
+# Background task to monitor Slack messages
+async def monitor_slack_messages():
+    """Background task to monitor Slack for new messages and broadcast via WebSocket"""
+    if not slack_service.client:
+        return
+    
+    last_checked = {}
+    while True:
+        try:
+            await asyncio.sleep(2)  # Check every 2 seconds
+            
+            if not slack_service.is_configured:
+                continue
+            
+            # Get recent messages from all channels
+            try:
+                messages, _ = await slack_service.get_messages(limit=10)
+                
+                for msg in messages:
+                    channel_id = msg.channel_id
+                    msg_id = msg.message_id
+                    
+                    # Check if this is a new message
+                    if channel_id not in last_checked:
+                        last_checked[channel_id] = set()
+                    
+                    if msg_id not in last_checked[channel_id]:
+                        last_checked[channel_id].add(msg_id)
+                        
+                        # Broadcast new message
+                        await slack_manager.broadcast({
+                            "type": "new_message",
+                            "message": {
+                                "message_id": msg.message_id,
+                                "from_id": msg.from_id,
+                                "from_name": msg.from_name,
+                                "body": msg.body,
+                                "timestamp": msg.timestamp,
+                                "channel_id": msg.channel_id,
+                                "channel_name": msg.channel_name,
+                                "is_thread": msg.is_thread,
+                                "thread_ts": msg.thread_ts,
+                                "has_media": msg.has_media,
+                                "media_type": msg.media_type,
+                                "media_filename": msg.media_filename,
+                                "media_mimetype": msg.media_mimetype,
+                                "file_id": msg.file_id
+                            }
+                        }, "slack")
+                        
+                        # Keep only recent message IDs (prevent memory growth)
+                        if len(last_checked[channel_id]) > 100:
+                            last_checked[channel_id] = set(list(last_checked[channel_id])[-50:])
+            except Exception as e:
+                logger.debug(f"Error monitoring Slack messages: {e}")
+                await asyncio.sleep(5)  # Wait longer on error
+        except Exception as e:
+            logger.error(f"Error in Slack monitoring task: {e}")
+            await asyncio.sleep(10)  # Wait longer on critical error
+
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    """Cleanup on shutdown"""
+    """Cleanup on shutdown - close WebSocket connections and disconnect services"""
     logger.info("Shutting down ChatGPT Backend Broker...")
+    
+    # Close all WebSocket connections first
+    try:
+        logger.info("Closing WebSocket connections...")
+        await slack_manager.close_all("slack")
+        logger.info("All WebSocket connections closed")
+    except Exception as e:
+        logger.error(f"Error closing WebSocket connections: {e}")
+    
+    # Cleanup services
     await email_service.cleanup()
-    await telegram_service.cleanup()
     await slack_service.cleanup()
     if whatsapp_service:
         try:
@@ -230,6 +425,8 @@ async def shutdown_event():
             logger.warning(f"Error cleaning up WhatsApp service: {e}")
     await word_service.cleanup()
     await excel_service.cleanup()
+    
+    logger.info("Shutdown complete")
 
 
 @app.get("/")
@@ -728,187 +925,32 @@ async def launch_app(request: LaunchAppRequest):
         logger.error(f"Error launching app: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/api/telegram/messages", response_model=TelegramListResponse)
-async def get_telegram_messages(request: GetTelegramMessagesRequest):
+# Telegram endpoints removed
+
+# Slack endpoints start here
+@app.get("/api/slack/channels", response_model=SlackChannelsResponse)
+async def get_slack_channels():
     """
-    Retrieve Telegram messages
-    
-    Args:
-        request: Limit for messages to retrieve
+    Get list of Slack channels/conversations (fast operation, no messages)
     
     Returns:
-        List of Telegram messages
+        List of Slack channels
     """
     try:
-        logger.info(f"Fetching {request.limit} Telegram messages")
-        messages, total_count = await telegram_service.get_messages(
-            limit=request.limit
-        )
-        logger.info(f"Successfully retrieved {len(messages)} Telegram messages")
-        return TelegramListResponse(
+        logger.info("Fetching Slack channels list...")
+        channels = await slack_service.get_channels()
+        logger.info(f"Successfully retrieved {len(channels)} Slack channels")
+        return SlackChannelsResponse(
             success=True,
-            count=len(messages),
-            total_count=total_count,
-            messages=messages
+            count=len(channels),
+            channels=channels
         )
     except Exception as e:
         error_msg = str(e)
-        logger.error(f"Error fetching Telegram messages: {error_msg}")
+        logger.error(f"Error fetching Slack channels: {error_msg}")
         import traceback
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=error_msg)
-
-
-@app.get("/api/telegram/status")
-async def get_telegram_status():
-    """
-    Check Telegram connection status
-    
-    Returns:
-        Connection status
-    """
-    try:
-        is_connected, status_message = await telegram_service.check_connection_status()
-        return {
-            "success": True,
-            "connected": is_connected,
-            "message": status_message
-        }
-    except Exception as e:
-        logger.error(f"Error checking Telegram status: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/api/telegram/authenticate")
-async def authenticate_telegram(request: dict):
-    """
-    Authenticate Telegram client
-    
-    Args:
-        request: May contain phone_number, code, and password
-    
-    Returns:
-        Authentication status
-    """
-    try:
-        phone_number = request.get('phone_number')
-        code = request.get('code')
-        password = request.get('password')
-        
-        is_complete, message = await telegram_service.authenticate(
-            phone_number=phone_number,
-            code=code,
-            password=password
-        )
-        
-        return {
-            "success": is_complete,
-            "message": message,
-            "requires_code": not phone_number and not is_complete,
-            "requires_password": "password" in message.lower() and not password
-        }
-    except Exception as e:
-        logger.error(f"Error authenticating Telegram: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/api/telegram/delete-session")
-async def delete_telegram_session():
-    """
-    Delete Telegram session file to force re-authentication
-    
-    Returns:
-        Success status
-    """
-    try:
-        import os
-        import shutil
-        
-        session_dir = os.path.join(os.path.dirname(__file__), 'telegram_session')
-        
-        if os.path.exists(session_dir):
-            # Disconnect client first if it exists and is connected
-            try:
-                if telegram_service.client and telegram_service.is_connected:
-                    await telegram_service.client.disconnect()
-                    logger.info("Disconnected Telegram client before deleting session")
-            except Exception as e:
-                logger.warning(f"Could not disconnect client (may already be disconnected): {str(e)}")
-            
-            # Delete all files in session directory
-            deleted_files = []
-            for filename in os.listdir(session_dir):
-                file_path = os.path.join(session_dir, filename)
-                try:
-                    if os.path.isfile(file_path):
-                        os.remove(file_path)
-                        deleted_files.append(filename)
-                    elif os.path.isdir(file_path):
-                        shutil.rmtree(file_path)
-                        deleted_files.append(filename)
-                except Exception as e:
-                    logger.warning(f"Could not delete {file_path}: {str(e)}")
-            
-            # Reset service state
-            telegram_service.is_connected = False
-            telegram_service.client = None  # Reset client reference
-            
-            # Recreate the client after deleting session (it will need authentication)
-            try:
-                telegram_service._create_client()
-                logger.info("Telegram client recreated after session deletion")
-            except Exception as e:
-                logger.warning(f"Could not recreate Telegram client: {str(e)}")
-            
-            if deleted_files:
-                logger.info(f"Deleted {len(deleted_files)} session file(s): {', '.join(deleted_files)}")
-            
-            return {
-                "success": True,
-                "message": f"Session file(s) deleted successfully ({len(deleted_files) if deleted_files else 0} file(s)). Please restart your backend server, then click 'Refresh' to authenticate.",
-                "deleted_files": deleted_files
-            }
-        else:
-            return {
-                "success": True,
-                "message": "No session file found."
-            }
-    except Exception as e:
-        logger.error(f"Error deleting Telegram session: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/api/telegram/send", response_model=SendTelegramMessageResponse)
-async def send_telegram_message(request: SendTelegramMessageRequest):
-    """
-    Send a message to a Telegram chat
-    
-    Args:
-        request: Chat ID, message text, and optional reply to message ID
-    
-    Returns:
-        Success status and message ID
-    """
-    try:
-        logger.info(f"Sending message to Telegram chat {request.chat_id}")
-        message_id = await telegram_service.send_message(
-            chat_id=request.chat_id,
-            text=request.text,
-            reply_to_message_id=request.reply_to_message_id
-        )
-        logger.info(f"Successfully sent Telegram message. Message ID: {message_id}")
-        return SendTelegramMessageResponse(
-            success=True,
-            message="Message sent successfully",
-            message_id=message_id
-        )
-    except Exception as e:
-        error_msg = str(e)
-        logger.error(f"Error sending Telegram message: {error_msg}")
-        import traceback
-        logger.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=error_msg)
-
 
 @app.post("/api/slack/messages", response_model=SlackListResponse)
 async def get_slack_messages(request: GetSlackMessagesRequest):
@@ -916,16 +958,27 @@ async def get_slack_messages(request: GetSlackMessagesRequest):
     Retrieve Slack messages
     
     Args:
-        request: Limit for messages to retrieve
+        request: Limit and optional channel_id for messages to retrieve
+        - If channel_id is provided: get messages for that specific channel only (fast, on-demand)
+        - If channel_id is None: get messages from all channels (slower, legacy mode)
     
     Returns:
         List of Slack messages
     """
     try:
-        logger.info(f"Fetching {request.limit} Slack messages")
-        messages, total_count = await slack_service.get_messages(
-            limit=request.limit
-        )
+        # If channel_id is provided, use on-demand loading (fast)
+        if request.channel_id:
+            logger.info(f"Fetching {request.limit} messages for Slack channel {request.channel_id}")
+            messages, total_count = await slack_service.get_channel_messages(
+                channel_id=request.channel_id,
+                limit=request.limit
+            )
+        else:
+            # Legacy mode: get all messages (slower)
+            logger.info(f"Fetching {request.limit} Slack messages from all channels")
+            messages, total_count = await slack_service.get_messages(
+                limit=request.limit
+            )
         logger.info(f"Successfully retrieved {len(messages)} Slack messages")
         return SlackListResponse(
             success=True,
@@ -960,6 +1013,123 @@ async def get_slack_status():
         logger.error(f"Error checking Slack status: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+# WebSocket endpoints for real-time messaging
+@app.websocket("/ws/slack")
+async def slack_websocket(websocket: WebSocket):
+    """WebSocket endpoint for real-time Slack messages"""
+    await slack_manager.connect(websocket, "slack")
+    try:
+        while True:
+            data = await websocket.receive_text()
+            # Handle incoming messages if needed
+            logger.debug(f"Received WebSocket message: {data}")
+    except WebSocketDisconnect:
+        slack_manager.disconnect(websocket, "slack")
+    except Exception as e:
+        logger.error(f"WebSocket error: {e}")
+        slack_manager.disconnect(websocket, "slack")
+
+# Slack media and message management endpoints
+@app.get("/api/slack/media/{file_id}")
+async def download_slack_media(file_id: str):
+    """
+    Download a file from Slack
+    
+    Args:
+        file_id: The Slack file ID
+    
+    Returns:
+        File content
+    """
+    try:
+        if not slack_service.client:
+            raise HTTPException(status_code=400, detail="Slack not connected")
+        
+        # Get file info
+        file_info = slack_service.client.files_info(file=file_id)
+        
+        if not file_info["ok"]:
+            raise HTTPException(status_code=404, detail="File not found")
+        
+        file_data = file_info["file"]
+        file_url = file_data.get("url_private")
+        
+        if not file_url:
+            raise HTTPException(status_code=404, detail="File URL not available")
+        
+        # Download file
+        import httpx
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                file_url,
+                headers={"Authorization": f"Bearer {slack_service.token}"}
+            )
+            response.raise_for_status()
+            file_content = response.content
+        
+        # Determine content type
+        content_type = file_data.get("mimetype", "application/octet-stream")
+        filename = file_data.get("name", f"file_{file_id}")
+        
+        from fastapi.responses import Response
+        return Response(
+            content=file_content,
+            media_type=content_type,
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+        )
+    except Exception as e:
+        logger.error(f"Error downloading Slack media: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.put("/api/slack/message/{timestamp}")
+async def update_slack_message(timestamp: str, request: dict):
+    """
+    Update a Slack message
+    
+    Args:
+        timestamp: The message timestamp
+        request: Channel ID and new text
+    
+    Returns:
+        Success status
+    """
+    try:
+        if not slack_service.client:
+            raise HTTPException(status_code=400, detail="Slack not connected")
+        
+        channel_id = request.get('channel_id')
+        new_text = request.get('text')
+        
+        if not channel_id or not new_text:
+            raise HTTPException(status_code=400, detail="channel_id and text are required")
+        
+        # Update message
+        response = slack_service.client.chat_update(
+            channel=channel_id,
+            ts=timestamp,
+            text=new_text
+        )
+        
+        if not response["ok"]:
+            raise HTTPException(status_code=400, detail=response.get("error", "Failed to update message"))
+        
+        # Broadcast update via WebSocket
+        await slack_manager.broadcast({
+            "type": "message_update",
+            "timestamp": timestamp,
+            "channel_id": channel_id,
+            "text": new_text
+        }, "slack")
+        
+        return {
+            "success": True,
+            "message": "Message updated successfully",
+            "timestamp": response["ts"]
+        }
+    except Exception as e:
+        logger.error(f"Error updating Slack message: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/slack/send", response_model=SendSlackMessageResponse)
 async def send_slack_message(request: SendSlackMessageRequest):
