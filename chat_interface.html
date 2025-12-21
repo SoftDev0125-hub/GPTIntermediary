@@ -7,6 +7,9 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="styles.css">
     <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <!-- For Telegram .tgs animated stickers (gzipped Lottie JSON) -->
+    <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/lottie-web@5.12.2/build/player/lottie.min.js"></script>
 </head>
 <body>
     <script>
@@ -2300,10 +2303,13 @@
                     const isImage = (msg.mediaMimetype && msg.mediaMimetype.startsWith('image/')) || ['jpg','jpeg','png','gif','webp','bmp'].includes(ext);
                     const isVideo = (msg.mediaMimetype && msg.mediaMimetype.startsWith('video/')) || ['mp4','webm','mov','mkv'].includes(ext);
                     const isAudio = (msg.mediaMimetype && msg.mediaMimetype.startsWith('audio/')) || ['mp3','ogg','opus','wav','m4a','aac'].includes(ext);
+                    const isTgs = (msg.mediaMimetype && String(msg.mediaMimetype).includes('tgsticker')) || ext === 'tgs';
                     const fileUrl = msg.fileUrl ? `${TELEGRAM_API_URL}${msg.fileUrl}` : (msg.mediaUrl && msg.mediaUrl.startsWith('/api/') ? `${TELEGRAM_API_URL}${msg.mediaUrl}` : null);
                     const src = msg.mediaUrl || fileUrl;
                     if (src) {
-                        if (isImage) {
+                        if (isTgs) {
+                            mediaHtml = `<div class="telegram-tgs-sticker" data-tgs-src="${src}" aria-label="Sticker"></div>`;
+                        } else if (isImage) {
                             mediaHtml = `<img src="${src}" alt="Media" class="telegram-message-media" loading="lazy" onclick="window.open('${src}', '_blank')">`;
                         } else if (isVideo) {
                             mediaHtml = `<video controls class="telegram-message-media" style="max-width: 100%; border-radius: 8px; margin-top: 4px;">
@@ -2344,6 +2350,54 @@
             // Scroll to bottom unless caller wants to preserve scroll position (e.g. when prepending older messages)
             if (autoScroll) {
                 telegramMessagesContainer.scrollTop = telegramMessagesContainer.scrollHeight;
+            }
+
+            // Render Telegram .tgs animated stickers (Lottie) after DOM is updated
+            try { renderTelegramTgsStickers(telegramMessagesContainer); } catch (e) {}
+        }
+
+        async function renderTelegramTgsStickers(rootEl) {
+            const root = rootEl || document;
+            if (!root || !root.querySelectorAll) return;
+            if (!window.pako || !window.lottie) return;
+
+            const els = Array.from(root.querySelectorAll('.telegram-tgs-sticker[data-tgs-src]'))
+                .filter(el => !el.getAttribute('data-rendered'));
+
+            for (const el of els) {
+                const url = el.getAttribute('data-tgs-src');
+                if (!url) continue;
+                el.setAttribute('data-rendered', '1');
+                el.innerHTML = '<div class="telegram-tgs-loading">Loading sticker…</div>';
+
+                try {
+                    const resp = await fetch(url, { method: 'GET' });
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+
+                    const bytes = new Uint8Array(await resp.arrayBuffer());
+                    let jsonText = null;
+                    try {
+                        // Most .tgs are gzipped Lottie JSON
+                        const ungz = window.pako.ungzip(bytes);
+                        jsonText = new TextDecoder('utf-8').decode(ungz);
+                    } catch (e) {
+                        // If it isn't gzipped for some reason, try raw JSON
+                        jsonText = new TextDecoder('utf-8').decode(bytes);
+                    }
+
+                    const animationData = JSON.parse(jsonText);
+                    el.innerHTML = '';
+                    window.lottie.loadAnimation({
+                        container: el,
+                        renderer: 'svg',
+                        loop: true,
+                        autoplay: true,
+                        animationData
+                    });
+                } catch (err) {
+                    el.removeAttribute('data-rendered');
+                    el.innerHTML = '<div class="telegram-tgs-fallback">Sticker</div>';
+                }
             }
         }
 

@@ -119,6 +119,15 @@ function getTelegramMediaMeta(message) {
         // ignore
     }
 
+    // Telegram animated stickers are commonly .tgs (gzipped Lottie JSON).
+    // Ensure the MIME type is present so the frontend can render them properly.
+    try {
+        const lowerName = filename ? String(filename).toLowerCase() : '';
+        if (lowerName.endsWith('.tgs')) {
+            mimeType = 'application/x-tgsticker';
+        }
+    } catch (e) {}
+
     return { hasMedia: true, mimeType: mimeType || null, filename: filename || null };
 }
 
