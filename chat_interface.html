@@ -2193,7 +2193,7 @@
                 // Refresh messages in background (non-blocking)
                 setTimeout(async () => {
                     try {
-                        const response = await fetch(`${TELEGRAM_API_URL}/api/telegram/messages`, {
+                        const response = await fetchWithTimeout(`${TELEGRAM_API_URL}/api/telegram/messages`, {
                             method: 'POST',
                             headers: {
                                 'Content-Type': 'application/json',
@@ -2202,7 +2202,7 @@
                                 chat_id: chatId,
                                 limit: 50
                             })
-                        });
+                        }, 30000);
                         if (response.ok) {
                             const data = await response.json();
                             if (data.success && data.messages) {
@@ -2219,7 +2219,10 @@
                             }
                         }
                     } catch (error) {
-                        console.error('[!] Error refreshing messages:', error);
+                        // avoid noisy errors for transient timeouts
+                        if (!isTimeoutLikeError(error)) {
+                            console.error('[!] Error refreshing messages:', error);
+                        }
                     }
                 }, 100);
                 return;
@@ -2228,7 +2231,7 @@
             // Load messages for this chat on-demand (if not already cached)
             try {
                 console.log(`[*] Loading messages for chat ${chatId}...`);
-                const response = await fetch(`${TELEGRAM_API_URL}/api/telegram/messages`, {
+                const response = await fetchWithTimeout(`${TELEGRAM_API_URL}/api/telegram/messages`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -2237,7 +2240,7 @@
                         chat_id: chatId,
                         limit: 50
                     })
-                });
+                }, 30000);
 
                 if (!response.ok) {
                     throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -2408,6 +2411,34 @@
             }
         }
 
+        function isTimeoutLikeError(err) {
+            try {
+                const name = (err && err.name) ? String(err.name) : '';
+                const msg = (err && err.message) ? String(err.message) : '';
+                return name === 'AbortError' || name === 'TimeoutError' || /timed out/i.test(msg) || /timeout/i.test(msg);
+            } catch (e) {
+                return false;
+            }
+        }
+
+        async function fetchWithTimeout(url, options = {}, timeoutMs = 30000) {
+            const opts = { ...options };
+            // Prefer native AbortSignal.timeout if available
+            if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
+                opts.signal = AbortSignal.timeout(timeoutMs);
+                return await fetch(url, opts);
+            }
+            // Fallback for older browsers
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), timeoutMs);
+            try {
+                opts.signal = controller.signal;
+                return await fetch(url, opts);
+            } finally {
+                clearTimeout(timer);
+            }
+        }
+
         async function loadTelegramMessages() {
             console.log('[DEBUG] loadTelegramMessages called');
             // Ensure realtime socket attempts are re-enabled when user hits Refresh
@@ -2439,20 +2470,32 @@
             }
 
             try {
+                // Step 0: Quick health check (distinguish "server down" vs "Telegram slow")
+                try {
+                    const healthResp = await fetchWithTimeout(`${TELEGRAM_API_URL}/health`, { method: 'GET' }, 4000);
+                    if (!healthResp.ok) {
+                        throw new Error(`HTTP ${healthResp.status}: ${healthResp.statusText}`);
+                    }
+                } catch (e) {
+                    if (isTimeoutLikeError(e)) {
+                        throw new Error('Request timeout: Telegram server is taking too long to respond. Please wait a few seconds and retry.');
+                    }
+                    throw new Error('Cannot connect to Telegram server. Make sure it is running on port 3001.');
+                }
+
                 // Step 1: Check status
                 console.log('[*] Checking Telegram status...');
                 let statusResponse;
                 try {
-                    statusResponse = await fetch(`${TELEGRAM_API_URL}/api/telegram/status`, {
+                    statusResponse = await fetchWithTimeout(`${TELEGRAM_API_URL}/api/telegram/status`, {
                         method: 'GET',
                         headers: {
                             'Content-Type': 'application/json',
-                        },
-                        signal: AbortSignal.timeout(10000) // 10 second timeout
-                    });
+                        }
+                    }, 30000); // Telegram startup can be slow; allow more time
                 } catch (fetchError) {
-                    if (fetchError.name === 'AbortError') {
-                        throw new Error('Request timeout: Telegram server is not responding');
+                    if (isTimeoutLikeError(fetchError)) {
+                        throw new Error('Request timeout: Telegram is still starting/connecting. Please wait ~10–30 seconds and click Refresh again.');
                     } else if (fetchError.message.includes('Failed to fetch') || fetchError.message.includes('ERR_CONNECTION_REFUSED')) {
                         throw new Error('Cannot connect to Telegram server. Make sure the server is running on port 3001.');
                     }
@@ -2631,15 +2674,23 @@
 
                 // Step 2: Load contacts/chats
                 console.log('[*] Loading Telegram contacts...');
-                const contactsResponse = await fetch(`${TELEGRAM_API_URL}/api/telegram/contacts`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        limit: 100
-                    })
-                });
+                let contactsResponse;
+                try {
+                    contactsResponse = await fetchWithTimeout(`${TELEGRAM_API_URL}/api/telegram/contacts`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            limit: 100
+                        })
+                    }, 60000);
+                } catch (e) {
+                    if (isTimeoutLikeError(e)) {
+                        throw new Error('Request timeout: Loading Telegram contacts is taking too long. Telegram may be busy; please retry.');
+                    }
+                    throw e;
+                }
 
                 if (!contactsResponse.ok) {
                     throw new Error(`HTTP ${contactsResponse.status}: ${contactsResponse.statusText}`);
@@ -2687,12 +2738,11 @@
                         try {
                             if (telegramSocket && telegramSocket.connected) return;
                             if (!currentTelegramChatId) return;
-                            const resp = await fetch(`${TELEGRAM_API_URL}/api/telegram/messages`, {
+                            const resp = await fetchWithTimeout(`${TELEGRAM_API_URL}/api/telegram/messages`, {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ chat_id: currentTelegramChatId, limit: 50 }),
-                                signal: AbortSignal.timeout(15000)
-                            });
+                                body: JSON.stringify({ chat_id: currentTelegramChatId, limit: 50 })
+                            }, 30000);
                             if (!resp.ok) return;
                             const data = await resp.json();
                             if (!data || !data.success) return;
