@@ -611,8 +611,25 @@ def main():
             webview.start()
             
             print("\n[*] Application window closed")
-            # Stop servers when window closes
-            stop_servers()
+            # IMPORTANT: Do NOT stop servers when the window closes.
+            # Users often run the UI in an external browser, and pywebview can close unexpectedly
+            # (missing runtime, crash, etc.). Servers should keep running until Ctrl+C.
+            print("[*] Servers will continue running in the background.")
+            print("[*] Press Ctrl+C to stop servers and exit")
+
+            # Best-effort: open in default browser so the user still has a UI after webview closes
+            try:
+                import webbrowser
+                webbrowser.open(f'file:///{html_path}')
+            except Exception:
+                pass
+
+            # Keep the main thread alive until Ctrl+C
+            try:
+                while servers_running:
+                    time.sleep(1)
+            except KeyboardInterrupt:
+                pass
             
         except ImportError:
             print("[!] pywebview not installed. Opening in default browser instead...")
