@@ -32,6 +32,21 @@ let client = null;
 let qrCodeData = null;
 let isAuthenticated = false;
 let isReady = false;
+// Cache messages so media can be fetched later even when whatsapp-web.js can't resolve by id (common for older messages)
+const messageCacheById = new Map(); // messageId -> Message
+
+function cacheWhatsAppMessage(msg) {
+    try {
+        const id = msg && msg.id && msg.id._serialized ? String(msg.id._serialized) : null;
+        if (!id) return;
+        messageCacheById.set(id, msg);
+        // Keep memory bounded
+        if (messageCacheById.size > 5000) {
+            const firstKey = messageCacheById.keys().next().value;
+            if (firstKey) messageCacheById.delete(firstKey);
+        }
+    } catch (e) {}
+}
 
 // Session directory
 const SESSION_DIR = path.join(__dirname, 'whatsapp_session_node');
@@ -116,6 +131,7 @@ function initializeWhatsApp() {
     // Message event - fired when a message is received
     client.on('message', async (message) => {
         try {
+            cacheWhatsAppMessage(message);
             console.log('[WhatsApp] New message received:', message.from, message.body?.substring(0, 50));
             
             // Emit immediately with basic info (don't wait for async operations)
@@ -191,6 +207,7 @@ function initializeWhatsApp() {
         // Only handle sent messages here (received messages are handled by 'message' event)
         if (message.fromMe) {
             try {
+                cacheWhatsAppMessage(message);
                 // Emit immediately with basic info
                 const quickMessage = {
                     id: message.id._serialized,
@@ -576,6 +593,7 @@ app.post('/api/whatsapp/messages', async (req, res) => {
         
         // Fetch messages from the chat
         const messages = await chat.fetchMessages({ limit: limit });
+        try { (messages || []).forEach(cacheWhatsAppMessage); } catch (e) {}
 
         // Format messages for frontend
         const formattedMessages = await Promise.all(messages.map(async (msg) => {
@@ -670,12 +688,29 @@ app.get('/api/whatsapp/media/:messageId', async (req, res) => {
         const { messageId } = req.params;
 
         // Get message by ID
-        const message = await client.getMessageById(messageId);
+        let message = messageCacheById.get(String(messageId)) || null;
+        if (!message) {
+            try { message = await client.getMessageById(messageId); } catch (e) {}
+        }
+
+        // Fallback: try to parse chatId from serialized id and search recent messages in that chat
+        if (!message) {
+            try {
+                const parts = String(messageId).split('_');
+                const chatId = parts.length >= 3 ? parts[1] : null;
+                if (chatId) {
+                    const chat = await client.getChatById(chatId);
+                    const recent = await chat.fetchMessages({ limit: 500 });
+                    message = (recent || []).find(m => m && m.id && m.id._serialized === messageId) || null;
+                    if (message) cacheWhatsAppMessage(message);
+                }
+            } catch (e) {}
+        }
         
         if (!message) {
             return res.status(404).json({
                 success: false,
-                error: 'Message not found'
+                error: 'Message not found (it may be too old to resolve). Try refreshing the chat and retry.'
             });
         }
 
@@ -700,13 +735,43 @@ app.get('/api/whatsapp/media/:messageId', async (req, res) => {
         const buffer = Buffer.from(media.data, 'base64');
         
         // Set appropriate headers (inline by default so <img>/<video> can display)
-        const filename = media.filename || `media_${messageId}.${media.mimetype.split('/')[1]}`;
-        res.setHeader('Content-Type', media.mimetype);
+        const safeMime = media.mimetype ? String(media.mimetype) : 'application/octet-stream';
+        const ext = safeMime.includes('/') ? safeMime.split('/')[1] : 'bin';
+        const filename = media.filename || `media_${messageId}.${ext || 'bin'}`;
+        res.setHeader('Content-Type', safeMime);
         const download = String(req.query.download || '').toLowerCase() === 'true';
         const disposition = download ? 'attachment' : 'inline';
         res.setHeader('Content-Disposition', `${disposition}; filename="${filename}"`);
-        res.setHeader('Content-Length', buffer.length);
+        res.setHeader('Accept-Ranges', 'bytes');
 
+        // Support Range requests (needed by many browsers for <video> playback/seek)
+        const size = buffer.length;
+        const range = req.headers.range;
+        if (range) {
+            const m = /^bytes=(\d*)-(\d*)$/i.exec(String(range).trim());
+            if (!m) {
+                res.status(416);
+                res.setHeader('Content-Range', `bytes */${size}`);
+                return res.end();
+            }
+            const start = m[1] ? parseInt(m[1], 10) : 0;
+            const end = m[2] ? parseInt(m[2], 10) : (size - 1);
+            if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end < 0 || start > end || start >= size) {
+                res.status(416);
+                res.setHeader('Content-Range', `bytes */${size}`);
+                return res.end();
+            }
+            const safeEnd = Math.min(end, size - 1);
+            const chunk = buffer.subarray(start, safeEnd + 1);
+            res.status(206);
+            res.setHeader('Content-Range', `bytes ${start}-${safeEnd}/${size}`);
+            res.setHeader('Content-Length', chunk.length);
+            if (req.method === 'HEAD') return res.end();
+            return res.send(chunk);
+        }
+
+        res.setHeader('Content-Length', size);
+        if (req.method === 'HEAD') return res.end();
         return res.send(buffer);
     } catch (error) {
         console.error('[WhatsApp] Error downloading media:', error);

@@ -42,6 +42,9 @@ let authPhoneCode = null;
 let authPhoneNumber = null;
 let messageHandlerInitialized = false;
 let receiptHandlerInitialized = false;
+// In-memory entity cache (id -> full entity with accessHash)
+// Helps avoid "Could not find the input entity" errors when resolving by numeric id alone.
+const entityCacheById = new Map();
 
 /**
  * Normalize GramJS message date into a unix timestamp (seconds).
@@ -82,12 +85,83 @@ function truncateText(value, maxLen) {
     return str.slice(0, maxLen) + '…';
 }
 
+function getTelegramMediaMeta(message) {
+    const media = message && message.media ? message.media : null;
+    if (!media) return { hasMedia: false, mimeType: null, filename: null };
+    const className = String(media.className || '');
+    if (!className || className.includes('MessageMediaEmpty')) {
+        return { hasMedia: false, mimeType: null, filename: null };
+    }
+
+    // Only treat clearly downloadable media as "hasMedia" to avoid broken <img>/<video>
+    if (!className.includes('Photo') && !className.includes('Document')) {
+        return { hasMedia: false, mimeType: null, filename: null };
+    }
+
+    let mimeType = null;
+    let filename = null;
+
+    try {
+        if (className.includes('Photo')) {
+            mimeType = 'image/jpeg';
+        } else if (className.includes('Document')) {
+            const doc = media.document || media;
+            mimeType = (doc && doc.mimeType) ? String(doc.mimeType) : (media.mimeType ? String(media.mimeType) : null);
+
+            // filename can live in different places depending on GramJS object shape
+            filename = media.fileName || doc.fileName || null;
+
+            const attrs = (doc && Array.isArray(doc.attributes)) ? doc.attributes : (Array.isArray(media.attributes) ? media.attributes : []);
+            const fnAttr = attrs.find(a => a && String(a.className || '') === 'DocumentAttributeFilename' && a.fileName);
+            if (fnAttr && fnAttr.fileName) filename = String(fnAttr.fileName);
+        }
+    } catch (e) {
+        // ignore
+    }
+
+    return { hasMedia: true, mimeType: mimeType || null, filename: filename || null };
+}
+
 function peerToContactId(peer) {
     if (!peer || typeof peer !== 'object') return null;
     if ('userId' in peer && peer.userId !== undefined && peer.userId !== null) return String(peer.userId);
     if ('chatId' in peer && peer.chatId !== undefined && peer.chatId !== null) return String(peer.chatId);
     if ('channelId' in peer && peer.channelId !== undefined && peer.channelId !== null) return String(peer.channelId);
     return null;
+}
+
+async function getEntityForChatId(chatId) {
+    const key = String(chatId || '').trim();
+    if (!key) throw new Error('chat_id is required');
+    if (entityCacheById.has(key)) return entityCacheById.get(key);
+
+    // Best effort: direct getEntity (may fail if accessHash isn't known)
+    try {
+        const ent = await client.getEntity(key);
+        if (ent && ent.id !== undefined && ent.id !== null) {
+            entityCacheById.set(String(ent.id), ent);
+        }
+        entityCacheById.set(key, ent);
+        return ent;
+    } catch (e) {
+        // Fall through to dialog seeding
+    }
+
+    // Seed cache from dialogs and retry
+    try {
+        const dialogs = await client.getDialogs({ limit: 200 });
+        for (const d of dialogs || []) {
+            try {
+                const ent = d && d.entity ? d.entity : null;
+                if (ent && ent.id !== undefined && ent.id !== null) {
+                    entityCacheById.set(String(ent.id), ent);
+                }
+            } catch (e) {}
+        }
+    } catch (e) {}
+
+    if (entityCacheById.has(key)) return entityCacheById.get(key);
+    throw new Error(`Could not resolve chat entity for ${key}. Try Refresh to reload chats.`);
 }
 
 /**
@@ -118,7 +192,7 @@ function setupMessageHandler() {
                 fromMe: message.out || false,
                 timestamp: toUnixSeconds(message.date) ?? Math.floor(Date.now() / 1000),
                 type: 'text',
-                hasMedia: !!(message.media && !message.media.className.includes('MessageMediaEmpty')),
+                hasMedia: false,
                 mediaUrl: null,
                 mediaMimetype: null,
                 mediaFilename: null,
@@ -129,16 +203,12 @@ function setupMessageHandler() {
             };
             
             // Provide inline stream URL + best-effort mimetype/filename without downloading
+            const meta = getTelegramMediaMeta(message);
+            formattedMessage.hasMedia = meta.hasMedia;
+            formattedMessage.mediaMimetype = meta.mimeType;
+            formattedMessage.mediaFilename = meta.filename;
             if (formattedMessage.hasMedia) {
                 formattedMessage.fileUrl = `/api/telegram/media/file?chat_id=${encodeURIComponent(formattedMessage.contact_id)}&message_id=${encodeURIComponent(formattedMessage.id)}`;
-                try {
-                    if (message.media.className && String(message.media.className).includes('Photo')) {
-                        formattedMessage.mediaMimetype = 'image/jpeg';
-                    } else if (message.media.mimeType) {
-                        formattedMessage.mediaMimetype = message.media.mimeType;
-                    }
-                    if (message.media.fileName) formattedMessage.mediaFilename = message.media.fileName;
-                } catch (e) {}
             }
 
             // Emit message immediately (media can be fetched on-demand via /api/telegram/media)
@@ -857,6 +927,13 @@ app.post('/api/telegram/contacts', async (req, res) => {
                     contactInfo.phone = entity.phone || null;
                 }
 
+                // Cache entity so later /messages and /media calls can resolve input entities reliably
+                try {
+                    if (contactInfo.contact_id) {
+                        entityCacheById.set(String(contactInfo.contact_id), entity);
+                    }
+                } catch (e) {}
+
                 // Profile photos are expensive and can trigger extra DC downloads/reconnects.
                 // Only fetch when explicitly requested.
                 if (includeAvatars && entity.photo && entity.photo.className === 'UserProfilePhoto') {
@@ -925,7 +1002,7 @@ app.post('/api/telegram/messages', async (req, res) => {
 
         try {
             // Get entity (chat/user)
-            const entity = await client.getEntity(chat_id);
+            const entity = await getEntityForChatId(chat_id);
             
             // Get messages
             const params = { limit: limit };
@@ -940,6 +1017,7 @@ app.post('/api/telegram/messages', async (req, res) => {
 
             // Format messages for frontend
             const formattedMessages = await Promise.all(messages.map(async (message) => {
+                const meta = getTelegramMediaMeta(message);
                 const baseMessage = {
                     id: message.id.toString(),
                     body: message.message || '',
@@ -947,23 +1025,15 @@ app.post('/api/telegram/messages', async (req, res) => {
                     fromMe: message.out || false,
                     timestamp: toUnixSeconds(message.date) ?? Math.floor(Date.now() / 1000),
                     type: 'text',
-                    hasMedia: !!(message.media && !message.media.className.includes('MessageMediaEmpty')),
+                    hasMedia: meta.hasMedia,
                     mediaUrl: null,
-                    mediaMimetype: null,
-                    mediaFilename: null,
+                    mediaMimetype: meta.mimeType,
+                    mediaFilename: meta.filename,
                     fileUrl: null
                 };
                 
                 if (baseMessage.hasMedia) {
                     baseMessage.fileUrl = `/api/telegram/media/file?chat_id=${encodeURIComponent(String(chat_id))}&message_id=${encodeURIComponent(baseMessage.id)}`;
-                    try {
-                        if (message.media.className && String(message.media.className).includes('Photo')) {
-                            baseMessage.mediaMimetype = 'image/jpeg';
-                        } else if (message.media.mimeType) {
-                            baseMessage.mediaMimetype = message.media.mimeType;
-                        }
-                        if (message.media.fileName) baseMessage.mediaFilename = message.media.fileName;
-                    } catch (e) {}
                 }
 
                 // Get sender info
@@ -985,15 +1055,10 @@ app.post('/api/telegram/messages', async (req, res) => {
                         const buffer = await client.downloadMedia(message, {});
                         if (buffer) {
                             const base64 = buffer.toString('base64');
-                            let mimeType = 'application/octet-stream';
-                            if (message.media.className.includes('Photo')) {
-                                mimeType = 'image/jpeg';
-                            } else if (message.media.className.includes('Document')) {
-                                mimeType = message.media.mimeType || 'application/octet-stream';
-                            }
+                            const mimeType = meta.mimeType || 'application/octet-stream';
                             baseMessage.mediaUrl = `data:${mimeType};base64,${base64}`;
                             baseMessage.mediaMimetype = mimeType;
-                            baseMessage.mediaFilename = message.media.fileName || null;
+                            baseMessage.mediaFilename = meta.filename || null;
                         }
                     } catch (mediaError) {
                         console.error('[Telegram] Error downloading media:', mediaError);
@@ -1097,7 +1162,7 @@ app.post('/api/telegram/media', async (req, res) => {
             return res.status(400).json({ success: false, error: 'chat_id and message_id are required' });
         }
         
-        const entity = await client.getEntity(chat_id);
+        const entity = await getEntityForChatId(chat_id);
         const msgIdNum = parseInt(String(message_id), 10);
         if (!Number.isFinite(msgIdNum)) {
             return res.status(400).json({ success: false, error: 'message_id must be a number' });
@@ -1105,7 +1170,8 @@ app.post('/api/telegram/media', async (req, res) => {
         
         const msgs = await client.getMessages(entity, { ids: [msgIdNum] });
         const message = Array.isArray(msgs) ? msgs[0] : msgs;
-        if (!message || !message.media) {
+        const meta = getTelegramMediaMeta(message);
+        if (!message || !meta.hasMedia) {
             return res.status(404).json({ success: false, error: 'Media not found for this message' });
         }
         
@@ -1115,16 +1181,8 @@ app.post('/api/telegram/media', async (req, res) => {
         }
         
         const base64 = buffer.toString('base64');
-        let mimeType = 'application/octet-stream';
-        let filename = null;
-        try {
-            if (message.media.className && String(message.media.className).includes('Photo')) {
-                mimeType = 'image/jpeg';
-            } else if (message.media.mimeType) {
-                mimeType = message.media.mimeType;
-            }
-            if (message.media.fileName) filename = message.media.fileName;
-        } catch (e) {}
+        const mimeType = meta.mimeType || 'application/octet-stream';
+        const filename = meta.filename || null;
         
         return res.json({
             success: true,
@@ -1156,7 +1214,7 @@ app.get('/api/telegram/media/file', async (req, res) => {
         if (!chatId || !msgId) {
             return res.status(400).json({ success: false, error: 'chat_id and message_id are required' });
         }
-        const entity = await client.getEntity(chatId);
+        const entity = await getEntityForChatId(chatId);
         const msgIdNum = parseInt(String(msgId), 10);
         if (!Number.isFinite(msgIdNum)) {
             return res.status(400).json({ success: false, error: 'message_id must be a number' });
@@ -1164,7 +1222,8 @@ app.get('/api/telegram/media/file', async (req, res) => {
 
         const msgs = await client.getMessages(entity, { ids: [msgIdNum] });
         const message = Array.isArray(msgs) ? msgs[0] : msgs;
-        if (!message || !message.media) {
+        const meta = getTelegramMediaMeta(message);
+        if (!message || !meta.hasMedia) {
             return res.status(404).json({ success: false, error: 'Media not found for this message' });
         }
 
@@ -1173,27 +1232,47 @@ app.get('/api/telegram/media/file', async (req, res) => {
             return res.status(500).json({ success: false, error: 'Failed to download media' });
         }
 
-        let mimeType = 'application/octet-stream';
-        let filename = `telegram_media_${msgIdNum}`;
-        try {
-            if (message.media.className && String(message.media.className).includes('Photo')) {
-                mimeType = 'image/jpeg';
-                filename += '.jpg';
-            } else if (message.media.mimeType) {
-                mimeType = message.media.mimeType;
-                const ext = mimeType.includes('/') ? mimeType.split('/')[1] : 'bin';
-                filename += `.${ext}`;
-            } else {
-                filename += '.bin';
-            }
-            if (message.media.fileName) filename = String(message.media.fileName);
-        } catch (e) {
-            filename += '.bin';
+        const mimeType = meta.mimeType || 'application/octet-stream';
+        let filename = meta.filename || `telegram_media_${msgIdNum}`;
+        if (!meta.filename) {
+            // Add a best-effort extension when we don't have a real filename
+            const baseMime = String(mimeType).split(';')[0].trim();
+            const ext = baseMime.includes('/') ? baseMime.split('/')[1] : 'bin';
+            filename += `.${ext || 'bin'}`;
         }
 
         res.setHeader('Content-Type', mimeType);
         res.setHeader('Content-Disposition', `${download ? 'attachment' : 'inline'}; filename="${filename}"`);
-        res.setHeader('Content-Length', buffer.length);
+        res.setHeader('Accept-Ranges', 'bytes');
+
+        // Support Range requests (needed by many browsers for <video> playback/seek)
+        const size = buffer.length;
+        const range = req.headers.range;
+        if (range) {
+            const m = /^bytes=(\d*)-(\d*)$/i.exec(String(range).trim());
+            if (!m) {
+                res.status(416);
+                res.setHeader('Content-Range', `bytes */${size}`);
+                return res.end();
+            }
+            const start = m[1] ? parseInt(m[1], 10) : 0;
+            const end = m[2] ? parseInt(m[2], 10) : (size - 1);
+            if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end < 0 || start > end || start >= size) {
+                res.status(416);
+                res.setHeader('Content-Range', `bytes */${size}`);
+                return res.end();
+            }
+            const safeEnd = Math.min(end, size - 1);
+            const chunk = buffer.subarray(start, safeEnd + 1);
+            res.status(206);
+            res.setHeader('Content-Range', `bytes ${start}-${safeEnd}/${size}`);
+            res.setHeader('Content-Length', chunk.length);
+            if (req.method === 'HEAD') return res.end();
+            return res.send(chunk);
+        }
+
+        res.setHeader('Content-Length', size);
+        if (req.method === 'HEAD') return res.end();
         return res.send(buffer);
     } catch (error) {
         console.error('[Telegram] Error streaming media:', error);
@@ -1216,7 +1295,7 @@ app.post('/api/telegram/sendFile', async (req, res) => {
             return res.status(400).json({ success: false, error: 'chat_id and data_base64 are required' });
         }
         
-        const entity = await client.getEntity(chat_id);
+        const entity = await getEntityForChatId(chat_id);
         const buf = Buffer.from(String(data_base64), 'base64');
         const sent = await client.sendFile(entity, {
             file: buf,
@@ -1256,7 +1335,7 @@ app.post('/api/telegram/edit', async (req, res) => {
         if (!chat_id || !message_id || typeof text !== 'string') {
             return res.status(400).json({ success: false, error: 'chat_id, message_id, and text are required' });
         }
-        const entity = await client.getEntity(chat_id);
+        const entity = await getEntityForChatId(chat_id);
         const edited = await client.editMessage(entity, {
             message: parseInt(String(message_id), 10),
             text: text
@@ -1282,7 +1361,7 @@ app.post('/api/telegram/clear', async (req, res) => {
         if (!chat_id) {
             return res.status(400).json({ success: false, error: 'chat_id is required' });
         }
-        const entity = await client.getEntity(chat_id);
+        const entity = await getEntityForChatId(chat_id);
         await client.invoke(new Api.messages.DeleteHistory({
             peer: entity,
             maxId: 0,
@@ -1310,7 +1389,7 @@ app.post('/api/telegram/delete', async (req, res) => {
         if (!chat_id || !message_id) {
             return res.status(400).json({ success: false, error: 'chat_id and message_id are required' });
         }
-        const entity = await client.getEntity(chat_id);
+        const entity = await getEntityForChatId(chat_id);
         const mid = parseInt(String(message_id), 10);
         if (!Number.isFinite(mid)) {
             return res.status(400).json({ success: false, error: 'message_id must be a number' });
@@ -1347,7 +1426,7 @@ app.post('/api/telegram/send', async (req, res) => {
 
         try {
             // Get entity
-            const entity = await client.getEntity(chat_id);
+            const entity = await getEntityForChatId(chat_id);
             
             // Send message
             const message = await client.sendMessage(entity, { message: text });

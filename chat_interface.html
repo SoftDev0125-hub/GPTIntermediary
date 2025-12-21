@@ -1349,6 +1349,7 @@
 
         // Telegram functionality - Node.js backend
         const TELEGRAM_API_URL = 'http://localhost:3001';
+        const WHATSAPP_API_URL = 'http://localhost:3000';
         let currentTelegramChatId = null;
         const telegramMessageInput = document.getElementById('telegramMessageInput');
         const telegramSendButton = document.getElementById('telegramSendButton');
@@ -1421,16 +1422,12 @@
                 
                 telegramSocket.on('telegram_status', (data) => {
                     console.log('[Telegram] Status update:', data);
-                    if (data.is_connected && data.is_authenticated) {
-                        // Auto-refresh if connected
-                        const _btn = document.getElementById('telegramShowButton');
-                        if (_btn && !_btn.disabled) {
-                            loadTelegramMessages();
-                        }
-                    }
+                    // Intentionally do NOT auto-load contacts/messages here.
+                    // Per UX requirement: Telegram contacts/messages load only when user clicks Refresh.
                 });
                 
                 telegramSocket.on('telegram_message', (message) => {
+                    if (!telegramLoadedOnce) return;
                     console.log('[Telegram] New message:', message);
                     // Best-effort status defaults
                     if (message && message.fromMe && !message.delivery_status) {
@@ -1448,6 +1445,7 @@
                 });
 
                 telegramSocket.on('telegram_message_update', (message) => {
+                    if (!telegramLoadedOnce) return;
                     // Media downloaded async; patch message in cache if present
                     if (!message || !message.contact_id || !message.id) return;
                     const list = telegramChatMessages[message.contact_id];
@@ -1462,6 +1460,7 @@
                 });
 
                 telegramSocket.on('telegram_outgoing_sent', (data) => {
+                    if (!telegramLoadedOnce) return;
                     // Mark outgoing as sent (single-check)
                     if (!data || !data.contact_id || !data.message_id) return;
                     const list = telegramChatMessages[data.contact_id];
@@ -1474,6 +1473,7 @@
                 });
 
                 telegramSocket.on('telegram_receipt', (data) => {
+                    if (!telegramLoadedOnce) return;
                     // Best-effort "read" receipt: mark all outgoing <= max_id as read
                     if (!data || data.kind !== 'read' || !data.contact_id || !data.max_id) return;
                     // Persist latest read max on chat (so loaded history renders ✓✓ correctly)
@@ -1977,6 +1977,7 @@
         let currentChatId = null;
         let telegramChatPaging = {}; // chatId -> { oldestId, reachedStart, loadingOlder }
         let telegramRealtimePollTimer = null;
+        let telegramLoadedOnce = false; // contacts/messages should only be loaded on Refresh
         
         // Helper functions
         function getTelegramInitials(name) {
@@ -2041,7 +2042,9 @@
             if (!telegramChatsList) return;
             
             if (telegramChats.length === 0) {
-                telegramChatsList.innerHTML = '<div class="telegram-sidebar-empty">No chats found</div>';
+                telegramChatsList.innerHTML = telegramLoadedOnce
+                    ? '<div class="telegram-sidebar-empty">No chats found</div>'
+                    : '<div class="telegram-sidebar-empty">Click Refresh to load chats</div>';
                 return;
             }
             
@@ -2136,8 +2139,15 @@
 
         // Make selectTelegramChat globally accessible
         window.selectTelegramChat = async function(chatId) {
+            if (!telegramLoadedOnce) {
+                if (telegramMessagesContainer) {
+                    telegramMessagesContainer.innerHTML = '<div class="telegram-empty-state"><p>Click Refresh to load chats and messages</p></div>';
+                }
+                return;
+            }
             currentChatId = chatId;
             currentTelegramChatId = chatId;
+            try { localStorage.setItem('telegram_last_chat_id', String(chatId)); } catch (e) {}
             
             // Find chat info
             const chatInfo = telegramChats.find(c => c.contact_id === chatId);
@@ -2286,9 +2296,10 @@
                 
                 let mediaHtml = '';
                 if (msg.hasMedia) {
-                    const isImage = msg.mediaMimetype && msg.mediaMimetype.startsWith('image/');
-                    const isVideo = msg.mediaMimetype && msg.mediaMimetype.startsWith('video/');
-                    const isAudio = msg.mediaMimetype && msg.mediaMimetype.startsWith('audio/');
+                    const ext = (msg.mediaFilename || '').toLowerCase().split('.').pop();
+                    const isImage = (msg.mediaMimetype && msg.mediaMimetype.startsWith('image/')) || ['jpg','jpeg','png','gif','webp','bmp'].includes(ext);
+                    const isVideo = (msg.mediaMimetype && msg.mediaMimetype.startsWith('video/')) || ['mp4','webm','mov','mkv'].includes(ext);
+                    const isAudio = (msg.mediaMimetype && msg.mediaMimetype.startsWith('audio/')) || ['mp3','ogg','opus','wav','m4a','aac'].includes(ext);
                     const fileUrl = msg.fileUrl ? `${TELEGRAM_API_URL}${msg.fileUrl}` : (msg.mediaUrl && msg.mediaUrl.startsWith('/api/') ? `${TELEGRAM_API_URL}${msg.mediaUrl}` : null);
                     const src = msg.mediaUrl || fileUrl;
                     if (src) {
@@ -2353,6 +2364,7 @@
                 telegramShowButton.disabled = true;
                 telegramShowButton.textContent = 'Loading...';
             }
+            telegramLoadedOnce = false;
             telegramChats = [];
             telegramChatMessages = {};
             currentChatId = null;
@@ -2583,6 +2595,7 @@
                 console.log('[*] Contacts data received:', contactsData);
 
                 if (contactsData.success) {
+                    telegramLoadedOnce = true;
                     telegramChats = contactsData.contacts || [];
                     console.log(`[OK] Got ${telegramChats.length} Telegram contacts`);
                     
@@ -2596,6 +2609,20 @@
                     }
                     
                     updateTelegramCount();
+                    
+                    // Auto-open a chat after refresh (restore last chat if possible, else first chat)
+                    try {
+                        const storedChatId = localStorage.getItem('telegram_last_chat_id');
+                        const firstChatId = telegramChats && telegramChats[0] ? telegramChats[0].contact_id : null;
+                        const preferredChatId = (storedChatId && telegramChats.some(c => c.contact_id === storedChatId))
+                            ? storedChatId
+                            : firstChatId;
+                        if (preferredChatId && typeof window.selectTelegramChat === 'function') {
+                            window.selectTelegramChat(preferredChatId);
+                        }
+                    } catch (e) {
+                        // ignore
+                    }
 
                     // Fallback polling if realtime socket isn't connected
                     if (telegramRealtimePollTimer) {
@@ -3671,18 +3698,22 @@
                     const isImage = msg.mediaMimetype?.startsWith('image/');
                     const isVideo = msg.mediaMimetype?.startsWith('video/');
                     const isAudio = msg.mediaMimetype?.startsWith('audio/');
-                    const inlineUrl = msg.mediaFetchUrl ? `http://localhost:3000${msg.mediaFetchUrl}` : `http://localhost:3000/api/whatsapp/media/${msg.id}?inline=1`;
-                    const downloadUrl = msg.mediaDownloadUrl ? `http://localhost:3000${msg.mediaDownloadUrl}` : `http://localhost:3000/api/whatsapp/media/${msg.id}?download=true`;
+                    const ext = (msg.mediaFilename || '').toLowerCase().split('.').pop();
+                    const inferredImage = !isImage && !isVideo && !isAudio && ['jpg','jpeg','png','gif','webp','bmp'].includes(ext);
+                    const inferredVideo = !isImage && !isVideo && !isAudio && ['mp4','webm','mov','mkv'].includes(ext);
+                    const inferredAudio = !isImage && !isVideo && !isAudio && ['mp3','ogg','opus','wav','m4a','aac'].includes(ext);
+                    const inlineUrl = msg.mediaFetchUrl ? `${WHATSAPP_API_URL}${msg.mediaFetchUrl}` : `${WHATSAPP_API_URL}/api/whatsapp/media/${msg.id}?inline=1`;
+                    const downloadUrl = msg.mediaDownloadUrl ? `${WHATSAPP_API_URL}${msg.mediaDownloadUrl}` : `${WHATSAPP_API_URL}/api/whatsapp/media/${msg.id}?download=true`;
                     const src = msg.mediaUrl || inlineUrl;
                     
-                    if (isImage) {
+                    if (isImage || inferredImage) {
                         mediaHTML = `
                             <div class="whatsapp-media-container">
                                 <img loading="lazy" src="${src}" alt="Image" class="whatsapp-media-image" onclick="openMediaViewer('${src}', '${msg.mediaFilename || 'image'}')" />
                                 <a href="${downloadUrl}" download="${msg.mediaFilename || 'image'}" class="whatsapp-media-download" title="Download image">⬇️</a>
                             </div>
                         `;
-                    } else if (isVideo) {
+                    } else if (isVideo || inferredVideo) {
                         mediaHTML = `
                             <div class="whatsapp-media-container">
                                 <video controls preload="metadata" class="whatsapp-media-video">
@@ -3691,7 +3722,7 @@
                                 <a href="${downloadUrl}" download="${msg.mediaFilename || 'video'}" class="whatsapp-media-download" title="Download video">⬇️</a>
                             </div>
                         `;
-                    } else if (isAudio) {
+                    } else if (isAudio || inferredAudio) {
                         mediaHTML = `
                             <div class="whatsapp-media-container">
                                 <audio controls style="width: 100%;">
