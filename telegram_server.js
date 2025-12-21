@@ -85,6 +85,30 @@ function truncateText(value, maxLen) {
     return str.slice(0, maxLen) + '…';
 }
 
+function sanitizeFilenameForHeader(name, fallback = 'file') {
+    let s = '';
+    try { s = name ? String(name) : ''; } catch (e) { s = ''; }
+    // Remove control characters (including CR/LF) which are illegal in headers
+    s = s.replace(/[\u0000-\u001F\u007F]/g, '');
+    // Replace characters that frequently break quoted header values
+    s = s.replace(/[\\"]/g, '_');
+    // Force ASCII in the fallback filename to avoid Node header validation errors
+    s = s.replace(/[^\x20-\x7E]/g, '_').trim();
+    if (!s) s = fallback;
+    // Avoid ridiculously long header values
+    if (s.length > 180) s = s.slice(0, 180);
+    return s;
+}
+
+function buildContentDisposition(filename, download) {
+    const original = filename ? String(filename) : 'file';
+    const safeAscii = sanitizeFilenameForHeader(original, 'file');
+    // RFC 5987 encoding for UTF-8 filenames (ASCII-only header value)
+    const encoded = encodeURIComponent(original);
+    const type = download ? 'attachment' : 'inline';
+    return `${type}; filename="${safeAscii}"; filename*=UTF-8''${encoded}`;
+}
+
 function getTelegramMediaMeta(message) {
     const media = message && message.media ? message.media : null;
     if (!media) return { hasMedia: false, mimeType: null, filename: null };
@@ -1251,7 +1275,7 @@ app.get('/api/telegram/media/file', async (req, res) => {
         }
 
         res.setHeader('Content-Type', mimeType);
-        res.setHeader('Content-Disposition', `${download ? 'attachment' : 'inline'}; filename="${filename}"`);
+        res.setHeader('Content-Disposition', buildContentDisposition(filename, download));
         res.setHeader('Accept-Ranges', 'bytes');
 
         // Support Range requests (needed by many browsers for <video> playback/seek)

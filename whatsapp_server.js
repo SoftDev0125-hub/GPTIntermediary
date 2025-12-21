@@ -35,6 +35,28 @@ let isReady = false;
 // Cache messages so media can be fetched later even when whatsapp-web.js can't resolve by id (common for older messages)
 const messageCacheById = new Map(); // messageId -> Message
 
+function sanitizeFilenameForHeader(name, fallback = 'file') {
+    let s = '';
+    try { s = name ? String(name) : ''; } catch (e) { s = ''; }
+    // Remove control characters (including CR/LF) which are illegal in headers
+    s = s.replace(/[\u0000-\u001F\u007F]/g, '');
+    // Replace characters that frequently break quoted header values
+    s = s.replace(/[\\"]/g, '_');
+    // Force ASCII in the fallback filename to avoid Node header validation errors
+    s = s.replace(/[^\x20-\x7E]/g, '_').trim();
+    if (!s) s = fallback;
+    if (s.length > 180) s = s.slice(0, 180);
+    return s;
+}
+
+function buildContentDisposition(filename, download) {
+    const original = filename ? String(filename) : 'file';
+    const safeAscii = sanitizeFilenameForHeader(original, 'file');
+    const encoded = encodeURIComponent(original);
+    const type = download ? 'attachment' : 'inline';
+    return `${type}; filename=\"${safeAscii}\"; filename*=UTF-8''${encoded}`;
+}
+
 function cacheWhatsAppMessage(msg) {
     try {
         const id = msg && msg.id && msg.id._serialized ? String(msg.id._serialized) : null;
@@ -740,8 +762,7 @@ app.get('/api/whatsapp/media/:messageId', async (req, res) => {
         const filename = media.filename || `media_${messageId}.${ext || 'bin'}`;
         res.setHeader('Content-Type', safeMime);
         const download = String(req.query.download || '').toLowerCase() === 'true';
-        const disposition = download ? 'attachment' : 'inline';
-        res.setHeader('Content-Disposition', `${disposition}; filename="${filename}"`);
+        res.setHeader('Content-Disposition', buildContentDisposition(filename, download));
         res.setHeader('Accept-Ranges', 'bytes');
 
         // Support Range requests (needed by many browsers for <video> playback/seek)
