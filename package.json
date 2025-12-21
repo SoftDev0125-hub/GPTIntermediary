@@ -6,9 +6,12 @@
   "scripts": {
     "start": "node whatsapp_server.js",
     "whatsapp": "node whatsapp_server.js",
-    "telegram": "node telegram_server.js"
+    "telegram": "node telegram_server.js",
+    "slack": "node slack_server.js"
   },
   "dependencies": {
+    "@slack/socket-mode": "^2.0.3",
+    "@slack/web-api": "^7.0.0",
     "cors": "^2.8.5",
     "dotenv": "^16.6.1",
     "express": "^4.18.2",

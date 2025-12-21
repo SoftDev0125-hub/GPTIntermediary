@@ -58,6 +58,7 @@ telegram_session/
 telegram_session_node/
 whatsapp_session/
 whatsapp_session_node/
+slack_session_node/
 .wwebjs_cache/
 
 # Node modules

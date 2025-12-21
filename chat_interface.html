@@ -4218,6 +4218,9 @@
         let slackChannels = [];
         let slackMessagesByChannel = {};
         let currentSlackChannelId = null;
+        let slackSocket = null;
+        let slackPollInterval = null;
+        let slackLastMessageTs = {};
 
         function getSlackInitials(name) {
             if (!name) return '?';
@@ -4258,19 +4261,20 @@
             }
 
             const channelsHTML = slackChannels.map(channel => {
-                const initials = getSlackInitials(channel.name);
-                const avatarColor = getSlackAvatarColor(channel.name);
-                const isActive = currentSlackChannelId === channel.id;
-                const preview = channel.lastMessage ? (channel.lastMessage.length > 30 ? channel.lastMessage.substring(0, 30) + '...' : channel.lastMessage) : 'No messages';
+                const initials = getSlackInitials(channel.channel_name);
+                const avatarColor = getSlackAvatarColor(channel.channel_name);
+                const isActive = currentSlackChannelId === channel.channel_id;
+                const preview = channel.last_message ? (channel.last_message.length > 30 ? channel.last_message.substring(0, 30) + '...' : channel.last_message) : 'No messages';
+                const unreadBadge = channel.unread_count > 0 ? `<span class="slack-channel-unread">${channel.unread_count}</span>` : '';
                 
                 return `
-                    <div class="slack-channel-item ${isActive ? 'active' : ''}" data-channel-id="${channel.id}">
+                    <div class="slack-channel-item ${isActive ? 'active' : ''}" data-channel-id="${channel.channel_id}">
                         <div class="slack-channel-avatar" style="background-color: ${avatarColor}">
                             ${initials}
                         </div>
                         <div class="slack-channel-info">
-                            <div class="slack-channel-name">${escapeHtml(channel.name)}</div>
-                            <div class="slack-channel-preview">${escapeHtml(preview)}</div>
+                            <div class="slack-channel-name">${escapeHtml(channel.channel_name)}</div>
+                            <div class="slack-channel-preview">${escapeHtml(preview)}${unreadBadge}</div>
                         </div>
                     </div>
                 `;
@@ -4287,12 +4291,13 @@
             });
         }
 
-        function selectSlackChannel(channelId) {
+        async function selectSlackChannel(channelId) {
+            const previousChannelId = currentSlackChannelId;
             currentSlackChannelId = channelId;
-            const channel = slackChannels.find(c => c.id === channelId);
+            const channel = slackChannels.find(c => c.channel_id === channelId);
             if (!channel) return;
 
-            slackCurrentChannel.textContent = channel.name;
+            slackCurrentChannel.textContent = channel.channel_name;
             slackMessagesContainer.innerHTML = '<div class="slack-empty-state"><p>Loading messages...</p></div>';
 
             // Show input area
@@ -4305,9 +4310,72 @@
                 item.classList.toggle('active', item.dataset.channelId === channelId);
             });
 
-            // Load messages for this channel
+            // Load messages for this channel (if not cached)
+            if (!slackMessagesByChannel[channelId]) {
+                try {
+                    const response = await fetch('http://localhost:3002/api/slack/messages', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            channel_id: channelId,
+                            limit: 50
+                        })
+                    });
+
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    }
+
+                    const data = await response.json();
+                    if (data.success) {
+                        slackMessagesByChannel[channelId] = data.messages || [];
+                    } else {
+                        throw new Error(data.error || 'Failed to load messages');
+                    }
+                } catch (error) {
+                    console.error('[Slack] Error loading messages:', error);
+                    slackMessagesContainer.innerHTML = `<div class="slack-empty-state"><p>Error loading messages: ${escapeHtml(error.message)}</p></div>`;
+                    return;
+                }
+            }
+
             const messages = slackMessagesByChannel[channelId] || [];
             renderSlackMessages(messages);
+
+            // Connect WebSocket and join channel room
+            connectSlackWebSocket();
+
+            // Leave previous channel room (prevents polling / realtime for many channels at once)
+            if (slackSocket && previousChannelId && previousChannelId !== channelId) {
+                try {
+                    slackSocket.emit('leave_channel', previousChannelId);
+                    console.log(`[Slack] Left channel ${previousChannelId} via WebSocket`);
+                } catch (e) {}
+            }
+            
+            // Wait a bit for WebSocket to connect, then join channel
+            setTimeout(() => {
+                if (slackSocket) {
+                    if (slackSocket.connected) {
+                        slackSocket.emit('join_channel', channelId);
+                        console.log(`[Slack] Joined channel ${channelId} via WebSocket`);
+                        // Stop polling if WebSocket is connected
+                        stopSlackPolling();
+                    } else {
+                        // WebSocket not connected yet, wait for connection
+                        slackSocket.once('connect', () => {
+                            slackSocket.emit('join_channel', channelId);
+                            console.log(`[Slack] Joined channel ${channelId} via WebSocket (after connect)`);
+                            stopSlackPolling();
+                        });
+                        // Start polling as fallback
+                        startSlackPolling();
+                    }
+                } else {
+                    // No WebSocket, start polling
+                    startSlackPolling();
+                }
+            }, 500);
 
             // Focus input
             if (slackMessageInput) {
@@ -4322,6 +4390,7 @@
             }
 
             let lastDate = null;
+            let lastUserId = null;
             const messagesHTML = messages.map(msg => {
                 const msgDate = new Date(msg.timestamp || Date.now());
                 const currentDate = msgDate.toDateString();
@@ -4330,6 +4399,13 @@
 
                 const timeStr = formatSlackTime(msg.timestamp);
                 const isSent = msg.fromMe || false;
+                const showAvatar = lastUserId !== msg.from;
+                lastUserId = msg.from;
+
+                // Get user initials and color
+                const userName = msg.fromName || msg.from || 'Unknown';
+                const initials = getSlackInitials(userName);
+                const avatarColor = getSlackAvatarColor(userName);
 
                 let html = '';
                 
@@ -4347,10 +4423,27 @@
                 // Message
                 html += `
                     <div class="slack-message-wrapper ${isSent ? 'sent' : 'received'}">
-                        <div class="slack-message-bubble">
+                        ${showAvatar && !isSent ? `
+                            <div class="slack-channel-avatar" style="background-color: ${avatarColor}; width: 36px; height: 36px; font-size: 14px;">
+                                ${initials}
+                            </div>
+                        ` : ''}
+                        <div class="slack-message-bubble" data-message-ts="${msg.id}" data-channel-id="${msg.channel_id}">
+                            ${showAvatar && !isSent ? `<div class="slack-message-header"><span class="slack-username">${escapeHtml(userName)}</span></div>` : ''}
                             <div class="slack-message-text">${escapeHtml(msg.body || msg.text || '')}</div>
                             <div class="slack-message-footer">
                                 <div class="slack-message-time">${timeStr}</div>
+                                ${isSent ? `
+                                    <div class="slack-message-actions" style="display: none;">
+                                        <button class="slack-action-btn" onclick="editSlackMessage('${msg.id}', '${msg.channel_id}', '${escapeHtml((msg.body || msg.text || '').replace(/'/g, "\\'"))}')" title="Edit">✏️</button>
+                                        <button class="slack-action-btn" onclick="deleteSlackMessage('${msg.id}', '${msg.channel_id}')" title="Delete">🗑️</button>
+                                    </div>
+                                ` : ''}
+                                ${!isSent ? `
+                                    <div class="slack-message-actions" style="display: none;">
+                                        <button class="slack-action-btn" onclick="replyToSlackMessage('${msg.id}', '${msg.channel_id}')" title="Reply">💬</button>
+                                    </div>
+                                ` : ''}
                             </div>
                         </div>
                     </div>
@@ -4361,6 +4454,25 @@
 
             slackMessagesContainer.innerHTML = messagesHTML;
             slackMessagesContainer.scrollTop = slackMessagesContainer.scrollHeight;
+
+            // Track last message timestamp for polling (use the newest message, not the oldest)
+            if (messages.length > 0) {
+                // Messages are in chronological order (oldest first), so get the last one (newest)
+                const newestMsg = messages[messages.length - 1];
+                slackLastMessageTs[currentSlackChannelId] = newestMsg.id;
+            }
+
+            // Add hover handlers for message actions
+            document.querySelectorAll('.slack-message-bubble').forEach(bubble => {
+                bubble.addEventListener('mouseenter', () => {
+                    const actions = bubble.querySelector('.slack-message-actions');
+                    if (actions) actions.style.display = 'flex';
+                });
+                bubble.addEventListener('mouseleave', () => {
+                    const actions = bubble.querySelector('.slack-message-actions');
+                    if (actions) actions.style.display = 'none';
+                });
+            });
         }
 
         async function loadSlackChannels() {
@@ -4373,35 +4485,286 @@
             currentSlackChannelId = null;
 
             try {
-                // Mock data for now - replace with actual API call later
-                slackChannels = [
-                    { id: '1', name: 'general', lastMessage: 'Welcome to Slack!' },
-                    { id: '2', name: 'random', lastMessage: 'Hello everyone!' },
-                    { id: '3', name: 'announcements', lastMessage: 'New feature released' }
-                ];
+                // Check status first
+                const statusResponse = await fetch('http://localhost:3002/api/slack/status', {
+                    method: 'GET',
+                    headers: { 'Content-Type': 'application/json' }
+                });
 
-                renderSlackChannels();
-                
-                if (slackStatus) {
-                    slackStatus.textContent = 'Connected';
+                const statusData = await statusResponse.json();
+                if (!statusData.connected) {
+                    throw new Error(statusData.message || 'Not connected to Slack. Please check your token.');
                 }
-                
-                if (slackEmptyState) {
-                    slackEmptyState.style.display = 'flex';
+
+                // Fetch channels
+                const channelsResponse = await fetch('http://localhost:3002/api/slack/channels', {
+                    method: 'GET',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+
+                if (!channelsResponse.ok) {
+                    const errorData = await channelsResponse.json().catch(() => ({ error: 'Failed to load channels' }));
+                    throw new Error(errorData.error || `HTTP ${channelsResponse.status}`);
+                }
+
+                const channelsData = await channelsResponse.json();
+                if (channelsData.success) {
+                    slackChannels = channelsData.channels || [];
+                    console.log(`[Slack] Loaded ${slackChannels.length} channels`);
+                    
+                    renderSlackChannels();
+                    
+                    if (slackStatus) {
+                        slackStatus.textContent = 'Connected';
+                    }
+                    
+                    if (slackEmptyState) {
+                        slackEmptyState.style.display = 'flex';
+                    }
+
+                    // Auto-select first channel if available
+                    if (slackChannels.length > 0) {
+                        await selectSlackChannel(slackChannels[0].channel_id);
+                    }
+                } else {
+                    throw new Error(channelsData.error || 'Failed to load channels');
                 }
             } catch (error) {
                 console.error('[!] Error loading Slack channels:', error);
                 if (slackChannelsList) {
-                    slackChannelsList.innerHTML = '<div class="slack-sidebar-empty">Error loading channels</div>';
+                    slackChannelsList.innerHTML = `<div class="slack-sidebar-empty">Error: ${escapeHtml(error.message)}</div>`;
                 }
                 if (slackStatus) {
                     slackStatus.textContent = 'Error';
+                }
+                if (slackMessagesContainer) {
+                    slackMessagesContainer.innerHTML = `<div class="slack-empty-state"><p>Error: ${escapeHtml(error.message)}</p></div>`;
                 }
             } finally {
                 slackShowButton.disabled = false;
                 slackShowButton.textContent = 'Refresh';
             }
         }
+
+        // Connect Slack WebSocket for real-time updates
+        function connectSlackWebSocket() {
+            if (slackSocket && slackSocket.connected) {
+                return;
+            }
+
+            try {
+                slackSocket = io('http://localhost:3002', {
+                    transports: ['websocket', 'polling'],
+                    reconnection: true,
+                    reconnectionAttempts: Infinity,
+                    reconnectionDelay: 1000,
+                    timeout: 20000
+                });
+
+                slackSocket.on('connect', () => {
+                    console.log('[Slack] WebSocket connected');
+                    // Stop polling when WebSocket connects
+                    stopSlackPolling();
+                    if (currentSlackChannelId) {
+                        slackSocket.emit('join_channel', currentSlackChannelId);
+                    }
+                });
+
+                slackSocket.on('slack_message', (message) => {
+                    console.log('[Slack] Received message via WebSocket:', message);
+                    if (message.channel_id === currentSlackChannelId) {
+                        if (!slackMessagesByChannel[currentSlackChannelId]) {
+                            slackMessagesByChannel[currentSlackChannelId] = [];
+                        }
+                        // Check for duplicates before adding
+                        const existingIds = new Set(slackMessagesByChannel[currentSlackChannelId].map(m => m.id));
+                        if (!existingIds.has(message.id)) {
+                            slackMessagesByChannel[currentSlackChannelId].push(message);
+                            // Update last message timestamp
+                            slackLastMessageTs[currentSlackChannelId] = message.id;
+                            console.log(`[Slack] Added new message to channel ${currentSlackChannelId}, total: ${slackMessagesByChannel[currentSlackChannelId].length}`);
+                            renderSlackMessages(slackMessagesByChannel[currentSlackChannelId]);
+                        } else {
+                            console.log(`[Slack] Duplicate message ignored: ${message.id}`);
+                        }
+                    } else {
+                        console.log(`[Slack] Message for different channel (${message.channel_id} vs ${currentSlackChannelId})`);
+                    }
+                });
+
+                slackSocket.on('slack_message_updated', (message) => {
+                    if (message.channel_id === currentSlackChannelId) {
+                        const messages = slackMessagesByChannel[currentSlackChannelId] || [];
+                        const index = messages.findIndex(m => m.id === message.id);
+                        if (index !== -1) {
+                            messages[index] = message;
+                            renderSlackMessages(messages);
+                        }
+                    }
+                });
+
+                slackSocket.on('slack_message_deleted', (data) => {
+                    if (data.channel_id === currentSlackChannelId) {
+                        const messages = slackMessagesByChannel[currentSlackChannelId] || [];
+                        slackMessagesByChannel[currentSlackChannelId] = messages.filter(m => m.id !== data.message_ts);
+                        renderSlackMessages(slackMessagesByChannel[currentSlackChannelId]);
+                    }
+                });
+
+                slackSocket.on('disconnect', () => {
+                    console.log('[Slack] WebSocket disconnected');
+                    // Start polling as fallback when WebSocket disconnects
+                    if (currentSlackChannelId) {
+                        startSlackPolling();
+                    }
+                });
+
+                slackSocket.on('connect_error', (error) => {
+                    console.log('[Slack] WebSocket connection error:', error.message);
+                });
+            } catch (error) {
+                console.error('[Slack] Error connecting WebSocket:', error);
+            }
+        }
+
+        // Stop polling function
+        function stopSlackPolling() {
+            if (slackPollInterval) {
+                clearInterval(slackPollInterval);
+                slackPollInterval = null;
+            }
+        }
+
+        // Polling fallback for real-time updates (only when WebSocket is not connected)
+        function startSlackPolling() {
+            // Don't poll if WebSocket is connected
+            if (slackSocket && slackSocket.connected) {
+                return;
+            }
+
+            // Clear any existing polling
+            stopSlackPolling();
+
+            slackPollInterval = setInterval(async () => {
+                // Stop polling if WebSocket connects
+                if (slackSocket && slackSocket.connected) {
+                    stopSlackPolling();
+                    return;
+                }
+
+                if (!currentSlackChannelId) return;
+
+                try {
+                    const lastTs = slackLastMessageTs[currentSlackChannelId];
+                    const response = await fetch('http://localhost:3002/api/slack/poll', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            channel_id: currentSlackChannelId,
+                            last_message_ts: lastTs
+                        })
+                    });
+
+                    if (response.ok) {
+                        const data = await response.json();
+                        if (data.success && data.messages && data.messages.length > 0) {
+                            if (!slackMessagesByChannel[currentSlackChannelId]) {
+                                slackMessagesByChannel[currentSlackChannelId] = [];
+                            }
+                            
+                            // Check for duplicates before adding
+                            const existingIds = new Set(slackMessagesByChannel[currentSlackChannelId].map(m => m.id));
+                            const newMessages = data.messages.filter(m => !existingIds.has(m.id));
+                            
+                            if (newMessages.length > 0) {
+                                slackMessagesByChannel[currentSlackChannelId].push(...newMessages);
+                                // Update last message timestamp
+                                const newestMsg = newMessages[newMessages.length - 1];
+                                slackLastMessageTs[currentSlackChannelId] = newestMsg.id;
+                                renderSlackMessages(slackMessagesByChannel[currentSlackChannelId]);
+                            }
+                        }
+                    }
+                } catch (error) {
+                    // Silently fail - polling will retry
+                }
+            }, 5000); // Poll every 5 seconds (reduced frequency)
+        }
+
+        // Edit message function
+        window.editSlackMessage = async function(messageTs, channelId, currentText) {
+            const newText = prompt('Edit message:', currentText);
+            if (!newText || newText === currentText) return;
+
+            try {
+                const response = await fetch('http://localhost:3002/api/slack/edit', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        channel_id: channelId,
+                        message_ts: messageTs,
+                        text: newText
+                    })
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.success) {
+                        // Reload messages to show updated message
+                        delete slackMessagesByChannel[channelId];
+                        await selectSlackChannel(channelId);
+                    }
+                } else {
+                    const errorData = await response.json().catch(() => ({ error: 'Failed to edit message' }));
+                    alert(`Error: ${errorData.error}`);
+                }
+            } catch (error) {
+                alert(`Error editing message: ${error.message}`);
+            }
+        };
+
+        // Delete message function
+        window.deleteSlackMessage = async function(messageTs, channelId) {
+            if (!confirm('Are you sure you want to delete this message?')) return;
+
+            try {
+                const response = await fetch('http://localhost:3002/api/slack/delete', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        channel_id: channelId,
+                        message_ts: messageTs
+                    })
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.success) {
+                        // Remove from local cache
+                        const messages = slackMessagesByChannel[channelId] || [];
+                        slackMessagesByChannel[channelId] = messages.filter(m => m.id !== messageTs);
+                        renderSlackMessages(slackMessagesByChannel[channelId]);
+                    }
+                } else {
+                    const errorData = await response.json().catch(() => ({ error: 'Failed to delete message' }));
+                    alert(`Error: ${errorData.error}`);
+                }
+            } catch (error) {
+                alert(`Error deleting message: ${error.message}`);
+            }
+        };
+
+        // Reply to message function
+        window.replyToSlackMessage = function(messageTs, channelId) {
+            if (slackMessageInput) {
+                slackMessageInput.value = `Replying to message... `;
+                slackMessageInput.focus();
+                slackMessageInput.setSelectionRange(slackMessageInput.value.length, slackMessageInput.value.length);
+                
+                // Store thread_ts for sending
+                slackMessageInput.dataset.threadTs = messageTs;
+            }
+        };
 
         if (slackShowButton) {
             slackShowButton.addEventListener('click', loadSlackChannels);
@@ -5765,17 +6128,31 @@
             slackSendButton.innerHTML = '<div class="slack-send-spinner"></div>';
 
             try {
+                const threadTs = slackMessageInput.dataset.threadTs;
                 console.log(`[*] Sending message to channel ${currentSlackChannelId}...`);
-                const response = await fetch('http://localhost:8000/api/slack/send', {
+                
+                const url = threadTs ? 'http://localhost:3002/api/slack/reply' : 'http://localhost:3002/api/slack/send';
+                const body = threadTs ? {
+                    channel_id: currentSlackChannelId,
+                    thread_ts: threadTs,
+                    text: text
+                } : {
+                    channel_id: currentSlackChannelId,
+                    text: text
+                };
+
+                const response = await fetch(url, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                     },
-                    body: JSON.stringify({
-                        channel_id: currentSlackChannelId,
-                        text: text
-                    })
+                    body: JSON.stringify(body)
                 });
+
+                // Clear thread_ts after sending
+                if (slackMessageInput.dataset.threadTs) {
+                    delete slackMessageInput.dataset.threadTs;
+                }
 
                 console.log('[*] Response status:', response.status);
                 const data = await response.json();

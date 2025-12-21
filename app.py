@@ -21,6 +21,7 @@ chat_process = None
 django_process = None
 whatsapp_node_process = None
 telegram_node_process = None
+slack_node_process = None
 servers_running = False
 backend_log = None
 chat_log = None
@@ -34,8 +35,8 @@ DJANGO_PORT = 8001
 
 def start_servers():
     """Start all backend servers in separate processes"""
-    global backend_process, chat_process, django_process, whatsapp_node_process, telegram_node_process, servers_running
-    global backend_log, chat_log, django_log, whatsapp_log, telegram_log
+    global backend_process, chat_process, django_process, whatsapp_node_process, telegram_node_process, slack_node_process, servers_running
+    global backend_log, chat_log, django_log, whatsapp_log, telegram_log, slack_log
     
     # Make sure we're in the right directory
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -348,6 +349,74 @@ def start_servers():
         else:
             print(f"[!] Telegram server file not found: {telegram_server_file} (skipping)")
         
+        # Start Node.js Slack server (slack_server.js on port 3002)
+        print("[*] Starting Node.js Slack server (port 3002)...")
+        slack_server_file = "slack_server.js"
+        if os.path.exists(os.path.join(os.path.dirname(os.path.abspath(__file__)), slack_server_file)):
+            try:
+                # Check if port 3002 is already in use and kill the process
+                print("[*] Checking if port 3002 is available...")
+                if kill_process_by_port(3002):
+                    print("[*] Killed existing process on port 3002")
+                    time.sleep(1)  # Wait a moment for port to be released
+                
+                # Check if Node.js is available (reuse check from WhatsApp/Telegram or check again)
+                try:
+                    if 'node_check' not in locals() or node_check is None or node_check.returncode != 0:
+                        node_check = subprocess.run(
+                            ['node', '--version'],
+                            capture_output=True,
+                            timeout=2
+                        )
+                        if node_check.returncode != 0:
+                            raise FileNotFoundError("Node.js not found")
+                except FileNotFoundError:
+                    print("[!] Node.js not found. Slack server will not start.")
+                    slack_node_process = None
+                else:
+                    # Log to file (avoid PIPE without readers which can hang servers)
+                    try:
+                        log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logs')
+                        os.makedirs(log_dir, exist_ok=True)
+                        slack_log = open(os.path.join(log_dir, 'slack_server.log'), 'a', encoding='utf-8')
+                    except Exception:
+                        slack_log = None
+                    slack_node_process = subprocess.Popen(
+                        ['node', slack_server_file],
+                        stdout=(slack_log if slack_log else subprocess.DEVNULL),
+                        stderr=(slack_log if slack_log else subprocess.DEVNULL),
+                        cwd=os.path.dirname(os.path.abspath(__file__)),
+                        creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
+                    )
+                    time.sleep(3)  # Wait for Slack server to start
+                    if slack_node_process.poll() is not None:
+                        print("[!] Slack Node.js server failed to start!")
+                        try:
+                            log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logs')
+                            print(f"[!] Check logs/slack_server.log for details: {os.path.join(log_dir, 'slack_server.log')}")
+                        except Exception:
+                            pass
+                        slack_node_process = None
+                    else:
+                        # Verify server is actually listening
+                        import socket
+                        try:
+                            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                            sock.settimeout(1)
+                            result = sock.connect_ex(('localhost', 3002))
+                            sock.close()
+                            if result == 0:
+                                print("[OK] Slack Node.js server started on http://localhost:3002")
+                            else:
+                                print("[!] Slack server process started but not listening on port 3002")
+                        except Exception as e:
+                            print(f"[!] Could not verify Slack server: {e}")
+            except Exception as e:
+                print(f"[!] Error starting Slack Node.js server: {e}")
+                slack_node_process = None
+        else:
+            print(f"[!] Slack server file not found: {slack_server_file} (skipping)")
+        
         print("[OK] All servers started successfully!")
         print("[*] Server status:")
         print(f"    - Backend API: http://localhost:8000")
@@ -356,6 +425,8 @@ def start_servers():
             print(f"    - WhatsApp Server: http://localhost:3000")
         if telegram_node_process and telegram_node_process.poll() is None:
             print(f"    - Telegram Server: http://localhost:3001")
+        if slack_node_process and slack_node_process.poll() is None:
+            print(f"    - Slack Server: http://localhost:3002")
         if django_process and django_process.poll() is None:
             print(f"    - Django Server: http://localhost:{DJANGO_PORT}")
         print("[*] You can now use the application interface.")
@@ -428,8 +499,8 @@ def kill_process_by_port(port):
 
 def stop_servers():
     """Stop all servers"""
-    global backend_process, chat_process, django_process, whatsapp_node_process, telegram_node_process, servers_running
-    global backend_log, chat_log, django_log, whatsapp_log, telegram_log
+    global backend_process, chat_process, django_process, whatsapp_node_process, telegram_node_process, slack_node_process, servers_running
+    global backend_log, chat_log, django_log, whatsapp_log, telegram_log, slack_log
     
     if not servers_running:
         # Even if servers_running is False, try to kill processes by port
@@ -438,6 +509,7 @@ def stop_servers():
         kill_process_by_port(5000)  # Chat
         kill_process_by_port(3000)  # WhatsApp Node.js
         kill_process_by_port(3001)  # Telegram Node.js
+        kill_process_by_port(3002)  # Slack Node.js
         kill_process_by_port(DJANGO_PORT)  # Django
         return
     
@@ -475,6 +547,12 @@ def stop_servers():
             telegram_log = None
     except:
         pass
+    try:
+        if slack_log:
+            slack_log.close()
+            slack_log = None
+    except:
+        pass
     
     # List of all processes to stop
     processes_to_stop = [
@@ -482,6 +560,7 @@ def stop_servers():
         (chat_process, "chat server", 5000),
         (whatsapp_node_process, "WhatsApp Node.js server", 3000),
         (telegram_node_process, "Telegram Node.js server", 3001),
+        (slack_node_process, "Slack Node.js server", 3002),
         (django_process, "Django server", DJANGO_PORT)
     ]
     
@@ -547,6 +626,7 @@ def stop_servers():
     kill_process_by_port(5000)  # Chat
     kill_process_by_port(3000)  # WhatsApp Node.js
     kill_process_by_port(3001)  # Telegram Node.js
+    kill_process_by_port(3002)  # Slack Node.js
     kill_process_by_port(DJANGO_PORT)  # Django
     
     # Reset process variables
@@ -554,6 +634,7 @@ def stop_servers():
     chat_process = None
     whatsapp_node_process = None
     telegram_node_process = None
+    slack_node_process = None
     django_process = None
     
     print("[OK] All servers stopped")
@@ -629,8 +710,8 @@ def main():
             print("[!] Continuing anyway - the app window will open.")
             print("[!] If features don't work, check if the backend server is running.")
         
-        # Get the login page HTML path
-        html_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'login.html')
+        # Get the chat interface HTML path
+        html_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'chat_interface.html')
         html_path = os.path.normpath(html_path)
         
         if not os.path.exists(html_path):
@@ -640,9 +721,9 @@ def main():
             stop_servers()
             return
         
-        print(f"[*] Opening login page: {html_path}")
-        print("[*] The application window should open now...")
-        print("[*] Press Ctrl+C to stop all servers and exit")
+            print(f"[*] Opening application: {html_path}")
+            print("[*] The application window should open now...")
+            print("[*] Close the window or press Ctrl+C to stop all servers and exit")
         print("=" * 60)
         
         # Try to create and show the webview window
@@ -662,54 +743,43 @@ def main():
             webview.start()
             
             print("\n[*] Application window closed")
-            # IMPORTANT: Do NOT stop servers when the window closes.
-            # Users often run the UI in an external browser, and pywebview can close unexpectedly
-            # (missing runtime, crash, etc.). Servers should keep running until Ctrl+C.
-            print("[*] Servers will continue running in the background.")
-            print("[*] Press Ctrl+C to stop servers and exit")
-
-            # Best-effort: open in default browser so the user still has a UI after webview closes
-            try:
-                import webbrowser
-                webbrowser.open(f'file:///{html_path}')
-            except Exception:
-                pass
-
-            # Keep the main thread alive until Ctrl+C
-            try:
-                while servers_running:
-                    time.sleep(1)
-            except KeyboardInterrupt:
-                pass
+            print("[*] Stopping all servers...")
+            # Stop servers when window is closed
+            stop_servers()
+            print("[*] All servers stopped. Goodbye!")
             
         except ImportError:
             print("[!] pywebview not installed. Opening in default browser instead...")
             import webbrowser
             webbrowser.open(f'file:///{html_path}')
-            print("[*] Opened in browser. Servers will continue running.")
-            print("[*] Press Ctrl+C to stop servers and exit")
+            print("[*] Opened in browser.")
+            print("[*] Close this terminal window or press Ctrl+C to stop servers and exit")
             
-            # Keep the main thread alive
+            # Keep the main thread alive until Ctrl+C
             try:
                 while servers_running:
                     time.sleep(1)
             except KeyboardInterrupt:
-                pass
+                print("\n[*] Stopping all servers...")
+                stop_servers()
+                print("[*] All servers stopped. Goodbye!")
                 
         except Exception as e:
             print(f"[!] Error creating webview window: {e}")
             print("[*] Attempting to open in default browser instead...")
             import webbrowser
             webbrowser.open(f'file:///{html_path}')
-            print("[*] Opened in browser. Servers will continue running.")
-            print("[*] Press Ctrl+C to stop servers and exit")
+            print("[*] Opened in browser.")
+            print("[*] Close this terminal window or press Ctrl+C to stop servers and exit")
             
-            # Keep the main thread alive
+            # Keep the main thread alive until Ctrl+C
             try:
                 while servers_running:
                     time.sleep(1)
             except KeyboardInterrupt:
-                pass
+                print("\n[*] Stopping all servers...")
+                stop_servers()
+                print("[*] All servers stopped. Goodbye!")
         
     except KeyboardInterrupt:
         print("\n[*] Keyboard interrupt received")
