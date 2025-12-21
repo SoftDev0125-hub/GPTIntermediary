@@ -35,10 +35,14 @@ let isReady = false;
 
 // Session directory
 const SESSION_DIR = path.join(__dirname, 'whatsapp_session_node');
+const AVATAR_DIR = path.join(SESSION_DIR, 'avatars');
 
 // Ensure session directory exists
 if (!fs.existsSync(SESSION_DIR)) {
     fs.mkdirSync(SESSION_DIR, { recursive: true });
+}
+if (!fs.existsSync(AVATAR_DIR)) {
+    fs.mkdirSync(AVATAR_DIR, { recursive: true });
 }
 
 /**
@@ -469,7 +473,8 @@ app.post('/api/whatsapp/contacts', async (req, res) => {
             is_group: chat.isGroup,
             last_message: chat.lastMessage?.body || '',
             last_message_time: chat.lastMessage?.timestamp || null,
-            unread_count: chat.unreadCount || 0
+            unread_count: chat.unreadCount || 0,
+            avatar_url: null
         }));
 
         return res.json({
@@ -483,6 +488,64 @@ app.post('/api/whatsapp/contacts', async (req, res) => {
             success: false,
             error: error.message
         });
+    }
+});
+
+/**
+ * GET /api/whatsapp/avatar
+ * Fetch WhatsApp profile picture (cached on disk).
+ * Query params:
+ * - contact_id (required)
+ * - refresh (optional, boolean)
+ */
+app.get('/api/whatsapp/avatar', async (req, res) => {
+    try {
+        if (!isReady || !client) {
+            return res.status(400).json({ success: false, error: 'WhatsApp not connected. Please authenticate first.' });
+        }
+        const contactId = (req.query.contact_id || '').toString().trim();
+        const refresh = String(req.query.refresh || '').toLowerCase() === 'true';
+        if (!contactId) {
+            return res.status(400).json({ success: false, error: 'contact_id is required' });
+        }
+        
+        const cacheFile = path.join(AVATAR_DIR, `${contactId}.json`);
+        if (!refresh && fs.existsSync(cacheFile)) {
+            try {
+                const cached = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
+                if (cached && cached.avatar_url) {
+                    return res.json({ success: true, avatar_url: cached.avatar_url });
+                }
+            } catch (e) {
+                // ignore cache parse errors
+            }
+        }
+        
+        const url = await client.getProfilePicUrl(contactId);
+        if (!url) {
+            return res.json({ success: true, avatar_url: null });
+        }
+        
+        // Proxy to base64 to avoid CORS/hotlinking issues
+        const resp = await fetch(url);
+        if (!resp.ok) {
+            return res.json({ success: true, avatar_url: null });
+        }
+        const buf = Buffer.from(await resp.arrayBuffer());
+        const contentType = resp.headers.get('content-type') || 'image/jpeg';
+        const base64 = buf.toString('base64');
+        const avatarUrl = `data:${contentType};base64,${base64}`;
+        
+        try {
+            fs.writeFileSync(cacheFile, JSON.stringify({ avatar_url: avatarUrl }), 'utf8');
+        } catch (e) {
+            // ignore cache write errors
+        }
+        
+        return res.json({ success: true, avatar_url: avatarUrl });
+    } catch (error) {
+        console.error('[WhatsApp] Error fetching avatar:', error);
+        res.status(500).json({ success: false, error: error.message || String(error) });
     }
 });
 

@@ -1828,6 +1828,9 @@
             let pressTimer = null;
             let pressTarget = null;
             const PRESS_MS = 2000;
+            let pressStartX = 0;
+            let pressStartY = 0;
+            const MOVE_CANCEL_PX = 8;
             
             function clearPress() {
                 if (pressTimer) clearTimeout(pressTimer);
@@ -1877,6 +1880,8 @@
                 if (!el) return;
                 pressTarget = el;
                 clearPress();
+                pressStartX = e.clientX;
+                pressStartY = e.clientY;
                 pressTimer = setTimeout(() => {
                     editMessageByEl(pressTarget);
                     clearPress();
@@ -1885,9 +1890,13 @@
             telegramMessagesContainer.addEventListener('mouseup', clearPress);
             telegramMessagesContainer.addEventListener('mouseleave', clearPress);
             telegramMessagesContainer.addEventListener('mousemove', (e) => {
-                // cancel on drag
-                if (pressTimer) clearPress();
+                // cancel only on actual drag (not tiny jitter)
+                if (!pressTimer) return;
+                const dx = Math.abs((e.clientX || 0) - pressStartX);
+                const dy = Math.abs((e.clientY || 0) - pressStartY);
+                if (dx > MOVE_CANCEL_PX || dy > MOVE_CANCEL_PX) clearPress();
             });
+            telegramMessagesContainer.addEventListener('scroll', clearPress, { passive: true });
             telegramMessagesContainer.addEventListener('touchstart', (e) => {
                 const el = getMsgEl(e);
                 if (!el) return;
@@ -1911,10 +1920,12 @@
                 if (!chatId || !msgId) return;
                 const ok = confirm('Delete this message?');
                 if (!ok) return;
+                const isMe = el.dataset.fromMe === '1';
                 const resp = await fetch(`${TELEGRAM_API_URL}/api/telegram/delete`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ chat_id: chatId, message_id: msgId, revoke: true }),
+                    // If it's not our message, revoke often fails; delete locally instead.
+                    body: JSON.stringify({ chat_id: chatId, message_id: msgId, revoke: isMe }),
                     signal: AbortSignal.timeout(20000)
                 });
                 const data = await resp.json().catch(() => null);
@@ -1959,6 +1970,7 @@
         let telegramChatMessages = {};
         let currentChatId = null;
         let telegramChatPaging = {}; // chatId -> { oldestId, reachedStart, loadingOlder }
+        let telegramRealtimePollTimer = null;
         
         // Helper functions
         function getTelegramInitials(name) {
@@ -2564,6 +2576,38 @@
                     }
                     
                     updateTelegramCount();
+
+                    // Fallback polling if realtime socket isn't connected
+                    if (telegramRealtimePollTimer) {
+                        clearInterval(telegramRealtimePollTimer);
+                        telegramRealtimePollTimer = null;
+                    }
+                    telegramRealtimePollTimer = setInterval(async () => {
+                        try {
+                            if (telegramSocket && telegramSocket.connected) return;
+                            if (!currentTelegramChatId) return;
+                            const resp = await fetch(`${TELEGRAM_API_URL}/api/telegram/messages`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ chat_id: currentTelegramChatId, limit: 50 }),
+                                signal: AbortSignal.timeout(15000)
+                            });
+                            if (!resp.ok) return;
+                            const data = await resp.json();
+                            if (!data || !data.success) return;
+                            telegramChatMessages[currentTelegramChatId] = data.messages || [];
+                            applyReadStatusFromChat(currentTelegramChatId, telegramChatMessages[currentTelegramChatId]);
+                            telegramChatPaging[currentTelegramChatId] = telegramChatPaging[currentTelegramChatId] || {};
+                            telegramChatPaging[currentTelegramChatId].oldestId = data.oldest_id || (telegramChatMessages[currentTelegramChatId][0] ? telegramChatMessages[currentTelegramChatId][0].id : null);
+                            telegramChatPaging[currentTelegramChatId].reachedStart = !!data.reached_start;
+                            if (currentChatId === currentTelegramChatId) {
+                                renderTelegramMessages(telegramChatMessages[currentTelegramChatId], false);
+                                if (telegramCount) telegramCount.textContent = `${telegramChatMessages[currentTelegramChatId].length} messages`;
+                            }
+                        } catch (e) {
+                            // ignore polling errors
+                        }
+                    }, 5000);
                 } else {
                     throw new Error(contactsData.error || 'Failed to load contacts');
                 }
@@ -2935,7 +2979,16 @@
                             const avatar = document.createElement('div');
                             avatar.className = 'whatsapp-chat-avatar';
                             const initials = (contact.name || '?').split(' ').map(n => n[0]).join('').toUpperCase().substring(0, 2);
-                            avatar.textContent = initials;
+                            if (contact.avatar_url) {
+                                const img = document.createElement('img');
+                                img.src = contact.avatar_url;
+                                img.alt = contact.name || 'Avatar';
+                                img.className = 'whatsapp-avatar-img';
+                                avatar.textContent = '';
+                                avatar.appendChild(img);
+                            } else {
+                                avatar.textContent = initials;
+                            }
                             
                             const info = document.createElement('div');
                             info.className = 'whatsapp-chat-info';
@@ -2961,6 +3014,38 @@
                             whatsappChatsList.appendChild(chatItem);
                         });
                     }
+
+                    // Lazy-load WhatsApp avatars (cached by backend)
+                    (async function loadWhatsAppAvatars(maxToLoad = 30) {
+                        try {
+                            const list = contactsData.contacts.filter(c => c && c.contact_id && !c.avatar_url).slice(0, Math.max(0, maxToLoad));
+                            const concurrency = 5;
+                            for (let i = 0; i < list.length; i += concurrency) {
+                                const batch = list.slice(i, i + concurrency);
+                                await Promise.all(batch.map(async (c) => {
+                                    try {
+                                        const r = await fetch(`http://localhost:3000/api/whatsapp/avatar?contact_id=${encodeURIComponent(c.contact_id)}`, { signal: AbortSignal.timeout(20000) });
+                                        if (!r.ok) return;
+                                        const data = await r.json();
+                                        if (!data || !data.success || !data.avatar_url) return;
+                                        c.avatar_url = data.avatar_url;
+                                        const el = whatsappChatsList.querySelector(`.whatsapp-chat-item[data-contact-id="${CSS.escape(c.contact_id)}"] .whatsapp-chat-avatar`);
+                                        if (!el) return;
+                                        el.textContent = '';
+                                        const img = document.createElement('img');
+                                        img.src = c.avatar_url;
+                                        img.alt = c.name || 'Avatar';
+                                        img.className = 'whatsapp-avatar-img';
+                                        el.appendChild(img);
+                                    } catch (e) {
+                                        // ignore avatar errors
+                                    }
+                                }));
+                            }
+                        } catch (e) {
+                            // ignore
+                        }
+                    })(40);
                 } else {
                     if (whatsappChatsList) {
                         whatsappChatsList.innerHTML = '<div class="whatsapp-sidebar-empty">No chats found</div>';
