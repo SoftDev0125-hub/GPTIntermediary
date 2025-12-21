@@ -18,6 +18,7 @@ class AppLauncher:
     
     def __init__(self):
         self.os_type = platform.system()
+        self._app_cache = {}  # Cache resolved app paths for faster launches
         logger.info(f"App Launcher initialized for {self.os_type}")
     
     async def launch_app(
@@ -135,6 +136,15 @@ class AppLauncher:
         
         app_name_lower = app_name.lower()
         
+        # Check cache first for faster lookups
+        if app_name_lower in self._app_cache:
+            cached_path = self._app_cache[app_name_lower]
+            if cached_path and isinstance(cached_path, str) and os.path.exists(cached_path):
+                return cached_path
+            elif cached_path and isinstance(cached_path, str) and ':' in cached_path:
+                # Protocol handler - always valid
+                return cached_path
+        
         # Common application mappings
         app_mappings = {
             'notepad': 'notepad.exe',
@@ -158,7 +168,6 @@ class AppLauncher:
             'unigram': os.path.join(os.environ.get('LOCALAPPDATA', ''), r'Microsoft\WindowsApps\38833FF26BA1D.UnigramPreview_g9c9v27vpyspw\Telegram.exe'),
             'whatsapp': 'whatsapp:',  # Try protocol handler first
             'discord': None,  # Handle separately with dynamic search
-            'slack': 'slack:',
             'zoom': 'zoommtg:',
             'spotify': 'spotify:',
             'vlc': r'C:\Program Files\VideoLAN\VLC\vlc.exe',
@@ -201,12 +210,15 @@ class AppLauncher:
             if app_path is None:
                 return None
             if isinstance(app_path, tuple):
+                self._app_cache[app_name_lower] = app_path
                 return app_path
             # Protocol handlers or already resolved
             if ':' in app_path:
+                self._app_cache[app_name_lower] = app_path
                 return app_path
             # Check if path exists
             if os.path.exists(app_path):
+                self._app_cache[app_name_lower] = app_path
                 return app_path
             logger.warning(f"Mapped path not found: {app_path}")
         
@@ -219,6 +231,7 @@ class AppLauncher:
                         app_path, _ = winreg.QueryValueEx(subkey, '')
                         if os.path.exists(app_path):
                             logger.info(f"Found {app_name} in registry: {app_path}")
+                            self._app_cache[app_name_lower] = app_path
                             return app_path
                 except FileNotFoundError:
                     pass
@@ -238,10 +251,12 @@ class AppLauncher:
             # Try appname\appname.exe pattern
             possible_path = os.path.join(pf_dir, app_name, f"{app_name}.exe")
             if os.path.exists(possible_path):
+                self._app_cache[app_name_lower] = possible_path
                 return possible_path
             # Try just appname.exe
             possible_path = os.path.join(pf_dir, f"{app_name}.exe")
             if os.path.exists(possible_path):
+                self._app_cache[app_name_lower] = possible_path
                 return possible_path
         
         # Last resort: return the app name and let Windows search for it

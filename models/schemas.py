@@ -65,68 +65,6 @@ class OperationResponse(BaseModel):
     data: Optional[Dict[str, Any]] = None
 
 
-class SlackMessage(BaseModel):
-    """Slack message model"""
-    message_id: str
-    from_id: str
-    from_name: Optional[str] = None
-    body: str
-    timestamp: str
-    channel_id: Optional[str] = None
-    channel_name: Optional[str] = None
-    is_thread: bool = False
-    thread_ts: Optional[str] = None
-    has_media: bool = False
-    media_type: Optional[str] = None  # 'image', 'video', 'file'
-    media_url: Optional[str] = None  # URL to download media
-    media_filename: Optional[str] = None
-    media_mimetype: Optional[str] = None
-    file_id: Optional[str] = None  # Slack file ID for downloads
-
-
-class GetSlackMessagesRequest(BaseModel):
-    """Request model for getting Slack messages"""
-    limit: int = 50
-    channel_id: Optional[str] = None  # If provided, get messages for specific channel only
-
-
-class SlackChannel(BaseModel):
-    """Slack channel/conversation model"""
-    channel_id: str
-    channel_name: str
-    channel_type: str  # "Channel", "Private", "DM"
-    last_message: Optional[str] = None
-    last_message_time: Optional[str] = None
-    unread_count: int = 0
-    is_thread: bool = False
-
-
-class SlackListResponse(BaseModel):
-    """Response model for Slack message list operations"""
-    success: bool
-    count: int
-    total_count: int
-    messages: List[SlackMessage]
-
-
-class SlackChannelsResponse(BaseModel):
-    """Response model for Slack channels list"""
-    success: bool
-    count: int
-    channels: List[SlackChannel]
-
-
-class SendSlackMessageRequest(BaseModel):
-    """Request model for sending Slack messages"""
-    channel_id: str
-    text: str
-    thread_ts: Optional[str] = None
-
-
-class SendSlackMessageResponse(BaseModel):
-    """Response model for sending Slack messages"""
-    success: bool
-    message: str
     message_ts: Optional[str] = None
 
 

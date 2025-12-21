@@ -395,46 +395,53 @@ def chat():
             # Execute the function
             function_result = call_backend_function(function_name, function_args)
             
-            # Add function result to messages and call OpenAI again to get the response
-            minimal_messages.append({
-                "role": "assistant",
-                "content": None,
-                "function_call": {
-                    "name": function_name,
-                    "arguments": message.function_call.arguments
-                }
-            })
-            minimal_messages.append({
-                "role": "function",
-                "name": function_name,
-                "content": json.dumps(function_result)
-            })
-            
-            # Second API call to get the final response
-            try:
-                logger.warning(f"[CHAT-{request_id}] Making second API call after function execution")
-                response2 = client.chat.completions.create(
-                    model="gpt-3.5-turbo",
-                    messages=minimal_messages,
-                    functions=FUNCTIONS,
-                    function_call="auto",
-                    max_tokens=300,
-                    temperature=0.7,
-                    stream=False,
-                )
-                
-                message2 = response2.choices[0].message
-                if hasattr(message2, 'content') and message2.content:
-                    final_message = message2.content
-                else:
-                    final_message = f"Executed {function_name}. Result: {json.dumps(function_result)}"
-            except Exception as second_call_error:
-                logger.error(f"[CHAT-{request_id}] Second API call failed: {second_call_error}")
-                # Fallback: use function result directly
+            # For app launches, return immediately without second OpenAI call for speed
+            if function_name == 'launch_app':
                 if function_result.get('success'):
-                    final_message = function_result.get('message', f"Successfully executed {function_name}")
+                    final_message = function_result.get('message', f"✅ Successfully launched {function_args.get('app_name', 'the app')}")
                 else:
-                    final_message = function_result.get('error', f"Executed {function_name} but got an error")
+                    final_message = function_result.get('detail', function_result.get('error', f"❌ Failed to launch {function_args.get('app_name', 'the app')}"))
+            else:
+                # For other functions, add function result to messages and call OpenAI again to get the response
+                minimal_messages.append({
+                    "role": "assistant",
+                    "content": None,
+                    "function_call": {
+                        "name": function_name,
+                        "arguments": message.function_call.arguments
+                    }
+                })
+                minimal_messages.append({
+                    "role": "function",
+                    "name": function_name,
+                    "content": json.dumps(function_result)
+                })
+                
+                # Second API call to get the final response
+                try:
+                    logger.warning(f"[CHAT-{request_id}] Making second API call after function execution")
+                    response2 = client.chat.completions.create(
+                        model="gpt-3.5-turbo",
+                        messages=minimal_messages,
+                        functions=FUNCTIONS,
+                        function_call="auto",
+                        max_tokens=300,
+                        temperature=0.7,
+                        stream=False,
+                    )
+                    
+                    message2 = response2.choices[0].message
+                    if hasattr(message2, 'content') and message2.content:
+                        final_message = message2.content
+                    else:
+                        final_message = f"Executed {function_name}. Result: {json.dumps(function_result)}"
+                except Exception as second_call_error:
+                    logger.error(f"[CHAT-{request_id}] Second API call failed: {second_call_error}")
+                    # Fallback: use function result directly
+                    if function_result.get('success'):
+                        final_message = function_result.get('message', f"Successfully executed {function_name}")
+                    else:
+                        final_message = function_result.get('error', f"Executed {function_name} but got an error")
         
         # If no function was called, use direct response
         if final_message is None:

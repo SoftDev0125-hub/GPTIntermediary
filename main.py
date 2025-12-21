@@ -23,7 +23,6 @@ from datetime import datetime
 
 from services.email_service import EmailService
 from services.app_launcher import AppLauncher
-from services.slack_service import SlackService
 from services.whatsapp_service import WhatsAppService
 from services.word_service import WordService
 from services.excel_service import ExcelService
@@ -68,12 +67,6 @@ from models.schemas import (
     EmailListResponse,
     OperationResponse,
     UserCredentials,
-    GetSlackMessagesRequest,
-    SlackListResponse,
-    SlackChannelsResponse,
-    SlackChannel,
-    SendSlackMessageRequest,
-    SendSlackMessageResponse,
     GetWhatsAppContactsRequest,
     WhatsAppContactsResponse,
     SendWhatsAppMessageRequest,
@@ -229,7 +222,6 @@ async def global_exception_handler(request, exc):
 # Initialize services
 email_service = EmailService()
 app_launcher = AppLauncher()
-slack_service = SlackService()
 whatsapp_service = WhatsAppService()
 word_service = WordService()
 excel_service = ExcelService()
@@ -237,9 +229,7 @@ excel_service = ExcelService()
 # WebSocket connection managers
 class ConnectionManager:
     def __init__(self):
-        self.active_connections: Dict[str, Set[WebSocket]] = {
-            "slack": set()
-        }
+        self.active_connections: Dict[str, Set[WebSocket]] = {}
     
     async def connect(self, websocket: WebSocket, service: str):
         await websocket.accept()
@@ -293,7 +283,6 @@ class ConnectionManager:
             logger.info(f"All WebSocket connections for {svc} closed")
 
 # Global connection managers
-slack_manager = ConnectionManager()
 
 
 @app.on_event("startup")
@@ -330,94 +319,19 @@ async def startup_event():
     
     await email_service.initialize()
     
-    await slack_service.initialize()
-    
-    # Start background task for Slack message monitoring
-    asyncio.create_task(monitor_slack_messages())
-    
     # WhatsApp service will be initialized lazily when the WhatsApp tab is clicked
     # This prevents unnecessary initialization on app startup
     logger.info("WhatsApp service will be initialized when WhatsApp tab is accessed")
     await word_service.initialize()
     logger.info("Services initialized successfully")
 
-# Background task to monitor Slack messages
-async def monitor_slack_messages():
-    """Background task to monitor Slack for new messages and broadcast via WebSocket"""
-    if not slack_service.client:
-        return
-    
-    last_checked = {}
-    while True:
-        try:
-            await asyncio.sleep(2)  # Check every 2 seconds
-            
-            if not slack_service.is_configured:
-                continue
-            
-            # Get recent messages from all channels
-            try:
-                messages, _ = await slack_service.get_messages(limit=10)
-                
-                for msg in messages:
-                    channel_id = msg.channel_id
-                    msg_id = msg.message_id
-                    
-                    # Check if this is a new message
-                    if channel_id not in last_checked:
-                        last_checked[channel_id] = set()
-                    
-                    if msg_id not in last_checked[channel_id]:
-                        last_checked[channel_id].add(msg_id)
-                        
-                        # Broadcast new message
-                        await slack_manager.broadcast({
-                            "type": "new_message",
-                            "message": {
-                                "message_id": msg.message_id,
-                                "from_id": msg.from_id,
-                                "from_name": msg.from_name,
-                                "body": msg.body,
-                                "timestamp": msg.timestamp,
-                                "channel_id": msg.channel_id,
-                                "channel_name": msg.channel_name,
-                                "is_thread": msg.is_thread,
-                                "thread_ts": msg.thread_ts,
-                                "has_media": msg.has_media,
-                                "media_type": msg.media_type,
-                                "media_filename": msg.media_filename,
-                                "media_mimetype": msg.media_mimetype,
-                                "file_id": msg.file_id
-                            }
-                        }, "slack")
-                        
-                        # Keep only recent message IDs (prevent memory growth)
-                        if len(last_checked[channel_id]) > 100:
-                            last_checked[channel_id] = set(list(last_checked[channel_id])[-50:])
-            except Exception as e:
-                logger.debug(f"Error monitoring Slack messages: {e}")
-                await asyncio.sleep(5)  # Wait longer on error
-        except Exception as e:
-            logger.error(f"Error in Slack monitoring task: {e}")
-            await asyncio.sleep(10)  # Wait longer on critical error
-
-
 @app.on_event("shutdown")
 async def shutdown_event():
     """Cleanup on shutdown - close WebSocket connections and disconnect services"""
     logger.info("Shutting down ChatGPT Backend Broker...")
     
-    # Close all WebSocket connections first
-    try:
-        logger.info("Closing WebSocket connections...")
-        await slack_manager.close_all("slack")
-        logger.info("All WebSocket connections closed")
-    except Exception as e:
-        logger.error(f"Error closing WebSocket connections: {e}")
-    
     # Cleanup services
     await email_service.cleanup()
-    await slack_service.cleanup()
     if whatsapp_service:
         try:
             await whatsapp_service.cleanup()
@@ -926,242 +840,6 @@ async def launch_app(request: LaunchAppRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 # Telegram endpoints removed
-
-# Slack endpoints start here
-@app.get("/api/slack/channels", response_model=SlackChannelsResponse)
-async def get_slack_channels():
-    """
-    Get list of Slack channels/conversations (fast operation, no messages)
-    
-    Returns:
-        List of Slack channels
-    """
-    try:
-        logger.info("Fetching Slack channels list...")
-        channels = await slack_service.get_channels()
-        logger.info(f"Successfully retrieved {len(channels)} Slack channels")
-        return SlackChannelsResponse(
-            success=True,
-            count=len(channels),
-            channels=channels
-        )
-    except Exception as e:
-        error_msg = str(e)
-        logger.error(f"Error fetching Slack channels: {error_msg}")
-        import traceback
-        logger.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=error_msg)
-
-@app.post("/api/slack/messages", response_model=SlackListResponse)
-async def get_slack_messages(request: GetSlackMessagesRequest):
-    """
-    Retrieve Slack messages
-    
-    Args:
-        request: Limit and optional channel_id for messages to retrieve
-        - If channel_id is provided: get messages for that specific channel only (fast, on-demand)
-        - If channel_id is None: get messages from all channels (slower, legacy mode)
-    
-    Returns:
-        List of Slack messages
-    """
-    try:
-        # If channel_id is provided, use on-demand loading (fast)
-        if request.channel_id:
-            logger.info(f"Fetching {request.limit} messages for Slack channel {request.channel_id}")
-            messages, total_count = await slack_service.get_channel_messages(
-                channel_id=request.channel_id,
-                limit=request.limit
-            )
-        else:
-            # Legacy mode: get all messages (slower)
-            logger.info(f"Fetching {request.limit} Slack messages from all channels")
-            messages, total_count = await slack_service.get_messages(
-                limit=request.limit
-            )
-        logger.info(f"Successfully retrieved {len(messages)} Slack messages")
-        return SlackListResponse(
-            success=True,
-            count=len(messages),
-            total_count=total_count,
-            messages=messages
-        )
-    except Exception as e:
-        error_msg = str(e)
-        logger.error(f"Error fetching Slack messages: {error_msg}")
-        import traceback
-        logger.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=error_msg)
-
-
-@app.get("/api/slack/status")
-async def get_slack_status():
-    """
-    Check Slack connection status
-    
-    Returns:
-        Connection status
-    """
-    try:
-        is_connected, status_message = await slack_service.check_connection_status()
-        return {
-            "success": True,
-            "connected": is_connected,
-            "message": status_message
-        }
-    except Exception as e:
-        logger.error(f"Error checking Slack status: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# WebSocket endpoints for real-time messaging
-@app.websocket("/ws/slack")
-async def slack_websocket(websocket: WebSocket):
-    """WebSocket endpoint for real-time Slack messages"""
-    await slack_manager.connect(websocket, "slack")
-    try:
-        while True:
-            data = await websocket.receive_text()
-            # Handle incoming messages if needed
-            logger.debug(f"Received WebSocket message: {data}")
-    except WebSocketDisconnect:
-        slack_manager.disconnect(websocket, "slack")
-    except Exception as e:
-        logger.error(f"WebSocket error: {e}")
-        slack_manager.disconnect(websocket, "slack")
-
-# Slack media and message management endpoints
-@app.get("/api/slack/media/{file_id}")
-async def download_slack_media(file_id: str):
-    """
-    Download a file from Slack
-    
-    Args:
-        file_id: The Slack file ID
-    
-    Returns:
-        File content
-    """
-    try:
-        if not slack_service.client:
-            raise HTTPException(status_code=400, detail="Slack not connected")
-        
-        # Get file info
-        file_info = slack_service.client.files_info(file=file_id)
-        
-        if not file_info["ok"]:
-            raise HTTPException(status_code=404, detail="File not found")
-        
-        file_data = file_info["file"]
-        file_url = file_data.get("url_private")
-        
-        if not file_url:
-            raise HTTPException(status_code=404, detail="File URL not available")
-        
-        # Download file
-        import httpx
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                file_url,
-                headers={"Authorization": f"Bearer {slack_service.token}"}
-            )
-            response.raise_for_status()
-            file_content = response.content
-        
-        # Determine content type
-        content_type = file_data.get("mimetype", "application/octet-stream")
-        filename = file_data.get("name", f"file_{file_id}")
-        
-        from fastapi.responses import Response
-        return Response(
-            content=file_content,
-            media_type=content_type,
-            headers={"Content-Disposition": f'attachment; filename="{filename}"'}
-        )
-    except Exception as e:
-        logger.error(f"Error downloading Slack media: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.put("/api/slack/message/{timestamp}")
-async def update_slack_message(timestamp: str, request: dict):
-    """
-    Update a Slack message
-    
-    Args:
-        timestamp: The message timestamp
-        request: Channel ID and new text
-    
-    Returns:
-        Success status
-    """
-    try:
-        if not slack_service.client:
-            raise HTTPException(status_code=400, detail="Slack not connected")
-        
-        channel_id = request.get('channel_id')
-        new_text = request.get('text')
-        
-        if not channel_id or not new_text:
-            raise HTTPException(status_code=400, detail="channel_id and text are required")
-        
-        # Update message
-        response = slack_service.client.chat_update(
-            channel=channel_id,
-            ts=timestamp,
-            text=new_text
-        )
-        
-        if not response["ok"]:
-            raise HTTPException(status_code=400, detail=response.get("error", "Failed to update message"))
-        
-        # Broadcast update via WebSocket
-        await slack_manager.broadcast({
-            "type": "message_update",
-            "timestamp": timestamp,
-            "channel_id": channel_id,
-            "text": new_text
-        }, "slack")
-        
-        return {
-            "success": True,
-            "message": "Message updated successfully",
-            "timestamp": response["ts"]
-        }
-    except Exception as e:
-        logger.error(f"Error updating Slack message: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/api/slack/send", response_model=SendSlackMessageResponse)
-async def send_slack_message(request: SendSlackMessageRequest):
-    """
-    Send a message to a Slack channel or DM
-    
-    Args:
-        request: Channel ID, message text, and optional thread timestamp
-    
-    Returns:
-        Success status and message timestamp
-    """
-    try:
-        logger.info(f"Sending message to channel {request.channel_id}")
-        message_ts = await slack_service.send_message(
-            channel_id=request.channel_id,
-            text=request.text,
-            thread_ts=request.thread_ts
-        )
-        logger.info(f"Successfully sent message. Timestamp: {message_ts}")
-        return SendSlackMessageResponse(
-            success=True,
-            message="Message sent successfully",
-            message_ts=message_ts
-        )
-    except Exception as e:
-        error_msg = str(e)
-        logger.error(f"Error sending Slack message: {error_msg}")
-        import traceback
-        logger.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=error_msg)
-
 
 # WhatsApp API Endpoints
 @app.post("/api/whatsapp/initialize")

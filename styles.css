@@ -159,9 +159,8 @@ body::before {
     display: flex;
 }
 
-/* Override container background for Telegram and Slack to fill the tab content */
+/* Override container background for Telegram to fill the tab content */
 #telegram .telegram-container,
-#slack .slack-container,
 /* Additional Beautiful Styling */
 
 /* Header Styles */
@@ -1246,7 +1245,7 @@ body::before {
 .telegram-header {
     padding: 12px 16px;
     border-bottom: 1px solid #2d2d2d;
-    background: #212121 !important;
+    background: #323739 !important;
     display: flex;
     align-items: center;
     min-height: 60px;
@@ -1305,7 +1304,7 @@ body::before {
 
 .telegram-header-info {
     font-size: 13px;
-    color: #707579;
+    color: #b0b3b8;
 }
 
 .telegram-messages-container {
@@ -1641,21 +1640,34 @@ body::before {
     background: rgba(255, 255, 255, 0.16);
 }
 
-/* Slack-like Interface Styles */
+/* Force dark background for all messaging interfaces */
+#whatsapp,
+#telegram,
+#slack {
+    background: #212121 !important;
+}
+
+#whatsapp .tab-content,
+#telegram .tab-content,
+#slack .tab-content {
+    background: #212121 !important;
+}
+
+/* Slack Interface Styles (similar to WhatsApp) */
 .slack-container {
     display: flex;
     flex-direction: row;
     height: 100%;
     width: 100%;
-    background: #212121;
+    background: #212121 !important;
     color: #e4e4e4;
-    font-family: 'Slack-Lato', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
 
-/* Slack Sidebar */
 .slack-sidebar {
-    width: 280px;
-    background: #1e1e1e;
+    width: 30%;
+    min-width: 280px;
+    max-width: 400px;
+    background: #131c21;
     border-right: 1px solid #2d2d2d;
     display: flex;
     flex-direction: column;
@@ -1664,7 +1676,7 @@ body::before {
 
 .slack-sidebar-header {
     padding: 16px;
-    background: #212121;
+    background: #2a2f32;
     border-bottom: 1px solid #2d2d2d;
     display: flex;
     justify-content: space-between;
@@ -1674,7 +1686,7 @@ body::before {
 
 .slack-sidebar-header h2 {
     font-size: 18px;
-    font-weight: 600;
+    font-weight: 500;
     color: #e4e4e4;
     margin: 0;
 }
@@ -1684,7 +1696,7 @@ body::before {
     background: #3390ec;
     color: white;
     border: none;
-    border-radius: 8px;
+    border-radius: 6px;
     font-size: 14px;
     font-weight: 500;
     cursor: pointer;
@@ -1699,78 +1711,89 @@ body::before {
     background: #2a2a2a;
     color: #707579;
     cursor: not-allowed;
+    opacity: 0.5;
 }
 
 .slack-sidebar-content {
     flex: 1;
     overflow-y: auto;
     background: #1e1e1e;
-    padding: 8px;
-    padding-bottom: 40px;
+    padding: 0;
 }
 
 .slack-sidebar-empty {
     padding: 20px;
     text-align: center;
-    color: #707579;
+    color: #8696a0;
     font-size: 14px;
 }
 
 .slack-channel-item {
-    padding: 10px 12px;
-    margin-bottom: 4px;
-    border-radius: 4px;
+    padding: 12px 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
     cursor: pointer;
     transition: background 0.15s;
-    border: 1px solid transparent;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
 }
 
 .slack-channel-item:hover {
-    background: #2a2a2a;
+    background: #2a2f32;
 }
 
 .slack-channel-item.active {
-    background: #1264a3;
-    border-color: #1264a3;
+    background: #2a2f32;
+    border-left: 3px solid #3390ec;
 }
 
-.slack-channel-item.active .slack-channel-name {
+.slack-channel-avatar {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    background: #3390ec;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    font-weight: 600;
     color: white;
-    font-weight: 700;
+    flex-shrink: 0;
+}
+
+.slack-avatar-img {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    object-fit: cover;
+    flex-shrink: 0;
+}
+
+.slack-channel-info {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
 }
 
 .slack-channel-name {
-    font-size: 15px;
+    font-size: 16px;
     font-weight: 500;
     color: #e4e4e4;
-    margin-bottom: 4px;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
 }
 
 .slack-channel-preview {
-    font-size: 13px;
-    color: #707579;
-    margin-bottom: 6px;
+    font-size: 14px;
+    color: #8696a0;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
 }
 
-.slack-channel-meta {
-    display: flex;
-    justify-content: space-between;
-    font-size: 11px;
-    color: #707579;
-}
-
-.slack-channel-item.active .slack-channel-preview,
-.slack-channel-item.active .slack-channel-meta {
-    color: rgba(255, 255, 255, 0.8);
-}
-
-/* Slack Main Area */
 .slack-main {
     flex: 1;
     display: flex;
@@ -1780,9 +1803,9 @@ body::before {
 }
 
 .slack-header {
-    padding: 12px 20px;
+    padding: 12px 16px;
+    background: #323739;
     border-bottom: 1px solid #2d2d2d;
-    background: #212121;
     display: flex;
     align-items: center;
     min-height: 60px;
@@ -1796,14 +1819,14 @@ body::before {
 
 .slack-header-content h2 {
     font-size: 18px;
-    font-weight: 600;
+    font-weight: 500;
     color: #e4e4e4;
     margin: 0;
 }
 
 .slack-header-info {
     font-size: 13px;
-    color: #707579;
+    color: #b0b3b8;
 }
 
 .slack-messages-container {
@@ -1823,7 +1846,7 @@ body::before {
     align-items: center;
     justify-content: center;
     height: 100%;
-    color: #707579;
+    color: #8696a0;
     text-align: center;
     padding: 40px;
 }
@@ -1835,16 +1858,77 @@ body::before {
 }
 
 .slack-empty-state h3 {
-    font-size: 22px;
-    font-weight: 900;
+    font-size: 20px;
+    font-weight: 500;
     color: #e4e4e4;
     margin-bottom: 8px;
-    letter-spacing: -0.3px;
 }
 
 .slack-empty-state p {
-    font-size: 15px;
-    color: #707579;
+    font-size: 14px;
+    color: #8696a0;
+}
+
+.slack-message-wrapper {
+    display: flex;
+    margin-bottom: 8px;
+    position: relative;
+}
+
+.slack-message-wrapper.sent {
+    justify-content: flex-end;
+}
+
+.slack-message-wrapper.received {
+    justify-content: flex-start;
+}
+
+.slack-message-bubble {
+    max-width: 65%;
+    padding: 8px 12px;
+    border-radius: 8px;
+    word-wrap: break-word;
+    position: relative;
+}
+
+.slack-message-wrapper.sent .slack-message-bubble {
+    background: #3390ec;
+    color: white;
+    border-bottom-right-radius: 2px;
+}
+
+.slack-message-wrapper.received .slack-message-bubble {
+    background: #2a2f32;
+    color: #e4e4e4;
+    border-bottom-left-radius: 2px;
+}
+
+.slack-message-wrapper .slack-message-text {
+    font-size: 14px;
+    line-height: 20px;
+    margin-bottom: 4px;
+}
+
+.slack-message-wrapper .slack-message-time {
+    font-size: 11px;
+    opacity: 0.7;
+    text-align: right;
+}
+
+.slack-message-wrapper.received .slack-message-time {
+    text-align: left;
+}
+
+.slack-message-footer {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 4px;
+    margin-top: 4px;
+}
+
+.slack-message-wrapper.sent .slack-message-footer {
+    justify-content: flex-end;
 }
 
 .slack-date-divider {
@@ -1861,108 +1945,47 @@ body::before {
     left: 0;
     right: 0;
     height: 1px;
-    background: #2d2d2d;
+    background: rgba(255, 255, 255, 0.1);
 }
 
 .slack-date-divider span {
     background: #212121;
-    color: #707579;
-    font-size: 13px;
+    color: #8696a0;
+    font-size: 12px;
     padding: 0 12px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+    font-weight: 500;
     position: relative;
     z-index: 1;
 }
 
-.slack-message {
-    display: flex;
-    gap: 12px;
-    padding: 4px 0;
-}
-
-.slack-message.show-avatar {
-    margin-top: 16px;
-}
-
-.slack-avatar {
-    width: 36px;
-    height: 36px;
-    border-radius: 4px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 14px;
-    font-weight: 700;
-    color: white;
-    flex-shrink: 0;
-    text-transform: uppercase;
-}
-
-.slack-avatar-spacer {
-    width: 36px;
-    flex-shrink: 0;
-}
-
-.slack-message-content {
-    flex: 1;
-    min-width: 0;
-}
-
-.slack-message-header {
-    display: flex;
-    align-items: baseline;
-    gap: 8px;
-    margin-bottom: 4px;
-}
-
-.slack-username {
-    font-size: 15px;
-    font-weight: 900;
-    color: #e4e4e4;
-}
-
-.slack-timestamp {
-    font-size: 12px;
-    color: #707579;
-    font-weight: 400;
-}
-
-.slack-message-body {
-    font-size: 15px;
-    line-height: 22px;
-    color: #e4e4e4;
-    word-wrap: break-word;
-}
-
 .slack-input-container {
-    padding: 12px 20px;
+    padding: 12px 16px;
     background: #212121;
     border-top: 1px solid #2d2d2d;
 }
 
 .slack-input-wrapper {
     display: flex;
-    align-items: flex-end;
-    gap: 8px;
-    background: #2a2a2a;
-    border-radius: 8px;
-    padding: 8px 12px;
+    align-items: center;
+    gap: 12px;
 }
 
 .slack-message-input {
     flex: 1;
-    background: transparent;
-    border: none;
+    background: #2a2f32;
+    border: 1px solid #2d2d2d;
+    border-radius: 20px;
+    padding: 10px 16px;
     color: #e4e4e4;
-    font-size: 15px;
-    font-family: 'Slack-Lato', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-size: 14px;
     resize: none;
-    outline: none;
     max-height: 100px;
-    overflow-y: auto;
-    line-height: 22px;
+    font-family: inherit;
+}
+
+.slack-message-input:focus {
+    outline: none;
+    border-color: #3390ec;
 }
 
 .slack-message-input::placeholder {
@@ -1997,7 +2020,7 @@ body::before {
 
 .slack-sidebar-content::-webkit-scrollbar,
 .slack-messages-container::-webkit-scrollbar {
-    width: 8px;
+    width: 6px;
 }
 
 .slack-sidebar-content::-webkit-scrollbar-track,
@@ -2007,26 +2030,13 @@ body::before {
 
 .slack-sidebar-content::-webkit-scrollbar-thumb,
 .slack-messages-container::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.1);
-    border-radius: 4px;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 3px;
 }
 
 .slack-sidebar-content::-webkit-scrollbar-thumb:hover,
 .slack-messages-container::-webkit-scrollbar-thumb:hover {
-    background: rgba(255, 255, 255, 0.2);
-}
-
-/* Force dark background for all messaging interfaces */
-#whatsapp,
-#telegram,
-#slack {
-    background: #212121 !important;
-}
-
-#whatsapp .tab-content,
-#telegram .tab-content,
-#slack .tab-content {
-    background: #212121 !important;
+    background: rgba(0, 0, 0, 0.3);
 }
 
 /* WhatsApp Interface Styles */
@@ -2182,7 +2192,7 @@ body::before {
 .whatsapp-header {
     padding: 12px 16px;
     border-bottom: 1px solid #2d2d2d;
-    background: #212121 !important;
+    background: #323739 !important;
     display: flex;
     align-items: center;
     min-height: 60px;
@@ -2203,7 +2213,7 @@ body::before {
 
 .whatsapp-header-info {
     font-size: 13px;
-    color: #707579;
+    color: #b0b3b8;
 }
 
 .whatsapp-messages-container {
