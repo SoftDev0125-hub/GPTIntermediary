@@ -546,6 +546,7 @@ def stop_servers():
     kill_process_by_port(8000)  # Backend
     kill_process_by_port(5000)  # Chat
     kill_process_by_port(3000)  # WhatsApp Node.js
+    kill_process_by_port(3001)  # Telegram Node.js
     kill_process_by_port(DJANGO_PORT)  # Django
     
     # Reset process variables
