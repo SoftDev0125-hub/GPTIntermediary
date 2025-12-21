@@ -2051,15 +2051,28 @@
                 return;
             }
             
+            const prevScrollTop = telegramChatsList.scrollTop;
             telegramChatsList.innerHTML = telegramChats.map(chat => {
                 const initials = getTelegramInitials(chat.name);
                 const avatarColor = getTelegramAvatarColor(chat.name);
                 const lastMessageTime = chat.last_message_time ? formatTelegramTimestamp(chat.last_message_time) : '';
                 const lastMessage = chat.last_message ? (chat.last_message.length > 40 ? chat.last_message.substring(0, 40) + '...' : chat.last_message) : '';
                 const unreadBadge = chat.unread_count > 0 ? `<span class="telegram-unread-badge">${chat.unread_count}</span>` : '';
-                const avatarHtml = chat.avatar_url ? 
-                    `<img src="${chat.avatar_url}" alt="${escapeHtml(chat.name)}" class="telegram-avatar-img">` :
-                    `<div class="telegram-avatar" style="background-color: ${avatarColor}">${initials}</div>`;
+                const avatarImgStyle = chat.avatar_url ? '' : 'display:none;';
+                const avatarFallbackStyle = chat.avatar_url ? 'display:none;' : '';
+                const avatarHtml = `
+                    <div class="telegram-avatar-wrap">
+                        <img
+                            src="${chat.avatar_url ? chat.avatar_url : ''}"
+                            alt="${escapeHtml(chat.name)}"
+                            class="telegram-avatar-img"
+                            data-contact-id="${chat.contact_id}"
+                            style="${avatarImgStyle}"
+                            loading="lazy"
+                        >
+                        <div class="telegram-avatar" style="background-color: ${avatarColor}; ${avatarFallbackStyle}">${initials}</div>
+                    </div>
+                `;
                 
                 return `
                     <div class="telegram-chat-item" data-chat-id="${chat.contact_id}" onclick="selectTelegramChat('${chat.contact_id}')">
@@ -2081,20 +2094,74 @@
                     </div>
                 `;
             }).join('');
+            telegramChatsList.scrollTop = prevScrollTop;
+
+            // Load avatars for visible rows (and a small buffer) without re-rendering
+            scheduleTelegramAvatarLoad();
         }
 
-        async function loadTelegramAvatars(maxToLoad = 30) {
+        let telegramAvatarLoadTimer = null;
+        let telegramAvatarScrollAttached = false;
+        const telegramAvatarInFlight = new Set(); // contact_id -> in-flight fetch
+
+        function cssEscapeSafe(value) {
+            try {
+                if (typeof CSS !== 'undefined' && CSS.escape) return CSS.escape(String(value));
+            } catch (e) {}
+            // Minimal escape fallback for attribute selector
+            return String(value).replace(/["\\]/g, '\\$&');
+        }
+
+        function scheduleTelegramAvatarLoad() {
+            if (!telegramChatsList) return;
+            if (!telegramAvatarScrollAttached) {
+                telegramAvatarScrollAttached = true;
+                telegramChatsList.addEventListener('scroll', () => {
+                    scheduleTelegramAvatarLoad();
+                }, { passive: true });
+            }
+            if (telegramAvatarLoadTimer) clearTimeout(telegramAvatarLoadTimer);
+            telegramAvatarLoadTimer = setTimeout(() => {
+                loadTelegramAvatars(30, true);
+            }, 150);
+        }
+
+        async function loadTelegramAvatars(maxToLoad = 30, onlyVisible = false) {
             try {
                 if (!Array.isArray(telegramChats) || telegramChats.length === 0) return;
-                const toLoad = telegramChats
-                    .filter(c => c && c.contact_id && !c.avatar_url)
-                    .slice(0, Math.max(0, maxToLoad));
+
+                let candidates = [];
+                if (onlyVisible && telegramChatsList) {
+                    const contRect = telegramChatsList.getBoundingClientRect();
+                    const buffer = 300;
+                    const items = Array.from(telegramChatsList.querySelectorAll('.telegram-chat-item[data-chat-id]'));
+                    for (const el of items) {
+                        const r = el.getBoundingClientRect();
+                        if (r.bottom >= contRect.top - buffer && r.top <= contRect.bottom + buffer) {
+                            const id = el.getAttribute('data-chat-id');
+                            if (id) candidates.push(id);
+                        }
+                    }
+                } else {
+                    candidates = telegramChats.map(c => c && c.contact_id).filter(Boolean);
+                }
+
+                const toLoad = [];
+                for (const id of candidates) {
+                    const chat = telegramChats.find(c => c && String(c.contact_id) === String(id));
+                    if (!chat || !chat.contact_id) continue;
+                    if (chat.avatar_url) continue;
+                    if (telegramAvatarInFlight.has(String(chat.contact_id))) continue;
+                    toLoad.push(chat);
+                    if (toLoad.length >= Math.max(0, maxToLoad)) break;
+                }
 
                 const concurrency = 5;
                 for (let i = 0; i < toLoad.length; i += concurrency) {
                     const batch = toLoad.slice(i, i + concurrency);
                     await Promise.all(batch.map(async (chat) => {
                         try {
+                            telegramAvatarInFlight.add(String(chat.contact_id));
                             const resp = await fetch(`${TELEGRAM_API_URL}/api/telegram/avatar?contact_id=${encodeURIComponent(chat.contact_id)}`, {
                                 method: 'GET',
                                 signal: AbortSignal.timeout(15000)
@@ -2103,13 +2170,25 @@
                             const data = await resp.json();
                             if (data && data.success && data.avatar_url) {
                                 chat.avatar_url = data.avatar_url;
+                                // Update DOM in-place (avoid re-rendering / scroll jumps)
+                                if (telegramChatsList) {
+                                    const sel = `img.telegram-avatar-img[data-contact-id="${cssEscapeSafe(chat.contact_id)}"]`;
+                                    const img = telegramChatsList.querySelector(sel);
+                                    if (img) {
+                                        img.src = data.avatar_url;
+                                        img.style.display = '';
+                                        const wrap = img.closest('.telegram-avatar-wrap');
+                                        const fallback = wrap ? wrap.querySelector('.telegram-avatar') : null;
+                                        if (fallback) fallback.style.display = 'none';
+                                    }
+                                }
                             }
                         } catch (e) {
                             // ignore avatar errors
+                        } finally {
+                            telegramAvatarInFlight.delete(String(chat.contact_id));
                         }
                     }));
-                    // Re-render occasionally so avatars pop in
-                    renderTelegramChats();
                 }
             } catch (e) {
                 // ignore
