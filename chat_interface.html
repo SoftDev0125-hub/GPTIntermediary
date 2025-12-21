@@ -1371,7 +1371,7 @@
             try {
                 const response = await fetch(`${TELEGRAM_API_URL}/health`, {
                     method: 'GET',
-                    signal: AbortSignal.timeout(2000)
+                    signal: AbortSignal.timeout(6000)
                 });
                 return response.ok;
             } catch (error) {
@@ -1410,8 +1410,8 @@
                     reconnection: true,
                     reconnectionDelay: 1000,
                     reconnectionDelayMax: 5000,
-                    reconnectionAttempts: 10,
-                    timeout: 5000,
+                    reconnectionAttempts: Infinity,
+                    timeout: 20000,
                     transports: ['websocket', 'polling'],
                     autoConnect: true
                 });
@@ -1530,7 +1530,7 @@
                             connectTelegramWebSocket(retryCount + 1);
                         }, retryDelay);
                     } else {
-                        console.log('[Telegram] Stopped retrying. Server may not be running.');
+                        console.log('[Telegram] Stopped retrying for now (manual Refresh will retry). Server may be slow or temporarily unavailable.');
                         telegramSocketRetryDisabled = false; // allow future manual reconnect
                     }
                 });

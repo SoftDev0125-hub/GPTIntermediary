@@ -23,6 +23,10 @@ whatsapp_node_process = None
 telegram_node_process = None
 servers_running = False
 backend_log = None
+chat_log = None
+django_log = None
+whatsapp_log = None
+telegram_log = None
 
 # Django server configuration
 DJANGO_DIR = "django_app"
@@ -31,6 +35,7 @@ DJANGO_PORT = 8001
 def start_servers():
     """Start all backend servers in separate processes"""
     global backend_process, chat_process, django_process, whatsapp_node_process, telegram_node_process, servers_running
+    global backend_log, chat_log, django_log, whatsapp_log, telegram_log
     
     # Make sure we're in the right directory
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -47,7 +52,6 @@ def start_servers():
             # Create log file for backend server output
             log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logs')
             os.makedirs(log_dir, exist_ok=True)
-            global backend_log
             backend_log = open(os.path.join(log_dir, 'backend_server.log'), 'w', encoding='utf-8')
             
             backend_process = subprocess.Popen(
@@ -140,10 +144,17 @@ def start_servers():
                 return
         
         try:
+            # Avoid stdout/stderr PIPE without readers (can deadlock/hang long-running servers on Windows)
+            try:
+                log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logs')
+                os.makedirs(log_dir, exist_ok=True)
+                chat_log = open(os.path.join(log_dir, 'chat_server.log'), 'a', encoding='utf-8')
+            except Exception:
+                chat_log = None
             chat_process = subprocess.Popen(
                 [sys.executable, chat_server_file],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                stdout=chat_log if chat_log else subprocess.DEVNULL,
+                stderr=chat_log if chat_log else subprocess.DEVNULL,
                 cwd=os.path.dirname(os.path.abspath(__file__)),
                 creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
             )
@@ -170,10 +181,16 @@ def start_servers():
                 manage_py = os.path.join(django_dir_abs, "manage.py")
                 if os.path.exists(manage_py):
                     try:
+                        try:
+                            log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logs')
+                            os.makedirs(log_dir, exist_ok=True)
+                            django_log = open(os.path.join(log_dir, 'django_server.log'), 'a', encoding='utf-8')
+                        except Exception:
+                            django_log = None
                         django_process = subprocess.Popen(
                             [sys.executable, "manage.py", "runserver", f"127.0.0.1:{DJANGO_PORT}", "--noreload"],
-                            stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE,
+                            stdout=django_log if django_log else subprocess.DEVNULL,
+                            stderr=django_log if django_log else subprocess.DEVNULL,
                             cwd=django_dir_abs,  # Use absolute path for cwd
                             creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
                         )
@@ -220,24 +237,28 @@ def start_servers():
                     print("[!] Install Node.js from https://nodejs.org/")
                     whatsapp_node_process = None
                 else:
+                    # Log to file (avoid PIPE without readers which can hang servers)
+                    try:
+                        log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logs')
+                        os.makedirs(log_dir, exist_ok=True)
+                        whatsapp_log = open(os.path.join(log_dir, 'whatsapp_server.log'), 'a', encoding='utf-8')
+                    except Exception:
+                        whatsapp_log = None
                     whatsapp_node_process = subprocess.Popen(
                         ['node', whatsapp_server_file],
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
+                        stdout=(whatsapp_log if whatsapp_log else subprocess.DEVNULL),
+                        stderr=(whatsapp_log if whatsapp_log else subprocess.DEVNULL),
                         cwd=os.path.dirname(os.path.abspath(__file__)),
                         creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
                     )
                     time.sleep(3)  # Wait for WhatsApp server to start
                     if whatsapp_node_process.poll() is not None:
-                        stdout, stderr = whatsapp_node_process.communicate()
                         print("[!] WhatsApp Node.js server failed to start!")
-                        if stdout:
-                            stdout_msg = stdout.decode('utf-8', errors='ignore')[:500]
-                            if stdout_msg.strip():
-                                print(f"[!] stdout: {stdout_msg}")
-                        if stderr:
-                            error_msg = stderr.decode('utf-8', errors='ignore')[:500]
-                            print(f"[!] stderr: {error_msg}")
+                        try:
+                            log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logs')
+                            print(f"[!] Check logs/whatsapp_server.log for details: {os.path.join(log_dir, 'whatsapp_server.log')}")
+                        except Exception:
+                            pass
                         whatsapp_node_process = None
                     else:
                         # Verify server is actually listening
@@ -284,24 +305,28 @@ def start_servers():
                     print("[!] Node.js not found. Telegram server will not start.")
                     telegram_node_process = None
                 else:
+                    # Log to file (avoid PIPE without readers which can hang servers)
+                    try:
+                        log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logs')
+                        os.makedirs(log_dir, exist_ok=True)
+                        telegram_log = open(os.path.join(log_dir, 'telegram_server.log'), 'a', encoding='utf-8')
+                    except Exception:
+                        telegram_log = None
                     telegram_node_process = subprocess.Popen(
                         ['node', telegram_server_file],
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
+                        stdout=(telegram_log if telegram_log else subprocess.DEVNULL),
+                        stderr=(telegram_log if telegram_log else subprocess.DEVNULL),
                         cwd=os.path.dirname(os.path.abspath(__file__)),
                         creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
                     )
                     time.sleep(3)  # Wait for Telegram server to start
                     if telegram_node_process.poll() is not None:
-                        stdout, stderr = telegram_node_process.communicate()
                         print("[!] Telegram Node.js server failed to start!")
-                        if stdout:
-                            stdout_msg = stdout.decode('utf-8', errors='ignore')[:500]
-                            if stdout_msg.strip():
-                                print(f"[!] stdout: {stdout_msg}")
-                        if stderr:
-                            error_msg = stderr.decode('utf-8', errors='ignore')[:500]
-                            print(f"[!] stderr: {error_msg}")
+                        try:
+                            log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logs')
+                            print(f"[!] Check logs/telegram_server.log for details: {os.path.join(log_dir, 'telegram_server.log')}")
+                        except Exception:
+                            pass
                         telegram_node_process = None
                     else:
                         # Verify server is actually listening
@@ -403,7 +428,8 @@ def kill_process_by_port(port):
 
 def stop_servers():
     """Stop all servers"""
-    global backend_process, chat_process, django_process, whatsapp_node_process, telegram_node_process, servers_running, backend_log
+    global backend_process, chat_process, django_process, whatsapp_node_process, telegram_node_process, servers_running
+    global backend_log, chat_log, django_log, whatsapp_log, telegram_log
     
     if not servers_running:
         # Even if servers_running is False, try to kill processes by port
@@ -423,6 +449,30 @@ def stop_servers():
         if backend_log:
             backend_log.close()
             backend_log = None
+    except:
+        pass
+    try:
+        if chat_log:
+            chat_log.close()
+            chat_log = None
+    except:
+        pass
+    try:
+        if django_log:
+            django_log.close()
+            django_log = None
+    except:
+        pass
+    try:
+        if whatsapp_log:
+            whatsapp_log.close()
+            whatsapp_log = None
+    except:
+        pass
+    try:
+        if telegram_log:
+            telegram_log.close()
+            telegram_log = None
     except:
         pass
     
