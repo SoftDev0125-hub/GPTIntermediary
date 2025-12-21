@@ -17,13 +17,6 @@ class User(Base):
     email = Column(String(100), unique=True, index=True, nullable=False)  # Existing column
     password = Column(String(255), nullable=False)  # Existing column (stores hashed password)
     create_at = Column(DateTime, nullable=True, server_default=func.now())  # Existing column (note: create_at not created_at)
-    
-    # Note: Relationships are commented out because related tables may not exist yet
-    # Uncomment when those tables are created:
-    # conversations = relationship("Conversation", back_populates="user", cascade="all, delete-orphan", lazy="dynamic")
-    # preferences = relationship("UserPreference", back_populates="user", uselist=False, cascade="all, delete-orphan")
-    # telegram_sessions = relationship("TelegramSession", back_populates="user", cascade="all, delete-orphan", lazy="dynamic")
-    # excel_files = relationship("ExcelFile", back_populates="user", cascade="all, delete-orphan", lazy="dynamic")
 
     def __repr__(self):
         return f"<User(id={self.id}, name='{self.name}', email='{self.email}')>"

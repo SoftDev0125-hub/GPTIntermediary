@@ -33,15 +33,13 @@ ENV/
 # Logs
 *.log
 logs/
+
+# IDE
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
-
-# Logs
-*.log
-logs/
 
 # OS
 .DS_Store
