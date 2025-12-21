@@ -1645,7 +1645,13 @@
                     alert('Failed to load media: ' + ((data && data.error) ? data.error : `HTTP ${resp.status}`));
                     return;
                 }
-                list[idx].mediaUrl = data.mediaUrl;
+                // Prefer streaming URL for large video/files
+                list[idx].fileUrl = data.fileUrl || null;
+                if (data.mediaUrl) {
+                    list[idx].mediaUrl = data.mediaUrl;
+                } else if (data.fileUrl) {
+                    list[idx].mediaUrl = `${TELEGRAM_API_URL}${data.fileUrl}`;
+                }
                 list[idx].mediaMimetype = data.mediaMimetype;
                 list[idx].mediaFilename = data.mediaFilename;
                 if (chatId === currentTelegramChatId) renderTelegramMessages(list);
@@ -2280,18 +2286,32 @@
                 
                 let mediaHtml = '';
                 if (msg.hasMedia) {
-                    if (msg.mediaUrl) {
-                        if (msg.mediaMimetype && msg.mediaMimetype.startsWith('image/')) {
-                            mediaHtml = `<img src="${msg.mediaUrl}" alt="Media" class="telegram-message-media" onclick="window.open('${msg.mediaUrl}', '_blank')">`;
+                    const isImage = msg.mediaMimetype && msg.mediaMimetype.startsWith('image/');
+                    const isVideo = msg.mediaMimetype && msg.mediaMimetype.startsWith('video/');
+                    const isAudio = msg.mediaMimetype && msg.mediaMimetype.startsWith('audio/');
+                    const fileUrl = msg.fileUrl ? `${TELEGRAM_API_URL}${msg.fileUrl}` : (msg.mediaUrl && msg.mediaUrl.startsWith('/api/') ? `${TELEGRAM_API_URL}${msg.mediaUrl}` : null);
+                    const src = msg.mediaUrl || fileUrl;
+                    if (src) {
+                        if (isImage) {
+                            mediaHtml = `<img src="${src}" alt="Media" class="telegram-message-media" loading="lazy" onclick="window.open('${src}', '_blank')">`;
+                        } else if (isVideo) {
+                            mediaHtml = `<video controls class="telegram-message-media" style="max-width: 100%; border-radius: 8px; margin-top: 4px;">
+                                <source src="${src}" type="${msg.mediaMimetype || 'video/mp4'}">
+                            </video>`;
+                        } else if (isAudio) {
+                            mediaHtml = `<audio controls style="margin-top: 4px; width: 100%;">
+                                <source src="${src}" type="${msg.mediaMimetype || 'audio/mpeg'}">
+                            </audio>`;
                         } else {
+                            const dl = fileUrl ? `${fileUrl}&download=true` : src;
                             mediaHtml = `<div class="telegram-message-media-file">
-                                <a href="${msg.mediaUrl}" download="${msg.mediaFilename || 'file'}" class="telegram-media-download">
+                                <a href="${dl}" download="${msg.mediaFilename || 'file'}" class="telegram-media-download">
                                     📎 ${msg.mediaFilename || 'Download file'}
                                 </a>
                             </div>`;
                         }
                     } else {
-                        const label = msg.mediaFilename ? `📎 ${escapeHtml(msg.mediaFilename)}` : '📎 Load file';
+                        const label = msg.mediaFilename ? `📎 ${escapeHtml(msg.mediaFilename)}` : '📎 Load media';
                         mediaHtml = `<div class="telegram-message-media-file">
                             <button class="telegram-media-download" onclick="window.telegramLoadMedia && window.telegramLoadMedia('${currentTelegramChatId}', '${String(msg.id)}')">${label}</button>
                         </div>`;
@@ -3645,26 +3665,39 @@
                     html += `<div class="whatsapp-date-divider"><span>${dateStr}</span></div>`;
                 }
 
-                // Build media HTML
+                // Build media HTML (prefer inline streaming endpoint for big videos/gifs)
                 let mediaHTML = '';
-                if (msg.hasMedia && msg.mediaUrl) {
+                if (msg.hasMedia) {
                     const isImage = msg.mediaMimetype?.startsWith('image/');
                     const isVideo = msg.mediaMimetype?.startsWith('video/');
+                    const isAudio = msg.mediaMimetype?.startsWith('audio/');
+                    const inlineUrl = msg.mediaFetchUrl ? `http://localhost:3000${msg.mediaFetchUrl}` : `http://localhost:3000/api/whatsapp/media/${msg.id}?inline=1`;
+                    const downloadUrl = msg.mediaDownloadUrl ? `http://localhost:3000${msg.mediaDownloadUrl}` : `http://localhost:3000/api/whatsapp/media/${msg.id}?download=true`;
+                    const src = msg.mediaUrl || inlineUrl;
                     
                     if (isImage) {
                         mediaHTML = `
                             <div class="whatsapp-media-container">
-                                <img src="${msg.mediaUrl}" alt="Image" class="whatsapp-media-image" onclick="openMediaViewer('${msg.mediaUrl}', '${msg.mediaFilename || 'image'}')" />
-                                <a href="${msg.mediaUrl}" download="${msg.mediaFilename || 'image'}" class="whatsapp-media-download" title="Download image">⬇️</a>
+                                <img loading="lazy" src="${src}" alt="Image" class="whatsapp-media-image" onclick="openMediaViewer('${src}', '${msg.mediaFilename || 'image'}')" />
+                                <a href="${downloadUrl}" download="${msg.mediaFilename || 'image'}" class="whatsapp-media-download" title="Download image">⬇️</a>
                             </div>
                         `;
                     } else if (isVideo) {
                         mediaHTML = `
                             <div class="whatsapp-media-container">
-                                <video controls class="whatsapp-media-video">
-                                    <source src="${msg.mediaUrl}" type="${msg.mediaMimetype}">
+                                <video controls preload="metadata" class="whatsapp-media-video">
+                                    <source src="${src}" type="${msg.mediaMimetype || 'video/mp4'}">
                                 </video>
-                                <a href="${msg.mediaUrl}" download="${msg.mediaFilename || 'video'}" class="whatsapp-media-download" title="Download video">⬇️</a>
+                                <a href="${downloadUrl}" download="${msg.mediaFilename || 'video'}" class="whatsapp-media-download" title="Download video">⬇️</a>
+                            </div>
+                        `;
+                    } else if (isAudio) {
+                        mediaHTML = `
+                            <div class="whatsapp-media-container">
+                                <audio controls style="width: 100%;">
+                                    <source src="${src}" type="${msg.mediaMimetype || 'audio/mpeg'}">
+                                </audio>
+                                <a href="${downloadUrl}" download="${msg.mediaFilename || 'audio'}" class="whatsapp-media-download" title="Download audio">⬇️</a>
                             </div>
                         `;
                     } else {
@@ -3677,12 +3710,10 @@
                                     <div class="whatsapp-file-name">${escapeHtml(msg.mediaFilename || 'File')}</div>
                                     <div class="whatsapp-file-type">${msg.mediaMimetype || 'Unknown type'}</div>
                                 </div>
-                                <a href="${msg.mediaUrl}" download="${msg.mediaFilename || 'file'}" class="whatsapp-media-download" title="Download file">⬇️</a>
+                                <a href="${downloadUrl}" download="${msg.mediaFilename || 'file'}" class="whatsapp-media-download" title="Download file">⬇️</a>
                             </div>
                         `;
                     }
-                } else if (msg.hasMedia && !msg.mediaUrl) {
-                    mediaHTML = '<div class="whatsapp-media-loading">Loading media...</div>';
                 }
 
                 // Build action buttons for sent messages

@@ -562,7 +562,7 @@ app.post('/api/whatsapp/messages', async (req, res) => {
             });
         }
 
-        const { contact_id, limit = 50 } = req.body;
+        const { contact_id, limit = 50, include_media } = req.body;
 
         if (!contact_id) {
             return res.status(400).json({
@@ -592,8 +592,33 @@ app.post('/api/whatsapp/messages', async (req, res) => {
                 mediaFilename: null
             };
 
-            // Get media info if available
+            // Media can be large; default to on-demand streaming via /api/whatsapp/media/:messageId
+            baseMessage.mediaFetchUrl = `/api/whatsapp/media/${msg.id._serialized}?inline=1`;
+            baseMessage.mediaDownloadUrl = `/api/whatsapp/media/${msg.id._serialized}?download=true`;
+            
+            // Best-effort mimetype/filename without downloading the whole file
             if (msg.hasMedia) {
+                try {
+                    if (msg._data && msg._data.mimetype) {
+                        baseMessage.mediaMimetype = msg._data.mimetype;
+                    } else if (msg.type === 'image' || msg.type === 'sticker') {
+                        baseMessage.mediaMimetype = (msg.type === 'sticker') ? 'image/webp' : 'image/jpeg';
+                    } else if (msg.type === 'video' || msg.type === 'gif') {
+                        baseMessage.mediaMimetype = 'video/mp4';
+                    } else if (msg.type === 'audio' || msg.type === 'ptt') {
+                        baseMessage.mediaMimetype = 'audio/ogg';
+                    } else if (msg.type === 'document') {
+                        baseMessage.mediaMimetype = 'application/octet-stream';
+                    }
+                    if (msg._data && msg._data.filename) {
+                        baseMessage.mediaFilename = msg._data.filename;
+                    }
+                } catch (e) {
+                    // ignore
+                }
+            }
+
+            if (include_media && msg.hasMedia) {
                 try {
                     const media = await msg.downloadMedia();
                     if (media) {
@@ -674,10 +699,12 @@ app.get('/api/whatsapp/media/:messageId', async (req, res) => {
         // Convert base64 to buffer
         const buffer = Buffer.from(media.data, 'base64');
         
-        // Set appropriate headers
+        // Set appropriate headers (inline by default so <img>/<video> can display)
         const filename = media.filename || `media_${messageId}.${media.mimetype.split('/')[1]}`;
         res.setHeader('Content-Type', media.mimetype);
-        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+        const download = String(req.query.download || '').toLowerCase() === 'true';
+        const disposition = download ? 'attachment' : 'inline';
+        res.setHeader('Content-Disposition', `${disposition}; filename="${filename}"`);
         res.setHeader('Content-Length', buffer.length);
 
         return res.send(buffer);

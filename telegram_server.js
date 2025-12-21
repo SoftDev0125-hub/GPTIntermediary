@@ -122,10 +122,24 @@ function setupMessageHandler() {
                 mediaUrl: null,
                 mediaMimetype: null,
                 mediaFilename: null,
+                fileUrl: null,
                 contact_id: chat.id ? chat.id.toString() : '',
                 contact_name: chat.title || (chat.firstName ? `${chat.firstName} ${chat.lastName || ''}`.trim() : 'Unknown'),
                 is_group: chat.className === 'Chat' || chat.className === 'Channel'
             };
+            
+            // Provide inline stream URL + best-effort mimetype/filename without downloading
+            if (formattedMessage.hasMedia) {
+                formattedMessage.fileUrl = `/api/telegram/media/file?chat_id=${encodeURIComponent(formattedMessage.contact_id)}&message_id=${encodeURIComponent(formattedMessage.id)}`;
+                try {
+                    if (message.media.className && String(message.media.className).includes('Photo')) {
+                        formattedMessage.mediaMimetype = 'image/jpeg';
+                    } else if (message.media.mimeType) {
+                        formattedMessage.mediaMimetype = message.media.mimeType;
+                    }
+                    if (message.media.fileName) formattedMessage.mediaFilename = message.media.fileName;
+                } catch (e) {}
+            }
 
             // Emit message immediately (media can be fetched on-demand via /api/telegram/media)
             io.emit('telegram_message', formattedMessage);
@@ -936,8 +950,21 @@ app.post('/api/telegram/messages', async (req, res) => {
                     hasMedia: !!(message.media && !message.media.className.includes('MessageMediaEmpty')),
                     mediaUrl: null,
                     mediaMimetype: null,
-                    mediaFilename: null
+                    mediaFilename: null,
+                    fileUrl: null
                 };
+                
+                if (baseMessage.hasMedia) {
+                    baseMessage.fileUrl = `/api/telegram/media/file?chat_id=${encodeURIComponent(String(chat_id))}&message_id=${encodeURIComponent(baseMessage.id)}`;
+                    try {
+                        if (message.media.className && String(message.media.className).includes('Photo')) {
+                            baseMessage.mediaMimetype = 'image/jpeg';
+                        } else if (message.media.mimeType) {
+                            baseMessage.mediaMimetype = message.media.mimeType;
+                        }
+                        if (message.media.fileName) baseMessage.mediaFilename = message.media.fileName;
+                    } catch (e) {}
+                }
 
                 // Get sender info
                 if (message.fromId) {
@@ -1103,10 +1130,73 @@ app.post('/api/telegram/media', async (req, res) => {
             success: true,
             mediaUrl: `data:${mimeType};base64,${base64}`,
             mediaMimetype: mimeType,
-            mediaFilename: filename
+            mediaFilename: filename,
+            // Prefer this for large videos/files (no huge base64 in the DOM)
+            fileUrl: `/api/telegram/media/file?chat_id=${encodeURIComponent(String(chat_id))}&message_id=${encodeURIComponent(String(message_id))}`
         });
     } catch (error) {
         console.error('[Telegram] Error downloading media:', error);
+        return res.status(500).json({ success: false, error: error.message || String(error) });
+    }
+});
+
+/**
+ * GET /api/telegram/media/file
+ * Stream media for a message inline (better for large video/gif).
+ * Query: chat_id, message_id, download=true(optional)
+ */
+app.get('/api/telegram/media/file', async (req, res) => {
+    try {
+        if (!isReady || !client) {
+            return res.status(400).json({ success: false, error: 'Telegram not connected' });
+        }
+        const chatId = (req.query.chat_id || '').toString().trim();
+        const msgId = (req.query.message_id || '').toString().trim();
+        const download = String(req.query.download || '').toLowerCase() === 'true';
+        if (!chatId || !msgId) {
+            return res.status(400).json({ success: false, error: 'chat_id and message_id are required' });
+        }
+        const entity = await client.getEntity(chatId);
+        const msgIdNum = parseInt(String(msgId), 10);
+        if (!Number.isFinite(msgIdNum)) {
+            return res.status(400).json({ success: false, error: 'message_id must be a number' });
+        }
+
+        const msgs = await client.getMessages(entity, { ids: [msgIdNum] });
+        const message = Array.isArray(msgs) ? msgs[0] : msgs;
+        if (!message || !message.media) {
+            return res.status(404).json({ success: false, error: 'Media not found for this message' });
+        }
+
+        const buffer = await client.downloadMedia(message, {});
+        if (!buffer) {
+            return res.status(500).json({ success: false, error: 'Failed to download media' });
+        }
+
+        let mimeType = 'application/octet-stream';
+        let filename = `telegram_media_${msgIdNum}`;
+        try {
+            if (message.media.className && String(message.media.className).includes('Photo')) {
+                mimeType = 'image/jpeg';
+                filename += '.jpg';
+            } else if (message.media.mimeType) {
+                mimeType = message.media.mimeType;
+                const ext = mimeType.includes('/') ? mimeType.split('/')[1] : 'bin';
+                filename += `.${ext}`;
+            } else {
+                filename += '.bin';
+            }
+            if (message.media.fileName) filename = String(message.media.fileName);
+        } catch (e) {
+            filename += '.bin';
+        }
+
+        res.setHeader('Content-Type', mimeType);
+        res.setHeader('Content-Disposition', `${download ? 'attachment' : 'inline'}; filename="${filename}"`);
+        res.setHeader('Content-Length', buffer.length);
+        return res.send(buffer);
+    } catch (error) {
+        console.error('[Telegram] Error streaming media:', error);
         return res.status(500).json({ success: false, error: error.message || String(error) });
     }
 });
