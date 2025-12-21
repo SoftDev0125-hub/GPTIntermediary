@@ -2398,9 +2398,13 @@
                                 <source src="${src}" type="${msg.mediaMimetype || 'video/mp4'}">
                             </video>`;
                         } else if (isAudio) {
-                            mediaHtml = `<audio controls style="margin-top: 4px; width: 100%;">
-                                <source src="${src}" type="${msg.mediaMimetype || 'audio/mpeg'}">
-                            </audio>`;
+                            const dl = fileUrl ? `${fileUrl}&download=true` : src;
+                            mediaHtml = `
+                                <div class="telegram-audio-container">
+                                    <audio controls preload="metadata" src="${src}" style="margin-top: 4px; width: 100%;"></audio>
+                                    <a href="${dl}" class="telegram-media-download" style="display: inline-block; margin-top: 6px;" download="${msg.mediaFilename || 'audio'}">Download</a>
+                                </div>
+                            `;
                         } else {
                             const dl = fileUrl ? `${fileUrl}&download=true` : src;
                             mediaHtml = `<div class="telegram-message-media-file">
@@ -3908,9 +3912,7 @@
                     } else if (isAudio || inferredAudio) {
                         mediaHTML = `
                             <div class="whatsapp-media-container">
-                                <audio controls style="width: 100%;">
-                                    <source src="${src}" type="${msg.mediaMimetype || 'audio/mpeg'}">
-                                </audio>
+                                <audio controls preload="metadata" style="width: 100%;" src="${src}"></audio>
                                 <a href="${downloadUrl}" download="${msg.mediaFilename || 'audio'}" class="whatsapp-media-download" title="Download audio">⬇️</a>
                             </div>
                         `;

@@ -1165,6 +1165,30 @@ body::before {
     border-radius: 50%;
     object-fit: cover;
     flex-shrink: 0;
+    display: block;
+}
+
+/* Telegram avatar fallback (initials in a nice circle) */
+.telegram-avatar-wrap {
+    width: 48px;
+    height: 48px;
+    flex-shrink: 0;
+    position: relative;
+}
+
+.telegram-avatar {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-weight: 700;
+    font-size: 16px;
+    letter-spacing: 0.5px;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.25);
+    border: 1px solid rgba(255,255,255,0.10);
 }
 
 .telegram-unread-badge {

@@ -109,6 +109,42 @@ function buildContentDisposition(filename, download) {
     return `${type}; filename="${safeAscii}"; filename*=UTF-8''${encoded}`;
 }
 
+function guessMimeTypeFromFilename(filename) {
+    if (!filename) return null;
+    const name = String(filename).toLowerCase();
+    const ext = name.includes('.') ? name.split('.').pop() : '';
+    switch (ext) {
+        case 'm4a':
+            return 'audio/mp4';
+        case 'mp3':
+            return 'audio/mpeg';
+        case 'wav':
+            return 'audio/wav';
+        case 'ogg':
+            return 'audio/ogg';
+        case 'opus':
+            // Common for Telegram voice notes
+            return 'audio/ogg';
+        case 'webm':
+            return 'audio/webm';
+        case 'mp4':
+            return 'video/mp4';
+        case 'mov':
+            return 'video/quicktime';
+        case 'webp':
+            return 'image/webp';
+        case 'gif':
+            return 'image/gif';
+        case 'jpg':
+        case 'jpeg':
+            return 'image/jpeg';
+        case 'png':
+            return 'image/png';
+        default:
+            return null;
+    }
+}
+
 function getTelegramMediaMeta(message) {
     const media = message && message.media ? message.media : null;
     if (!media) return { hasMedia: false, mimeType: null, filename: null };
@@ -149,6 +185,19 @@ function getTelegramMediaMeta(message) {
         const lowerName = filename ? String(filename).toLowerCase() : '';
         if (lowerName.endsWith('.tgs')) {
             mimeType = 'application/x-tgsticker';
+        }
+    } catch (e) {}
+
+    // If Telegram doesn't provide a reliable mimeType (common for documents),
+    // infer it from the filename extension so browsers can play audio/video.
+    try {
+        const guessed = guessMimeTypeFromFilename(filename);
+        const current = mimeType ? String(mimeType).split(';')[0].trim().toLowerCase() : '';
+        if (guessed) {
+            // Prefer guessed when mimeType is missing/generic, or obviously wrong for the extension
+            if (!current || current === 'application/octet-stream' || (current === 'audio/mpeg' && String(filename || '').toLowerCase().endsWith('.m4a'))) {
+                mimeType = guessed;
+            }
         }
     } catch (e) {}
 
