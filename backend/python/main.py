@@ -504,14 +504,6 @@ async def register_user(request: RegisterRequest, db: Session = Depends(get_db))
         if not request.password or len(request.password) < 6:
             raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
         
-        # Verify email verification code (DISABLED)
-        # if VERIFICATION_AVAILABLE:
-        #     if not request.verification_code:
-        #         raise HTTPException(status_code=400, detail="Verification code is required")
-        #     
-        #     email = request.email.strip().lower()
-        #     if not verify_code(email, request.verification_code):
-        #         raise HTTPException(status_code=400, detail="Invalid or expired verification code. Please request a new code.")
         
         # Normalize email (lowercase and strip whitespace)
         email_normalized = request.email.strip().lower()
@@ -839,7 +831,6 @@ async def launch_app(request: LaunchAppRequest):
         logger.error(f"Error launching app: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# Telegram endpoints removed
 
 # WhatsApp API Endpoints
 @app.post("/api/whatsapp/initialize")
@@ -939,9 +930,6 @@ async def get_whatsapp_contacts(request: GetWhatsAppContactsRequest):
     except Exception as e:
         logger.error(f"Error fetching WhatsApp contacts: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
-
-
-# WhatsApp messages endpoint removed - message loading functionality disabled
 
 
 @app.get("/api/whatsapp/debug")
@@ -1479,32 +1467,6 @@ async def open_excel_spreadsheet(request: OpenExcelSpreadsheetRequest):
                 "Access-Control-Allow-Headers": "*",
             }
         )
-
-
-# Keep the old endpoint definition for backwards compatibility (will use the handler above)
-@app.post("/api/excel/open_old", response_model=ExcelSpreadsheetResponse)
-async def open_excel_spreadsheet_old(request: OpenExcelSpreadsheetRequest):
-    """Old endpoint - use /api/excel/open instead"""
-    try:
-        logger.info(f"Opening Excel spreadsheet (old endpoint): {request.file_path}")
-        result = await excel_service.open_spreadsheet(request.file_path)
-        
-        if result.get("success"):
-            return ExcelSpreadsheetResponse(
-                success=True,
-                message=result.get("message", "Spreadsheet opened successfully"),
-                file_path=result.get("file_path"),
-                sheet_names=result.get("sheet_names"),
-                active_sheet=result.get("active_sheet"),
-                data=result.get("data"),
-                rows=result.get("rows"),
-                columns=result.get("columns")
-            )
-        else:
-            raise HTTPException(status_code=500, detail=result.get("error", "Failed to open spreadsheet"))
-    except Exception as e:
-        logger.error(f"Error opening Excel spreadsheet: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/excel/save", response_model=ExcelSpreadsheetResponse)
@@ -2138,9 +2100,6 @@ async def get_chatgpt_functions():
     """
     from config.chatgpt_functions import CHATGPT_FUNCTIONS
     return CHATGPT_FUNCTIONS
-
-
-# Database endpoints removed
 
 
 if __name__ == "__main__":

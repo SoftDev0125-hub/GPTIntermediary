@@ -432,18 +432,6 @@ GPTIntermediary/
 - **Module not found**: Run `pip install -r requirements.txt` and `npm install`
 - **OpenAI errors**: Verify `OPENAI_API_KEY` is set correctly
 
-## 🧪 Testing
-
-```bash
-# Test database connection
-python test_connection.py
-
-# Test Telegram messages
-python test_telegram_messages.py
-
-# Test context analyzer
-python test_context_analyzer.py
-```
 
 ## 📝 Development
 

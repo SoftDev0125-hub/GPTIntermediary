@@ -712,23 +712,13 @@ def main():
             print("[!] Continuing anyway - the app window will open.")
             print("[!] If features don't work, check if the backend server is running.")
         
-        # Get the chat interface HTML path
-        html_path = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)),
-            "frontend",
-            "chat_interface.html"
-        )
-        html_path = os.path.normpath(html_path)
+        # Open the application through the chat server (which serves login page at root)
+        # This ensures the login page is shown first, then redirects to chat_interface.html after login
+        app_url = "http://localhost:5000/"
         
-        if not os.path.exists(html_path):
-            print(f"[!] Error: {html_path} not found!")
-            print(f"[!] Current directory: {os.getcwd()}")
-            print(f"[!] Script directory: {os.path.dirname(os.path.abspath(__file__))}")
-            stop_servers()
-            return
-
-        print(f"[*] Opening application: {html_path}")
+        print(f"[*] Opening application: {app_url}")
         print("[*] The application window should open now...")
+        print("[*] You will see the login page first.")
         print("[*] Close the window or press Ctrl+C to stop all servers and exit")
         print("=" * 60)
         
@@ -736,10 +726,11 @@ def main():
         try:
             import webview
             
-            # Create the window
+            # Create the window - open the URL instead of local file
+            # This goes through Flask server which serves login.html at root route
             window = webview.create_window(
                 'GPT Intermediary',
-                html_path,
+                app_url,
                 width=1400,
                 height=900,
                 resizable=True
