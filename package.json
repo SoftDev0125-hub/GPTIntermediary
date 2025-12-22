@@ -2,12 +2,12 @@
   "name": "gpt-intermediary",
   "version": "1.0.0",
   "description": "WhatsApp Node.js backend for GPT Intermediary",
-  "main": "whatsapp_server.js",
+  "main": "backend/node/whatsapp_server.js",
   "scripts": {
-    "start": "node whatsapp_server.js",
-    "whatsapp": "node whatsapp_server.js",
-    "telegram": "node telegram_server.js",
-    "slack": "node slack_server.js"
+    "start": "node backend/node/whatsapp_server.js",
+    "whatsapp": "node backend/node/whatsapp_server.js",
+    "telegram": "node backend/node/telegram_server.js",
+    "slack": "node backend/node/slack_server.js"
   },
   "dependencies": {
     "@slack/socket-mode": "^2.0.3",

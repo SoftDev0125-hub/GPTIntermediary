@@ -336,7 +336,9 @@ function setupReceiptHandler() {
 }
 
 // Session directory
-const SESSION_DIR = path.join(__dirname, 'telegram_session_node');
+// Keep session data at the project root so moving this file doesn't break existing sessions.
+const PROJECT_ROOT = path.join(__dirname, '..', '..');
+const SESSION_DIR = path.join(PROJECT_ROOT, 'telegram_session_node');
 const SESSION_FILE = path.join(SESSION_DIR, 'session.txt');
 const AVATAR_DIR = path.join(SESSION_DIR, 'avatars');
 

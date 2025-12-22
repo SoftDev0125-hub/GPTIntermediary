@@ -744,7 +744,7 @@ if __name__ == '__main__':
     print(f"Mode: {'OpenAI + Fallback' if USE_OPENAI else 'Keyword-based only'}")
     print("=" * 60)
     print("\nServer running on http://localhost:5000")
-    print("Open chat_interface.html in your browser to start")
+    print("Open /chat_interface.html in your browser to start")
     print("\nFeatures:")
     if USE_OPENAI:
         print("  [OK] Full ChatGPT conversational AI")

@@ -180,10 +180,10 @@ This will:
 ### 6. Set Up Database (Optional)
 ```bash
 # Initialize database tables
-python init_tables.py
+python backend/python/init_tables.py
 
 # Or connect to existing database
-python connect_database.py
+python backend/python/connect_database.py
 ```
 
 ## 🎯 Quick Start
@@ -204,28 +204,28 @@ This will:
 
 **Terminal 1 - Backend Server:**
 ```bash
-python main.py
+python backend/python/main.py
 ```
 
 **Terminal 2 - Chat Server:**
 ```bash
-python chat_server.py
+python backend/python/chat_server.py
 ```
 
 **Terminal 3 - WhatsApp Server:**
 ```bash
 npm start
 # or
-node whatsapp_server.js
+node backend/node/whatsapp_server.js
 ```
 
 **Terminal 4 - Django Service (Optional):**
 ```bash
-cd django_app
+cd backend/django_app
 python manage.py runserver 8001
 ```
 
-Then open `chat_interface.html` in your browser.
+Then open `frontend/chat_interface.html` (or `http://localhost:5000/chat_interface.html`).
 
 ## 📖 Usage Guide
 
@@ -308,34 +308,32 @@ Then open `chat_interface.html` in your browser.
 ```
 GPTIntermediary/
 ├── app.py                      # Main application launcher
-├── main.py                      # FastAPI backend server
-├── chat_server.py               # Chat server with OpenAI
-├── chat_interface.html          # Frontend interface
-├── styles.css                   # Frontend styles
-├── whatsapp_server.js           # Node.js WhatsApp server
+├── frontend/                    # UI (HTML/CSS)
+│   ├── chat_interface.html      # Main interface
+│   ├── styles.css               # Styles
+│   ├── login.html               # Login UI
+│   └── admin_panel.html         # Admin UI
+│
+├── backend/
+│   ├── python/                  # Python services (FastAPI + chat server)
+│   │   ├── main.py              # FastAPI backend server
+│   │   ├── chat_server.py       # Chat server with OpenAI
+│   │   ├── services/            # Service modules
+│   │   ├── models/              # Data models
+│   │   └── config/              # Configuration
+│   │
+│   ├── node/                    # Node.js messaging backends
+│   │   ├── whatsapp_server.js
+│   │   ├── telegram_server.js
+│   │   └── slack_server.js
+│   │
+│   └── django_app/              # Django service (optional)
+│       ├── manage.py
+│       └── djproject/
+│
 ├── package.json                 # Node.js dependencies
 ├── requirements.txt             # Python dependencies
 ├── .env                         # Environment variables (create this)
-│
-├── services/                    # Service modules
-│   ├── email_service.py        # Gmail API operations
-│   ├── telegram_service.py     # Telegram Bot API
-│   ├── slack_service.py        # Slack API
-│   ├── whatsapp_service.py    # WhatsApp (Playwright - legacy)
-│   ├── word_service.py         # Microsoft Word automation
-│   ├── excel_service.py       # Microsoft Excel automation
-│   ├── app_launcher.py        # Application launcher
-│   └── context_analyzer.py    # AI context analysis
-│
-├── models/                      # Data models
-│   └── schemas.py              # Pydantic models
-│
-├── config/                      # Configuration
-│   └── chatgpt_functions.py   # ChatGPT function definitions
-│
-├── django_app/                  # Django service (optional)
-│   ├── manage.py
-│   └── djproject/
 │
 ├── telegram_session/           # Telegram session files
 ├── whatsapp_session/            # WhatsApp session (Playwright)
@@ -450,11 +448,11 @@ python test_context_analyzer.py
 ## 📝 Development
 
 ### Adding New Features
-1. Create service in `services/` directory
-2. Add API endpoints in `main.py`
-3. Update `config/chatgpt_functions.py` for AI integration
-4. Add frontend UI in `chat_interface.html`
-5. Update styles in `styles.css`
+1. Create service in `backend/python/services/`
+2. Add API endpoints in `backend/python/main.py`
+3. Update `backend/python/config/chatgpt_functions.py` for AI integration
+4. Add frontend UI in `frontend/chat_interface.html`
+5. Update styles in `frontend/styles.css`
 
 ### Code Style
 - Follow PEP 8 for Python code

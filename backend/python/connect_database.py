@@ -68,7 +68,8 @@ def configure_connection():
             # Update .env file
             print(f"\n[*] Updating .env file...")
             env_content = ""
-            env_file = ".env"
+            project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+            env_file = os.path.join(project_root, ".env")
             
             # Read existing .env if it exists
             if os.path.exists(env_file):
@@ -93,9 +94,9 @@ def configure_connection():
             print("[+] Configuration complete!")
             print("="*60)
             print("\nNext steps:")
-            print("  1. python test_connection.py  - Test connection")
-            print("  2. python init_tables.py      - Create missing tables")
-            print("  3. python main.py             - Start your app")
+            print("  1. python backend/python/test_connection.py  - Test connection")
+            print("  2. python backend/python/init_tables.py      - Create missing tables")
+            print("  3. python backend/python/main.py             - Start your app")
             print()
             
             return True

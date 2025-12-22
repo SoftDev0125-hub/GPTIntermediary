@@ -62,8 +62,8 @@ slack_session_node/
 .wwebjs_cache/
 
 # Local databases
-django_app/db.sqlite3
-django_app/db.sqlite3-journal
+backend/django_app/db.sqlite3
+backend/django_app/db.sqlite3-journal
 
 # Node modules
 node_modules/

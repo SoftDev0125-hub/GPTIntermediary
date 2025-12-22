@@ -187,7 +187,8 @@ def call_backend_function(function_name, arguments):
 def index():
     """Serve the login page"""
     try:
-        html_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'login.html')
+        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+        html_path = os.path.join(project_root, 'frontend', 'login.html')
         return send_file(html_path)
     except Exception as e:
         return f"Error loading login page: {str(e)}", 500
@@ -197,7 +198,8 @@ def index():
 def chat_interface():
     """Serve the chat interface HTML (requires authentication)"""
     try:
-        html_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'chat_interface.html')
+        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+        html_path = os.path.join(project_root, 'frontend', 'chat_interface.html')
         return send_file(html_path)
     except Exception as e:
         return f"Error loading chat interface: {str(e)}", 500
@@ -207,10 +209,22 @@ def chat_interface():
 def admin_panel():
     """Serve the admin panel HTML (requires admin authentication)"""
     try:
-        html_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'admin_panel.html')
+        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+        html_path = os.path.join(project_root, 'frontend', 'admin_panel.html')
         return send_file(html_path)
     except Exception as e:
         return f"Error loading admin panel: {str(e)}", 500
+
+
+@app.route('/styles.css')
+def styles():
+    """Serve the main stylesheet for the frontend pages"""
+    try:
+        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+        css_path = os.path.join(project_root, 'frontend', 'styles.css')
+        return send_file(css_path)
+    except Exception as e:
+        return f"Error loading styles.css: {str(e)}", 500
 
 @app.route('/health', methods=['GET'])
 def health():
@@ -594,7 +608,7 @@ if __name__ == '__main__':
     print(f"OpenAI API Key: {api_status}")
     print("=" * 60)
     print("\n[*] Server running on http://localhost:5000")
-    print("[*] Open chat_interface.html in your browser to start chatting")
+    print("[*] Open http://localhost:5000/chat_interface.html in your browser to start chatting")
     print("\n[*] Make sure the backend is running on port 8000!")
     print("=" * 60)
     

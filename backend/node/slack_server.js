@@ -58,7 +58,9 @@ function getAppToken() {
 }
 
 // Session directory for avatars
-const SESSION_DIR = path.join(__dirname, 'slack_session_node');
+// Keep session data at the project root so moving this file doesn't break existing sessions.
+const PROJECT_ROOT = path.join(__dirname, '..', '..');
+const SESSION_DIR = path.join(PROJECT_ROOT, 'slack_session_node');
 const AVATAR_DIR = path.join(SESSION_DIR, 'avatars');
 
 // Ensure session directory exists

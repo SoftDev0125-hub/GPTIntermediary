@@ -30,7 +30,7 @@ whatsapp_log = None
 telegram_log = None
 
 # Django server configuration
-DJANGO_DIR = "django_app"
+DJANGO_DIR = os.path.join("backend", "django_app")
 DJANGO_PORT = 8001
 
 def start_servers():
@@ -41,13 +41,15 @@ def start_servers():
     # Make sure we're in the right directory
     script_dir = os.path.dirname(os.path.abspath(__file__))
     os.chdir(script_dir)
+
+    backend_py_dir = os.path.join(script_dir, "backend", "python")
     
     servers_running = True
     print("[*] Starting all backend servers...")
     print(f"[*] Working directory: {os.getcwd()}")
     
     try:
-        # Start backend server (main.py on port 8000)
+        # Start backend server (backend/python/main.py on port 8000)
         print("[*] Starting backend server (main.py on port 8000)...")
         try:
             # Create log file for backend server output
@@ -59,7 +61,7 @@ def start_servers():
                 [sys.executable, "main.py"],
                 stdout=backend_log,  # Write to log file
                 stderr=backend_log,  # Write errors to log file
-                cwd=os.path.dirname(os.path.abspath(__file__)),
+                cwd=backend_py_dir,
                 creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
             )
             time.sleep(2)  # Reduced initial wait - verification loop will handle longer waits
@@ -133,13 +135,13 @@ def start_servers():
             servers_running = False
             return
         
-        # Start chat server (chat_server.py on port 5000)
+        # Start chat server (backend/python/chat_server.py on port 5000)
         print("[*] Starting chat server (port 5000)...")
         # Try chat_server.py first, fallback to chat_server_simple.py
         chat_server_file = "chat_server.py"
-        if not os.path.exists(os.path.join(os.path.dirname(os.path.abspath(__file__)), chat_server_file)):
+        if not os.path.exists(os.path.join(backend_py_dir, chat_server_file)):
             chat_server_file = "chat_server_simple.py"
-            if not os.path.exists(os.path.join(os.path.dirname(os.path.abspath(__file__)), chat_server_file)):
+            if not os.path.exists(os.path.join(backend_py_dir, chat_server_file)):
                 print("[!] No chat server file found (looking for chat_server.py or chat_server_simple.py)")
                 servers_running = False
                 return
@@ -156,7 +158,7 @@ def start_servers():
                 [sys.executable, chat_server_file],
                 stdout=chat_log if chat_log else subprocess.DEVNULL,
                 stderr=chat_log if chat_log else subprocess.DEVNULL,
-                cwd=os.path.dirname(os.path.abspath(__file__)),
+                cwd=backend_py_dir,
                 creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
             )
             time.sleep(3)  # Wait for chat server to start
@@ -214,7 +216,7 @@ def start_servers():
         
         # Start Node.js WhatsApp server (whatsapp_server.js on port 3000)
         print("[*] Starting Node.js WhatsApp server (port 3000)...")
-        whatsapp_server_file = "whatsapp_server.js"
+        whatsapp_server_file = os.path.join("backend", "node", "whatsapp_server.js")
         if os.path.exists(os.path.join(os.path.dirname(os.path.abspath(__file__)), whatsapp_server_file)):
             try:
                 # Check if port 3000 is already in use and kill the process
@@ -283,7 +285,7 @@ def start_servers():
         
         # Start Node.js Telegram server (telegram_server.js on port 3001)
         print("[*] Starting Node.js Telegram server (port 3001)...")
-        telegram_server_file = "telegram_server.js"
+        telegram_server_file = os.path.join("backend", "node", "telegram_server.js")
         if os.path.exists(os.path.join(os.path.dirname(os.path.abspath(__file__)), telegram_server_file)):
             try:
                 # Check if port 3001 is already in use and kill the process
@@ -351,7 +353,7 @@ def start_servers():
         
         # Start Node.js Slack server (slack_server.js on port 3002)
         print("[*] Starting Node.js Slack server (port 3002)...")
-        slack_server_file = "slack_server.js"
+        slack_server_file = os.path.join("backend", "node", "slack_server.js")
         if os.path.exists(os.path.join(os.path.dirname(os.path.abspath(__file__)), slack_server_file)):
             try:
                 # Check if port 3002 is already in use and kill the process
@@ -674,8 +676,8 @@ def main():
             print("[!] Failed to start servers. Exiting...")
             print("[!] Check the error messages above to see which server failed.")
             print("[!] You can try starting servers manually:")
-            print("[!]   - Backend: python main.py")
-            print("[!]   - Chat: python chat_server.py")
+            print("[!]   - Backend: python backend/python/main.py")
+            print("[!]   - Chat: python backend/python/chat_server.py")
             return
         
         # Verify backend server is actually running with retries
@@ -699,7 +701,7 @@ def main():
                     print(f"[!] Warning: Backend server may not be ready: {e}")
                     print("[!] The window will open, but some features may not work.")
                     print("[!] Check if main.py started successfully in the background.")
-                    print("[!] You may need to start it manually: python main.py")
+                    print("[!] You may need to start it manually: python backend/python/main.py")
                     print("[!] Check logs/backend_server.log for startup errors")
             except Exception as e:
                 print(f"[!] Warning: Could not verify backend server: {e}")
@@ -711,7 +713,11 @@ def main():
             print("[!] If features don't work, check if the backend server is running.")
         
         # Get the chat interface HTML path
-        html_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'chat_interface.html')
+        html_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "frontend",
+            "chat_interface.html"
+        )
         html_path = os.path.normpath(html_path)
         
         if not os.path.exists(html_path):
@@ -720,10 +726,10 @@ def main():
             print(f"[!] Script directory: {os.path.dirname(os.path.abspath(__file__))}")
             stop_servers()
             return
-        
-            print(f"[*] Opening application: {html_path}")
-            print("[*] The application window should open now...")
-            print("[*] Close the window or press Ctrl+C to stop all servers and exit")
+
+        print(f"[*] Opening application: {html_path}")
+        print("[*] The application window should open now...")
+        print("[*] Close the window or press Ctrl+C to stop all servers and exit")
         print("=" * 60)
         
         # Try to create and show the webview window
