@@ -290,8 +290,11 @@ def chat():
         # Each question is now answered independently without past context
 
         
-        # Build messages for OpenAI - very short system prompt for faster processing
-        system_content = """You are a helpful AI assistant. Be concise and direct. Answer questions clearly and briefly."""
+        # Build messages for OpenAI - comprehensive system prompt
+        system_content = """You are a helpful AI assistant. Provide thorough, detailed, and well-formatted responses. 
+When asked for lists, provide complete lists with proper formatting (numbered or bulleted). 
+Use markdown formatting for better readability (bold, lists, code blocks, etc.).
+Be conversational and helpful, like ChatGPT."""
         
         messages = [
             {
@@ -300,41 +303,39 @@ def chat():
             }
         ]
         
-        # DISABLED: No history is used to prevent timeout
-        # Each question is answered independently
-        # Skip database history and frontend history entirely
-
+        # Get conversation history from frontend (limited to prevent timeout)
+        conversation_history = data.get('history', [])
+        if conversation_history and isinstance(conversation_history, list):
+            # Limit history to last 10 messages (5 exchanges) to prevent timeout
+            recent_history = conversation_history[-10:]
+            for msg in recent_history:
+                if isinstance(msg, dict) and 'role' in msg and 'content' in msg:
+                    messages.append({
+                        "role": msg['role'],
+                        "content": str(msg['content'])[:2000]  # Limit individual message length
+                    })
         
         # Add current user message
         messages.append({"role": "user", "content": user_message})
         
         total_context = len(messages)
-        # logger.info(f"[CHAT] Total messages in context: {total_context}...")  # Disabled for speed
-        
-        # Use minimal context: only system + current user message
-        minimal_messages = [
-            messages[0],  # System message
-            {"role": "user", "content": user_message}  # Current user message only
-        ]
+        logger.info(f"[CHAT] Total messages in context: {total_context}")
         
         # Direct call - minimize logging overhead
         api_start_time = time.time()
         try:
-            # ALWAYS disable function calling - never enable it to prevent double API calls
-            # Function calling requires 2 API calls which causes timeouts
-            
             # Use shared OpenAI client for better performance (faster than creating new client each time)
             client = get_openai_client()
             
             # Enable function calling for app launching and email functions
             # Use stream=False explicitly to ensure we get complete response immediately
-            # Optimize for speed: lower max_tokens, use faster model, no streaming
+            # Increased max_tokens for comprehensive responses
             response = client.chat.completions.create(
                 model="gpt-3.5-turbo",  # Fast model
-                messages=minimal_messages,
+                messages=messages,  # Use full conversation history
                 functions=FUNCTIONS,  # Enable function calling for app launch, email, etc.
                 function_call="auto",  # Let the model decide when to call functions
-                max_tokens=300,  # Reduced for faster response (300 tokens is enough for most answers)
+                max_tokens=4000,  # Increased for comprehensive responses (lists, detailed answers)
                 temperature=0.7,
                 stream=False,  # No streaming - get complete response immediately
             )
@@ -417,7 +418,7 @@ def chat():
                     final_message = function_result.get('detail', function_result.get('error', f"❌ Failed to launch {function_args.get('app_name', 'the app')}"))
             else:
                 # For other functions, add function result to messages and call OpenAI again to get the response
-                minimal_messages.append({
+                messages.append({
                     "role": "assistant",
                     "content": None,
                     "function_call": {
@@ -425,7 +426,7 @@ def chat():
                         "arguments": message.function_call.arguments
                     }
                 })
-                minimal_messages.append({
+                messages.append({
                     "role": "function",
                     "name": function_name,
                     "content": json.dumps(function_result)
@@ -436,10 +437,10 @@ def chat():
                     logger.warning(f"[CHAT-{request_id}] Making second API call after function execution")
                     response2 = client.chat.completions.create(
                         model="gpt-3.5-turbo",
-                        messages=minimal_messages,
+                        messages=messages,  # Use full conversation history
                         functions=FUNCTIONS,
                         function_call="auto",
-                        max_tokens=300,
+                        max_tokens=4000,  # Increased for comprehensive responses
                         temperature=0.7,
                         stream=False,
                     )

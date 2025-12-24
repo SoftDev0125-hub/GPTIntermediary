@@ -607,7 +607,7 @@
                     <div class="slack-header">
                         <div class="slack-header-content">
                             <h2 id="slackCurrentChannel">Slack</h2>
-                            <div class="slack-header-info" id="slackStatus">Not connected</div>
+                            <div class="slack-header-info" id="slackStatus"></div>
                         </div>
                     </div>
                     <div class="slack-messages-container" id="slackMessagesContainer">
@@ -656,7 +656,7 @@
                     <div class="whatsapp-header">
                         <div class="whatsapp-header-content">
                             <h2 id="whatsappCurrentChat">WhatsApp</h2>
-                            <div class="whatsapp-header-info" id="whatsappStatus">Not connected</div>
+                            <div class="whatsapp-header-info" id="whatsappStatus"></div>
                         </div>
                     </div>
                     <div class="whatsapp-messages-container" id="whatsappMessagesContainer">
@@ -814,6 +814,9 @@
         const sendButton = document.getElementById('sendButton');
         const typingIndicator = document.getElementById('typingIndicator');
 
+        // Store conversation history for context
+        let conversationHistory = [];
+
         function addMessage(text, type = 'assistant') {
             const messageDiv = document.createElement('div');
             messageDiv.className = `message ${type}`;
@@ -821,11 +824,8 @@
             const contentDiv = document.createElement('div');
             contentDiv.className = 'message-content';
             
-            // Format the message to preserve line breaks and add proper paragraph spacing
-            let formattedText = text
-                .replace(/\n\n/g, '</p><p>') // Double newlines become new paragraphs
-                .replace(/\n/g, '<br>') // Single newlines become line breaks
-                .replace(/^(.+)$/, '<p>$1</p>'); // Wrap in paragraph tags
+            // Render markdown and format the message
+            let formattedText = renderMarkdown(text);
             
             // Enhance emoji and icon display
             formattedText = enhanceIconsAndEmojis(formattedText);
@@ -835,6 +835,164 @@
             messageDiv.appendChild(contentDiv);
             chatContainer.appendChild(messageDiv);
             chatContainer.scrollTop = chatContainer.scrollHeight;
+            
+            // Store in conversation history (limit to prevent memory issues)
+            conversationHistory.push({
+                role: type === 'user' ? 'user' : 'assistant',
+                content: text
+            });
+            
+            // Keep only last 20 messages (10 exchanges)
+            if (conversationHistory.length > 20) {
+                conversationHistory = conversationHistory.slice(-20);
+            }
+        }
+
+        function renderMarkdown(text) {
+            if (!text) return '';
+            
+            // Split into lines for processing
+            const lines = text.split('\n');
+            let html = '';
+            let inCodeBlock = false;
+            let inList = false;
+            let listType = null; // 'ul' or 'ol'
+            let listItems = [];
+            
+            // Helper function to close current list
+            function closeList() {
+                if (inList && listItems.length > 0) {
+                    html += listType === 'ol' ? '<ol>' : '<ul>';
+                    html += listItems.map(item => '<li>' + processInlineMarkdown(item) + '</li>').join('');
+                    html += listType === 'ol' ? '</ol>' : '</ul>';
+                    listItems = [];
+                }
+                inList = false;
+                listType = null;
+            }
+            
+            // Helper function to start a new list
+            function startList(type) {
+                if (inList && listType !== type) {
+                    closeList();
+                }
+                if (!inList) {
+                    inList = true;
+                    listType = type;
+                }
+            }
+            
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i];
+                const trimmed = line.trim();
+                
+                // Code blocks
+                if (trimmed.startsWith('```')) {
+                    if (inCodeBlock) {
+                        // Close code block
+                        html += '<pre><code>' + escapeHtml(listItems.join('\n')) + '</code></pre>';
+                        listItems = [];
+                        inCodeBlock = false;
+                    } else {
+                        // Close any open list first
+                        closeList();
+                        inCodeBlock = true;
+                        listItems = [];
+                    }
+                    continue;
+                }
+                
+                if (inCodeBlock) {
+                    listItems.push(line);
+                    continue;
+                }
+                
+                // Headers
+                if (trimmed.startsWith('### ')) {
+                    closeList();
+                    html += '<h3>' + processInlineMarkdown(trimmed.substring(4)) + '</h3>';
+                    continue;
+                }
+                if (trimmed.startsWith('## ')) {
+                    closeList();
+                    html += '<h2>' + processInlineMarkdown(trimmed.substring(3)) + '</h2>';
+                    continue;
+                }
+                if (trimmed.startsWith('# ')) {
+                    closeList();
+                    html += '<h1>' + processInlineMarkdown(trimmed.substring(2)) + '</h1>';
+                    continue;
+                }
+                
+                // Numbered lists (1. item)
+                const numberedMatch = trimmed.match(/^(\d+)\.\s+(.+)$/);
+                if (numberedMatch) {
+                    startList('ol');
+                    listItems.push(numberedMatch[2]);
+                    continue;
+                }
+                
+                // Bullet lists (- item or * item)
+                const bulletMatch = trimmed.match(/^[-*]\s+(.+)$/);
+                if (bulletMatch) {
+                    startList('ul');
+                    listItems.push(bulletMatch[1]);
+                    continue;
+                }
+                
+                // Empty line - don't close list, just add a break
+                // Lists will only close when encountering non-list content
+                if (trimmed === '') {
+                    html += '<br>';
+                    continue;
+                }
+                
+                // Regular paragraph - close list if open
+                if (inList) {
+                    closeList();
+                }
+                
+                html += '<p>' + processInlineMarkdown(line) + '</p>';
+            }
+            
+            // Close any remaining list
+            closeList();
+            
+            // Close any remaining code block
+            if (inCodeBlock) {
+                html += '<pre><code>' + escapeHtml(listItems.join('\n')) + '</code></pre>';
+            }
+            
+            return html;
+        }
+        
+        function processInlineMarkdown(text) {
+            if (!text) return '';
+            
+            // Escape HTML first
+            let html = escapeHtml(text);
+            
+            // Inline code (`code`) - do this before bold/italic
+            html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+            
+            // Bold (**text** or __text__)
+            html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+            html = html.replace(/__([^_]+)__/g, '<strong>$1</strong>');
+            
+            // Italic (*text* or _text_) - but not if it's part of bold
+            html = html.replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '<em>$1</em>');
+            html = html.replace(/(?<!_)_([^_]+)_(?!_)/g, '<em>$1</em>');
+            
+            // Links [text](url)
+            html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+            
+            return html;
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
         }
 
         function enhanceIconsAndEmojis(text) {
@@ -915,7 +1073,8 @@
                     },
                     body: JSON.stringify({ 
                         message: message,
-                        user_id: userIdInt  // Send validated user_id
+                        user_id: userIdInt,  // Send validated user_id
+                        history: conversationHistory  // Send conversation history for context
                     }),
                     signal: controller.signal
                 });

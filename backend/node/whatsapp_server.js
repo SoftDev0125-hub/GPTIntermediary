@@ -303,6 +303,13 @@ function initializeWhatsApp() {
     client.on('authenticated', () => {
         console.log('[WhatsApp] Authentication successful!');
         isAuthenticated = true;
+        // Emit status update when authenticated (even if not ready yet)
+        io.emit('whatsapp_status', {
+            is_connected: true,  // Authenticated means connected
+            is_authenticated: true,
+            has_session: true,
+            message: 'Connected to WhatsApp (initializing...)'
+        });
     });
 
     // Authentication failure event
@@ -416,7 +423,8 @@ app.get('/api/whatsapp/status', async (req, res) => {
         const sessionPath = path.join(SESSION_DIR, '.wwebjs_auth');
         const hasSession = fs.existsSync(sessionPath);
 
-        if (isAuthenticated && isReady) {
+        // Check if client exists and is ready
+        if (isAuthenticated && isReady && client) {
             return res.json({
                 success: true,
                 is_connected: true,
@@ -426,13 +434,36 @@ app.get('/api/whatsapp/status', async (req, res) => {
             });
         }
 
-        if (hasSession && !isReady) {
+        // If authenticated but not ready yet, still show as connected (client is initializing)
+        if (isAuthenticated && !isReady && client) {
+            return res.json({
+                success: true,
+                is_connected: true,  // Changed to true - authenticated means connected
+                is_authenticated: true,
+                has_session: hasSession,
+                message: 'Connected to WhatsApp (initializing...)'
+            });
+        }
+
+        // Session exists but client not authenticated yet - restoring
+        if (hasSession && !isAuthenticated && client) {
             return res.json({
                 success: true,
                 is_connected: false,
                 is_authenticated: false,
                 has_session: true,
                 message: 'Session found - restoring connection...'
+            });
+        }
+
+        // Session exists but no client initialized yet
+        if (hasSession && !client) {
+            return res.json({
+                success: true,
+                is_connected: false,
+                is_authenticated: false,
+                has_session: true,
+                message: 'Session found - initializing client...'
             });
         }
 
