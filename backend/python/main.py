@@ -2102,6 +2102,277 @@ async def get_chatgpt_functions():
     return CHATGPT_FUNCTIONS
 
 
+# ==================== SETTINGS/ENV MANAGEMENT ENDPOINTS ====================
+
+class EnvVariablesRequest(BaseModel):
+    """Request model for updating environment variables"""
+    telegram_api_id: Optional[str] = None
+    telegram_api_hash: Optional[str] = None
+    telegram_phone_number: Optional[str] = None
+    slack_user_token: Optional[str] = None
+    google_client_id: Optional[str] = None
+    google_client_secret: Optional[str] = None
+    openai_api_key: Optional[str] = None
+    user_access_token: Optional[str] = None
+    user_refresh_token: Optional[str] = None
+    user_email: Optional[str] = None
+
+
+@app.get("/api/settings/env")
+async def get_env_variables():
+    """
+    Get current environment variables from .env file
+    
+    Returns:
+        Dictionary of environment variable values
+    """
+    try:
+        # Try to find .env file in project root (parent directory of backend/python)
+        import pathlib
+        current_file = pathlib.Path(__file__).resolve()
+        project_root = current_file.parent.parent.parent  # Go up from backend/python/main.py to project root
+        env_path = project_root / '.env'
+        
+        # Fallback: try current working directory
+        if not env_path.exists():
+            cwd_env = pathlib.Path.cwd() / '.env'
+            if cwd_env.exists():
+                env_path = cwd_env
+            else:
+                # Last fallback: current directory relative to script
+                env_path = pathlib.Path('.env')
+        
+        env_vars = {}
+        
+        # Read .env file if it exists
+        logger.info(f"Looking for .env file at: {env_path}")
+        if env_path.exists():
+            logger.info(f"Found .env file at: {env_path}")
+            with open(env_path, 'r', encoding='utf-8') as f:
+                for line_num, line in enumerate(f, 1):
+                    original_line = line
+                    line = line.strip()
+                    # Skip empty lines and comments
+                    if not line or line.startswith('#'):
+                        continue
+                    # Parse key=value pairs
+                    if '=' in line:
+                        key, value = line.split('=', 1)
+                        key = key.strip()
+                        value = value.strip()
+                        # Remove quotes if present
+                        if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
+                            value = value[1:-1]
+                        # Store the value (even if empty)
+                        env_vars[key] = value
+                        logger.debug(f"Line {line_num}: {key} = {value[:20]}..." if len(value) > 20 else f"Line {line_num}: {key} = {value}")
+            logger.info(f"Read {len(env_vars)} variables from .env file: {list(env_vars.keys())}")
+        else:
+            logger.warning(f".env file not found at: {env_path}")
+        
+        # Also check environment variables (they take precedence)
+        import os
+        env_vars_from_os = {
+            "TELEGRAM_API_ID": os.getenv("TELEGRAM_API_ID", ""),
+            "TELEGRAM_API_HASH": os.getenv("TELEGRAM_API_HASH", ""),
+            "TELEGRAM_PHONE_NUMBER": os.getenv("TELEGRAM_PHONE_NUMBER", ""),
+            "SLACK_USER_TOKEN": os.getenv("SLACK_USER_TOKEN", ""),
+            "GOOGLE_CLIENT_ID": os.getenv("GOOGLE_CLIENT_ID", ""),
+            "GOOGLE_CLIENT_SECRET": os.getenv("GOOGLE_CLIENT_SECRET", ""),
+            "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY", ""),
+            "USER_ACCESS_TOKEN": os.getenv("USER_ACCESS_TOKEN", ""),
+            "USER_REFRESH_TOKEN": os.getenv("USER_REFRESH_TOKEN", ""),
+            "USER_EMAIL": os.getenv("USER_EMAIL", "")
+        }
+        
+        # Merge: OS env vars take precedence, then .env file
+        final_vars = {}
+        for key in env_vars_from_os.keys():
+            # Use OS env var if it exists and is not empty, otherwise use .env file value
+            os_value = env_vars_from_os[key]
+            env_value = env_vars.get(key, "")
+            final_vars[key] = os_value if os_value else env_value
+        
+        logger.info(f"Returning {len(final_vars)} variables. Sample: {dict(list(final_vars.items())[:2])}")
+        
+        return {
+            "success": True,
+            "variables": final_vars,
+            "env_file_path": str(env_path),
+            "env_file_exists": env_path.exists(),
+            "debug": {
+                "env_file_path": str(env_path),
+                "env_vars_count": len(env_vars),
+                "env_vars_keys": list(env_vars.keys())[:5]
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error reading .env file: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Failed to read environment variables: {str(e)}")
+
+
+@app.post("/api/settings/env")
+async def update_env_variables(request: EnvVariablesRequest):
+    """
+    Update environment variables in .env file
+    
+    Args:
+        request: Environment variable values to update
+    
+    Returns:
+        Success status
+    """
+    try:
+        # Try to find .env file in project root (parent directory of backend/python)
+        import pathlib
+        current_file = pathlib.Path(__file__).resolve()
+        project_root = current_file.parent.parent.parent  # Go up from backend/python/main.py to project root
+        env_path = project_root / '.env'
+        
+        # Fallback: try current working directory
+        if not env_path.exists():
+            cwd_env = pathlib.Path.cwd() / '.env'
+            if cwd_env.exists():
+                env_path = cwd_env
+            else:
+                # Last fallback: current directory relative to script
+                env_path = pathlib.Path('.env')
+        
+        env_vars = {}
+        
+        # Read existing .env file if it exists
+        if env_path.exists():
+            with open(env_path, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+                for line in lines:
+                    line_stripped = line.strip()
+                    if line_stripped and not line_stripped.startswith('#') and '=' in line_stripped:
+                        key, value = line_stripped.split('=', 1)
+                        key = key.strip()
+                        value = value.strip().strip('"').strip("'")
+                        env_vars[key] = value
+        else:
+            # Create new .env file
+            lines = []
+        
+        # Update variables from request
+        updates = {
+            "TELEGRAM_API_ID": request.telegram_api_id,
+            "TELEGRAM_API_HASH": request.telegram_api_hash,
+            "TELEGRAM_PHONE_NUMBER": request.telegram_phone_number,
+            "SLACK_USER_TOKEN": request.slack_user_token,
+            "GOOGLE_CLIENT_ID": request.google_client_id,
+            "GOOGLE_CLIENT_SECRET": request.google_client_secret,
+            "OPENAI_API_KEY": request.openai_api_key,
+            "USER_ACCESS_TOKEN": request.user_access_token,
+            "USER_REFRESH_TOKEN": request.user_refresh_token,
+            "USER_EMAIL": request.user_email
+        }
+        
+        # Update env_vars dict
+        for key, value in updates.items():
+            if value is not None and value.strip():
+                env_vars[key] = value.strip()
+        
+        # Write back to .env file
+        # First, preserve comments and structure
+        output_lines = []
+        written_vars = set()
+        
+        # Process existing lines, updating values
+        for line in lines:
+            line_stripped = line.strip()
+            if line_stripped and not line_stripped.startswith('#') and '=' in line_stripped:
+                key = line_stripped.split('=', 1)[0].strip()
+                if key in updates and updates[key] is not None and updates[key].strip():
+                    output_lines.append(f"{key}={updates[key].strip()}\n")
+                    written_vars.add(key)
+                elif key in env_vars:
+                    output_lines.append(f"{key}={env_vars[key]}\n")
+                    written_vars.add(key)
+                else:
+                    output_lines.append(line)
+            else:
+                output_lines.append(line)
+        
+        # Add any new variables that weren't in the file
+        for key, value in env_vars.items():
+            if key not in written_vars and value:
+                # Find appropriate section or add at end
+                output_lines.append(f"{key}={value}\n")
+        
+        # Write to file
+        with open(env_path, 'w', encoding='utf-8') as f:
+            f.writelines(output_lines)
+        
+        logger.info(f"Updated .env file with new environment variables")
+        
+        return {
+            "success": True,
+            "message": "Environment variables updated successfully. Please restart the application manually for changes to take effect."
+        }
+    except Exception as e:
+        logger.error(f"Error updating .env file: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Failed to update environment variables: {str(e)}")
+
+
+@app.post("/api/settings/gmail-token")
+async def generate_gmail_token(background_tasks: BackgroundTasks):
+    """
+    Run get_gmail_token.py script to generate Gmail OAuth tokens
+    
+    Returns:
+        Success status and instructions
+    """
+    try:
+        import subprocess
+        import sys
+        from pathlib import Path
+        
+        # Get the path to get_gmail_token.py
+        script_path = Path(__file__).parent / "get_gmail_token.py"
+        
+        if not script_path.exists():
+            raise HTTPException(status_code=404, detail="get_gmail_token.py not found")
+        
+        # Run the script in background
+        def run_gmail_token_script():
+            try:
+                result = subprocess.run(
+                    [sys.executable, str(script_path)],
+                    capture_output=True,
+                    text=True,
+                    timeout=300  # 5 minute timeout
+                )
+                logger.info(f"Gmail token script output: {result.stdout}")
+                if result.stderr:
+                    logger.error(f"Gmail token script errors: {result.stderr}")
+                
+                logger.info("Gmail token generation completed. Please restart the application manually for changes to take effect.")
+            except subprocess.TimeoutExpired:
+                logger.error("Gmail token script timed out")
+            except Exception as e:
+                logger.error(f"Error running Gmail token script: {e}")
+        
+        # Run in background
+        background_tasks.add_task(run_gmail_token_script)
+        
+        return {
+            "success": True,
+            "message": "Gmail token generation started. Please check the console for OAuth flow. Please restart the application manually after completion."
+        }
+    except Exception as e:
+        logger.error(f"Error starting Gmail token generation: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to start Gmail token generation: {str(e)}")
+
+
+# ==================== END SETTINGS/ENV MANAGEMENT ENDPOINTS ====================
+
+
 if __name__ == "__main__":
     uvicorn.run(
         "main:app",

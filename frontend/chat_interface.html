@@ -32,6 +32,7 @@
             <button class="tab-button" data-tab="telegram">Telegram</button>
             <button class="tab-button" data-tab="whatsapp">WhatsApp</button>
             <button class="tab-button" data-tab="slack">Slack</button>
+            <button class="tab-button" data-tab="settings">Settings</button>
         </div>
 
         <div id="chat" class="tab-content active">
@@ -698,6 +699,218 @@
                         </div>
                     </div>
                 </div>                
+            </div>
+        </div>
+
+        <div id="settings" class="tab-content">
+            <div class="settings-container">
+                <div class="settings-header">
+                    <h1>⚙️ Settings</h1>
+                    <p>Manage environment variables and application configuration</p>
+                </div>
+
+                <div id="settingsMessage" class="settings-message" style="display: none;"></div>
+
+                <form id="settingsForm" class="settings-form">
+                    <!-- OpenAI Section -->
+                    <div class="settings-section">
+                        <h2 class="settings-section-title">🤖 OpenAI Configuration</h2>
+                        <div class="settings-field">
+                            <label for="openai_api_key">
+                                API Key
+                                <button type="button" class="help-button" onclick="showHelp('openai_api_key')">?</button>
+                            </label>
+                            <div class="input-with-edit">
+                                <input type="text" id="openai_api_key" name="openai_api_key" placeholder="sk-..." readonly>
+                                <button type="button" class="edit-button" onclick="toggleEdit('openai_api_key')" title="Edit">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                                        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                                    </svg>
+                                </button>
+                            </div>
+                            <small class="field-description">Required for ChatGPT functionality</small>
+                        </div>
+                    </div>
+
+                    <div class="settings-divider"></div>
+
+                    <!-- Google OAuth Section -->
+                    <div class="settings-section">
+                        <h2 class="settings-section-title">📧 Gmail Integration</h2>
+                        <div class="settings-field-group">
+                            <div class="settings-field">
+                                <label for="user_email">
+                                    Gmail Address
+                                    <button type="button" class="help-button" onclick="showHelp('user_email')">?</button>
+                                </label>
+                                <div class="input-with-edit">
+                                    <input type="email" id="user_email" name="user_email" placeholder="your.email@gmail.com" readonly>
+                                    <button type="button" class="edit-button" onclick="toggleEdit('user_email')" title="Edit">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                                            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                                        </svg>
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="settings-field">
+                                <label for="google_client_id">
+                                    Google Client ID
+                                    <button type="button" class="help-button" onclick="showHelp('google_client_id')">?</button>
+                                </label>
+                                <div class="input-with-edit">
+                                    <input type="text" id="google_client_id" name="google_client_id" placeholder="Enter Google Client ID" readonly>
+                                    <button type="button" class="edit-button" onclick="toggleEdit('google_client_id')" title="Edit">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                                            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                                        </svg>
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="settings-field">
+                                <label for="google_client_secret">
+                                    Google Client Secret
+                                    <button type="button" class="help-button" onclick="showHelp('google_client_secret')">?</button>
+                                </label>
+                                <div class="input-with-edit">
+                                    <input type="text" id="google_client_secret" name="google_client_secret" placeholder="Enter Google Client Secret" readonly>
+                                    <button type="button" class="edit-button" onclick="toggleEdit('google_client_secret')" title="Edit">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                                            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                                        </svg>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="gmail-token-section">
+                            <div class="gmail-token-header">
+                                <h3>Gmail Authentication Tokens</h3>
+                                <button type="button" class="gmail-token-button" onclick="generateGmailToken()">
+                                    🔑 Generate Tokens
+                                </button>
+                            </div>
+                            <p class="gmail-token-description">Set Client ID and Secret above, then click "Generate Tokens" to open OAuth authentication.</p>
+                            <div class="settings-field-group">
+                                <div class="settings-field">
+                                    <label for="user_access_token">
+                                        Access Token
+                                        <button type="button" class="help-button" onclick="showHelp('user_access_token')">?</button>
+                                    </label>
+                                    <div class="input-with-edit">
+                                        <input type="text" id="user_access_token" name="user_access_token" placeholder="Auto-generated" readonly>
+                                        <button type="button" class="edit-button" onclick="toggleEdit('user_access_token')" title="Edit">
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                                                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                                            </svg>
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="settings-field">
+                                    <label for="user_refresh_token">
+                                        Refresh Token
+                                        <button type="button" class="help-button" onclick="showHelp('user_refresh_token')">?</button>
+                                    </label>
+                                    <div class="input-with-edit">
+                                        <input type="text" id="user_refresh_token" name="user_refresh_token" placeholder="Auto-generated" readonly>
+                                        <button type="button" class="edit-button" onclick="toggleEdit('user_refresh_token')" title="Edit">
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                                                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                                            </svg>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="settings-divider"></div>
+
+                    <!-- Telegram Section -->
+                    <div class="settings-section">
+                        <h2 class="settings-section-title">💬 Telegram Integration</h2>
+                        <div class="settings-field-group">
+                            <div class="settings-field">
+                                <label for="telegram_phone_number">
+                                    Phone Number
+                                    <button type="button" class="help-button" onclick="showHelp('telegram_phone_number')">?</button>
+                                </label>
+                                <div class="input-with-edit">
+                                    <input type="tel" id="telegram_phone_number" name="telegram_phone_number" placeholder="+1234567890" readonly>
+                                    <button type="button" class="edit-button" onclick="toggleEdit('telegram_phone_number')" title="Edit">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                                            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                                        </svg>
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="settings-field">
+                                <label for="telegram_api_id">
+                                    API ID
+                                    <button type="button" class="help-button" onclick="showHelp('telegram_api_id')">?</button>
+                                </label>
+                                <div class="input-with-edit">
+                                    <input type="text" id="telegram_api_id" name="telegram_api_id" placeholder="Enter Telegram API ID" readonly>
+                                    <button type="button" class="edit-button" onclick="toggleEdit('telegram_api_id')" title="Edit">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                                            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                                        </svg>
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="settings-field">
+                                <label for="telegram_api_hash">
+                                    API Hash
+                                    <button type="button" class="help-button" onclick="showHelp('telegram_api_hash')">?</button>
+                                </label>
+                                <div class="input-with-edit">
+                                    <input type="text" id="telegram_api_hash" name="telegram_api_hash" placeholder="Enter Telegram API Hash" readonly>
+                                    <button type="button" class="edit-button" onclick="toggleEdit('telegram_api_hash')" title="Edit">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                                            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                                        </svg>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="settings-divider"></div>
+
+                    <!-- Slack Section -->
+                    <div class="settings-section">
+                        <h2 class="settings-section-title">💼 Slack Integration</h2>
+                        <div class="settings-field">
+                            <label for="slack_user_token">
+                                User Token
+                                <button type="button" class="help-button" onclick="showHelp('slack_user_token')">?</button>
+                            </label>
+                            <div class="input-with-edit">
+                                <input type="text" id="slack_user_token" name="slack_user_token" placeholder="xoxp-..." readonly>
+                                <button type="button" class="edit-button" onclick="toggleEdit('slack_user_token')" title="Edit">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                                        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                                    </svg>
+                                </button>
+                            </div>
+                            <small class="field-description">User OAuth token for Slack workspace access</small>
+                        </div>
+                    </div>
+
+                    <div class="settings-actions">
+                        <button type="button" class="settings-reload-button" onclick="loadSettings()">🔄 Reload from .env</button>
+                        <button type="submit" class="settings-save-button">💾 Save to .env</button>
+                    </div>
+                </form>
             </div>
         </div>
 
@@ -9214,6 +9427,295 @@
                 console.log('[AUTH] User authenticated. user_id:', finalUserId);
             }
         });
+
+        // ==================== SETTINGS FUNCTIONALITY ====================
+        const API_BASE = 'http://localhost:8000';
+
+        // Help text for each environment variable
+        const helpTexts = {
+            openai_api_key: `To get your OpenAI API Key:
+1. Go to https://platform.openai.com/api-keys
+2. Sign in or create an account
+3. Click "Create new secret key"
+4. Copy the key (it starts with "sk-")
+5. Paste it here
+
+Note: Keep your API key secure and never share it publicly.`,
+            
+            google_client_id: `To get your Google Client ID:
+1. Go to https://console.cloud.google.com/
+2. Create a new project or select an existing one
+3. Enable the Gmail API
+4. Go to "Credentials" → "Create Credentials" → "OAuth client ID"
+5. Choose "Desktop app" as application type
+6. Copy the Client ID`,
+            
+            google_client_secret: `To get your Google Client Secret:
+1. Follow steps for Google Client ID
+2. After creating OAuth client ID, you'll see both Client ID and Client Secret
+3. Copy the Client Secret value
+4. Paste it here
+
+Note: This is shown only once when you create the credentials.`,
+            
+            user_email: `Enter your Gmail email address:
+- This should be the email address associated with your Google OAuth credentials
+- Example: yourname@gmail.com
+- This email will be used for sending/receiving emails`,
+            
+            user_access_token: `Gmail Access Token:
+- This is automatically generated when you click "Generate Gmail Token"
+- The token allows the app to access your Gmail account
+- Tokens expire after some time and need to be refreshed`,
+            
+            user_refresh_token: `Gmail Refresh Token:
+- This is automatically generated when you click "Generate Gmail Token"
+- The refresh token is used to get new access tokens when they expire
+- Keep this secure as it provides long-term access to your Gmail`,
+            
+            telegram_api_id: `To get your Telegram API ID:
+1. Go to https://my.telegram.org/auth
+2. Log in with your phone number
+3. Go to "API development tools"
+4. Create a new application
+5. Copy the "api_id" value`,
+            
+            telegram_api_hash: `To get your Telegram API Hash:
+1. Follow steps for Telegram API ID
+2. After creating the application, you'll see "api_hash"
+3. Copy the api_hash value
+4. Paste it here
+
+Note: Keep this secure and never share it.`,
+            
+            telegram_phone_number: `Enter your Telegram phone number:
+- Include country code with + prefix
+- Example: +1234567890
+- This is the phone number associated with your Telegram account
+- You'll receive a verification code on this number`,
+            
+            slack_user_token: `To get your Slack User Token:
+1. Go to https://api.slack.com/apps
+2. Create a new app or select existing one
+3. Go to "OAuth & Permissions"
+4. Add required scopes (chat:write, channels:read, etc.)
+5. Install app to workspace
+6. Copy the "User OAuth Token" (starts with "xoxp-")
+7. Paste it here
+
+Note: User tokens are for personal use. For bots, use Bot Token instead.`
+        };
+
+        // Show help modal
+        function showHelp(fieldName) {
+            const helpText = helpTexts[fieldName] || 'No help available for this field.';
+            alert(helpText);
+        }
+
+        // Load settings from backend
+        async function loadSettings() {
+            try {
+                showMessage('Loading settings from .env file...', 'info');
+                const response = await fetch(`${API_BASE}/api/settings/env`);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                const data = await response.json();
+                console.log('Settings API response:', data);
+                
+                if (data.success && data.variables) {
+                    // Populate all fields - use nullish coalescing to preserve empty strings
+                    const vars = data.variables;
+                    document.getElementById('openai_api_key').value = vars.OPENAI_API_KEY ?? '';
+                    document.getElementById('google_client_id').value = vars.GOOGLE_CLIENT_ID ?? '';
+                    document.getElementById('google_client_secret').value = vars.GOOGLE_CLIENT_SECRET ?? '';
+                    document.getElementById('user_email').value = vars.USER_EMAIL ?? '';
+                    document.getElementById('user_access_token').value = vars.USER_ACCESS_TOKEN ?? '';
+                    document.getElementById('user_refresh_token').value = vars.USER_REFRESH_TOKEN ?? '';
+                    document.getElementById('telegram_api_id').value = vars.TELEGRAM_API_ID ?? '';
+                    document.getElementById('telegram_api_hash').value = vars.TELEGRAM_API_HASH ?? '';
+                    document.getElementById('telegram_phone_number').value = vars.TELEGRAM_PHONE_NUMBER ?? '';
+                    document.getElementById('slack_user_token').value = vars.SLACK_USER_TOKEN ?? '';
+                    
+                    // Log actual values for debugging
+                    console.log('Loaded values:', {
+                        OPENAI_API_KEY: vars.OPENAI_API_KEY ? vars.OPENAI_API_KEY.substring(0, 10) + '...' : '(empty)',
+                        GOOGLE_CLIENT_ID: vars.GOOGLE_CLIENT_ID ? vars.GOOGLE_CLIENT_ID.substring(0, 20) + '...' : '(empty)',
+                        USER_EMAIL: vars.USER_EMAIL || '(empty)',
+                        TELEGRAM_API_ID: vars.TELEGRAM_API_ID || '(empty)',
+                        SLACK_USER_TOKEN: vars.SLACK_USER_TOKEN ? vars.SLACK_USER_TOKEN.substring(0, 10) + '...' : '(empty)'
+                    });
+                    
+                    const envPath = data.env_file_path || '.env';
+                    const exists = data.env_file_exists !== false;
+                    const loadedCount = Object.values(data.variables).filter(v => v && v.trim()).length;
+                    
+                    console.log('Settings loaded:', {
+                        path: envPath,
+                        exists: exists,
+                        loadedCount: loadedCount,
+                        variables: data.variables
+                    });
+                    
+                    if (exists) {
+                        showMessage(`✅ Settings loaded from ${envPath} (${loadedCount} values)`, 'success');
+                    } else {
+                        showMessage(`⚠️ .env file not found at ${envPath}. Using empty values.`, 'info');
+                    }
+                } else {
+                    console.error('Invalid response format:', data);
+                    showMessage('Failed to load settings: ' + (data.error || 'Invalid response format'), 'error');
+                }
+            } catch (error) {
+                console.error('Error loading settings:', error);
+                showMessage('Error loading settings. Please check if the backend server is running on ' + API_BASE + '. Error: ' + error.message, 'error');
+            }
+        }
+
+        // Save settings
+        async function saveSettings(event) {
+            event.preventDefault();
+            
+            const formData = {
+                openai_api_key: document.getElementById('openai_api_key').value.trim(),
+                google_client_id: document.getElementById('google_client_id').value.trim(),
+                google_client_secret: document.getElementById('google_client_secret').value.trim(),
+                user_email: document.getElementById('user_email').value.trim(),
+                user_access_token: document.getElementById('user_access_token').value.trim(),
+                user_refresh_token: document.getElementById('user_refresh_token').value.trim(),
+                telegram_api_id: document.getElementById('telegram_api_id').value.trim(),
+                telegram_api_hash: document.getElementById('telegram_api_hash').value.trim(),
+                telegram_phone_number: document.getElementById('telegram_phone_number').value.trim(),
+                slack_user_token: document.getElementById('slack_user_token').value.trim()
+            };
+            
+            try {
+                const response = await fetch(`${API_BASE}/api/settings/env`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(formData)
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    showMessage('✅ Settings saved successfully! ⚠️ IMPORTANT: Please restart the application for changes to take effect.', 'success');
+                } else {
+                    showMessage('Failed to save settings: ' + (data.error || 'Unknown error'), 'error');
+                }
+            } catch (error) {
+                console.error('Error saving settings:', error);
+                showMessage('Error saving settings. Please check if the backend server is running.', 'error');
+            }
+        }
+
+        // Toggle edit mode for input fields
+        function toggleEdit(fieldId) {
+            const input = document.getElementById(fieldId);
+            if (!input) return;
+            
+            const editButton = input.parentElement.querySelector('.edit-button');
+            if (!editButton) return;
+            
+            if (input.readOnly) {
+                // Enable editing
+                input.readOnly = false;
+                input.focus();
+                editButton.classList.add('editing');
+                editButton.title = 'Editing...';
+            } else {
+                // Disable editing
+                input.readOnly = true;
+                editButton.classList.remove('editing');
+                editButton.title = 'Edit';
+            }
+        }
+
+        // Generate Gmail token
+        async function generateGmailToken() {
+            if (!confirm('This will open a browser window for Gmail OAuth authentication. Make sure GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are set first. Continue?')) {
+                return;
+            }
+            
+            try {
+                showMessage('Starting Gmail token generation... Please check the console/terminal for OAuth flow.', 'info');
+                
+                const response = await fetch(`${API_BASE}/api/settings/gmail-token`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    showMessage('✅ Gmail token generation started! Check the console/terminal for OAuth flow. ⚠️ IMPORTANT: After the token is verified, please restart the application for changes to take effect.', 'success');
+                } else {
+                    showMessage('Failed to start Gmail token generation: ' + (data.error || 'Unknown error'), 'error');
+                }
+            } catch (error) {
+                console.error('Error generating Gmail token:', error);
+                showMessage('Error starting Gmail token generation. Please check if the backend server is running.', 'error');
+            }
+        }
+
+        // Show message in settings
+        function showMessage(message, type) {
+            const messageEl = document.getElementById('settingsMessage');
+            if (messageEl) {
+                messageEl.textContent = message;
+                messageEl.className = `settings-message settings-message-${type}`;
+                messageEl.style.display = 'block';
+                
+                // Show restart messages longer (15 seconds) since they're important
+                const displayTime = message.includes('restart') || message.includes('IMPORTANT') ? 15000 : 10000;
+                
+                setTimeout(() => {
+                    messageEl.style.display = 'none';
+                }, displayTime);
+            } else {
+                alert(message);
+            }
+        }
+
+        // Initialize settings when tab is opened
+        document.addEventListener('DOMContentLoaded', function() {
+            const settingsForm = document.getElementById('settingsForm');
+            if (settingsForm) {
+                settingsForm.addEventListener('submit', saveSettings);
+            }
+            
+            // Load settings when Settings tab is clicked
+            const settingsTab = document.querySelector('.tab-button[data-tab="settings"]');
+            if (settingsTab) {
+                settingsTab.addEventListener('click', function() {
+                    setTimeout(loadSettings, 100);
+                });
+            }
+            
+            // Also load settings if Settings tab is already active on page load
+            const settingsContent = document.getElementById('settings');
+            if (settingsContent && settingsContent.classList.contains('active')) {
+                setTimeout(loadSettings, 200);
+            }
+        });
+        
+        // Override switchTab to load settings when switching to settings tab
+        const originalSwitchTab = window.switchTab;
+        if (originalSwitchTab) {
+            window.switchTab = function(tabName) {
+                originalSwitchTab(tabName);
+                if (tabName === 'settings') {
+                    setTimeout(loadSettings, 100);
+                }
+            };
+        }
+        // ==================== END SETTINGS FUNCTIONALITY ====================
     </script>
 </body>
 </html>
