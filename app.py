@@ -726,14 +726,40 @@ def main():
         try:
             import webview
             
+            # Get screen dimensions for responsive window sizing
+            try:
+                import tkinter as tk
+                root = tk.Tk()
+                screen_width = root.winfo_screenwidth()
+                screen_height = root.winfo_screenheight()
+                root.destroy()
+                
+                # Use 90% of screen size, with minimum and maximum constraints
+                window_width = max(800, min(int(screen_width * 0.9), 1920))
+                window_height = max(600, min(int(screen_height * 0.9), 1080))
+                
+                # Center the window
+                x = (screen_width - window_width) // 2
+                y = (screen_height - window_height) // 2
+            except Exception:
+                # Fallback to default dimensions if tkinter is not available
+                window_width = 1400
+                window_height = 900
+                x = None
+                y = None
+            
             # Create the window - open the URL instead of local file
             # This goes through Flask server which serves login.html at root route
             window = webview.create_window(
                 'GPT Intermediary',
                 app_url,
-                width=1400,
-                height=900,
-                resizable=True
+                width=window_width,
+                height=window_height,
+                x=x,
+                y=y,
+                resizable=True,
+                min_size=(800, 600),  # Minimum window size
+                fullscreen=False  # Allow user to maximize manually
             )
             
             # Start the webview (this blocks until window is closed)

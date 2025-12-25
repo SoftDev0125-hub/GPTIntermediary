@@ -332,6 +332,230 @@
             margin: 0;
             user-select: none;
         }
+
+        /* Responsive Design - Adjust for different screen sizes */
+        @media (max-width: 600px) {
+            body {
+                padding: 10px;
+            }
+
+            .container {
+                max-width: 100%;
+                border-radius: 16px;
+            }
+
+            .header {
+                padding: 30px 20px;
+            }
+
+            .header h1 {
+                font-size: 24px;
+            }
+
+            .header p {
+                font-size: 13px;
+            }
+
+            .form-container {
+                padding: 30px 20px;
+            }
+
+            .tabs {
+                gap: 8px;
+                margin-bottom: 25px;
+            }
+
+            .tab {
+                padding: 10px;
+                font-size: 14px;
+            }
+
+            .form-group {
+                margin-bottom: 18px;
+            }
+
+            .form-group label {
+                font-size: 13px;
+                margin-bottom: 6px;
+            }
+
+            .form-group input {
+                padding: 10px 12px;
+                font-size: 14px;
+            }
+
+            .btn {
+                padding: 12px;
+                font-size: 15px;
+            }
+
+            .captcha-question {
+                font-size: 20px;
+                padding: 12px;
+            }
+
+            .message {
+                padding: 10px 12px;
+                font-size: 13px;
+            }
+
+            .footer {
+                padding: 15px;
+                font-size: 12px;
+            }
+        }
+
+        @media (max-width: 400px) {
+            body {
+                padding: 5px;
+            }
+
+            .container {
+                border-radius: 12px;
+            }
+
+            .header {
+                padding: 25px 15px;
+            }
+
+            .header h1 {
+                font-size: 22px;
+                margin-bottom: 8px;
+            }
+
+            .header p {
+                font-size: 12px;
+            }
+
+            .form-container {
+                padding: 25px 15px;
+            }
+
+            .tabs {
+                gap: 6px;
+                margin-bottom: 20px;
+            }
+
+            .tab {
+                padding: 8px 6px;
+                font-size: 13px;
+            }
+
+            .form-group {
+                margin-bottom: 15px;
+            }
+
+            .form-group label {
+                font-size: 12px;
+                margin-bottom: 5px;
+            }
+
+            .form-group input {
+                padding: 9px 10px;
+                font-size: 13px;
+            }
+
+            .password-input-wrapper input {
+                padding-right: 40px;
+            }
+
+            .btn {
+                padding: 11px;
+                font-size: 14px;
+            }
+
+            .captcha-question {
+                font-size: 18px;
+                padding: 10px;
+            }
+
+            .message {
+                padding: 9px 10px;
+                font-size: 12px;
+            }
+
+            .password-requirements .requirement {
+                font-size: 12px;
+                padding: 5px 0;
+            }
+
+            .remember-me label {
+                font-size: 13px;
+            }
+        }
+
+        @media (min-width: 601px) and (max-width: 900px) {
+            .container {
+                max-width: 500px;
+            }
+
+            .header {
+                padding: 35px 25px;
+            }
+
+            .form-container {
+                padding: 35px 25px;
+            }
+        }
+
+        @media (min-width: 901px) {
+            .container {
+                max-width: 480px;
+            }
+        }
+
+        /* Ensure proper scaling for very small windows (app mode) */
+        @media (max-height: 600px) {
+            body {
+                padding: 10px;
+                align-items: flex-start;
+                padding-top: 20px;
+            }
+
+            .header {
+                padding: 25px 20px;
+            }
+
+            .header h1 {
+                font-size: 22px;
+                margin-bottom: 5px;
+            }
+
+            .header p {
+                font-size: 12px;
+            }
+
+            .form-container {
+                padding: 25px 20px;
+            }
+
+            .tabs {
+                margin-bottom: 20px;
+            }
+
+            .form-group {
+                margin-bottom: 15px;
+            }
+
+            .footer {
+                padding: 15px;
+            }
+        }
+
+        /* Ensure container doesn't exceed viewport */
+        @media (max-width: 100vw) {
+            .container {
+                max-width: min(450px, calc(100vw - 40px));
+            }
+        }
+
+        @media (max-height: 100vh) {
+            body {
+                min-height: 100vh;
+                max-height: 100vh;
+                overflow-y: auto;
+            }
+        }
     </style>
 </head>
 <body>
