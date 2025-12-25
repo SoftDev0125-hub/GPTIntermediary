@@ -309,6 +309,29 @@
         @keyframes spin {
             to { transform: rotate(360deg); }
         }
+
+        .remember-me {
+            display: flex;
+            align-items: center;
+            margin-bottom: 20px;
+            gap: 8px;
+        }
+
+        .remember-me input[type="checkbox"] {
+            width: 18px;
+            height: 18px;
+            cursor: pointer;
+            accent-color: #667eea;
+        }
+
+        .remember-me label {
+            color: #e0e0e0;
+            font-size: 14px;
+            font-weight: 400;
+            cursor: pointer;
+            margin: 0;
+            user-select: none;
+        }
     </style>
 </head>
 <body>
@@ -340,6 +363,10 @@
                             <span class="eye-icon">👁️</span>
                         </button>
                     </div>
+                </div>
+                <div class="remember-me">
+                    <input type="checkbox" id="rememberMe" name="rememberMe">
+                    <label for="rememberMe">Remember me</label>
                 </div>
                 <button type="submit" class="btn" id="loginBtn">
                     Sign In
@@ -538,13 +565,84 @@
                         localStorage.setItem('user_name', data.user.name);
                     }
                     
-                    // Save login credentials to sessionStorage for next time
-                    sessionStorage.setItem('saved_login_email', email);
-                    sessionStorage.setItem('saved_login_password', password);
+                    // Handle "Remember me" checkbox
+                    const rememberMe = document.getElementById('rememberMe').checked;
+                    // Always save the checkbox state
+                    localStorage.setItem('remember_me_checked', rememberMe ? 'true' : 'false');
+                    console.log('Saving login state:', { 
+                        rememberMe, 
+                        email: email ? 'provided' : 'none',
+                        emailValue: email 
+                    });
+                    
+                    if (rememberMe) {
+                        // Save login credentials to localStorage (works in browser)
+                        localStorage.setItem('saved_login_email', email);
+                        localStorage.setItem('saved_login_password', password);
+                        localStorage.setItem('remember_me', 'true');
+                        console.log('✅ Saved credentials to localStorage:', {
+                            email: email,
+                            password: password ? '***' : 'none',
+                            rememberMeChecked: 'true'
+                        });
+                        
+                        // Also save to backend API (fallback for app mode when localStorage doesn't persist)
+                        try {
+                            await fetch(`${API_BASE}/api/auth/save-remember-me`, {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json',
+                                },
+                                body: JSON.stringify({
+                                    remember_me_checked: true,
+                                    email: email,
+                                    password: password
+                                })
+                            });
+                            console.log('✅ Saved credentials to backend API (app mode fallback)');
+                        } catch (error) {
+                            console.warn('⚠️ Could not save to backend API:', error);
+                        }
+                    } else {
+                        // Clear saved credentials if checkbox is unchecked
+                        localStorage.removeItem('saved_login_email');
+                        localStorage.removeItem('saved_login_password');
+                        localStorage.removeItem('remember_me');
+                        console.log('Cleared credentials from localStorage (checkbox unchecked)');
+                        
+                        // Also clear from backend API
+                        try {
+                            await fetch(`${API_BASE}/api/auth/clear-remember-me`, {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json',
+                                }
+                            });
+                            console.log('✅ Cleared credentials from backend API');
+                        } catch (error) {
+                            console.warn('⚠️ Could not clear from backend API:', error);
+                        }
+                    }
                     
                     // Redirect to main app
+                    // Always use Flask server URL (port 5000) for chat_interface.html
                     setTimeout(() => {
-                        window.location.href = '/chat_interface.html';
+                        // Check if we're already on the Flask server
+                        const isFlaskServer = window.location.hostname === 'localhost' && 
+                                            (window.location.port === '5000' || window.location.port === '');
+                        
+                        let redirectUrl;
+                        if (isFlaskServer) {
+                            // Use relative path if already on Flask server
+                            redirectUrl = '/chat_interface.html';
+                        } else {
+                            // Use absolute URL to Flask server
+                            redirectUrl = 'http://localhost:5000/chat_interface.html';
+                        }
+                        
+                        console.log('✅ Login successful! Redirecting to:', redirectUrl);
+                        console.log('Current location:', window.location.href);
+                        window.location.href = redirectUrl;
                     }, 1000);
                 } else {
                     // Extract error message from detail or message field
@@ -740,8 +838,146 @@
                 }
         }
 
+        // Function to load saved credentials
+        async function loadSavedCredentials() {
+            try {
+                // First, try to load from localStorage (works in browser)
+                let rememberMeChecked = localStorage.getItem('remember_me_checked') === 'true';
+                let savedEmail = localStorage.getItem('saved_login_email');
+                let savedPassword = localStorage.getItem('saved_login_password');
+                
+                console.log('🔍 Loading saved state from localStorage:', {
+                    rememberMeChecked: rememberMeChecked,
+                    savedEmail: savedEmail ? 'exists (' + savedEmail + ')' : 'none',
+                    savedPassword: savedPassword ? 'exists (***)' : 'none'
+                });
+                
+                // If localStorage is empty but we're in app mode, try backend API (fallback)
+                if (!savedEmail && !savedPassword) {
+                    console.log('📡 localStorage empty, trying backend API (app mode fallback)...');
+                    try {
+                        const response = await fetch(`${API_BASE}/api/auth/load-remember-me`);
+                        const data = await response.json();
+                        
+                        if (data.success && data.data) {
+                            const backendData = data.data;
+                            rememberMeChecked = backendData.remember_me_checked || false;
+                            savedEmail = backendData.email || '';
+                            savedPassword = backendData.password || '';
+                            
+                            console.log('✅ Loaded from backend API:', {
+                                rememberMeChecked: rememberMeChecked,
+                                savedEmail: savedEmail ? 'exists (' + savedEmail + ')' : 'none',
+                                savedPassword: savedPassword ? 'exists (***)' : 'none'
+                            });
+                            
+                            // Also populate localStorage for consistency
+                            if (rememberMeChecked && savedEmail) {
+                                localStorage.setItem('remember_me_checked', 'true');
+                                localStorage.setItem('saved_login_email', savedEmail);
+                                localStorage.setItem('remember_me', 'true');
+                                if (savedPassword) {
+                                    localStorage.setItem('saved_login_password', savedPassword);
+                                }
+                            }
+                        }
+                    } catch (error) {
+                        console.warn('⚠️ Could not load from backend API:', error);
+                    }
+                }
+                
+                // Restore checkbox state
+                const rememberMeCheckbox = document.getElementById('rememberMe');
+                if (rememberMeCheckbox) {
+                    rememberMeCheckbox.checked = rememberMeChecked;
+                    console.log('✅ Checkbox state restored:', rememberMeChecked);
+                } else {
+                    console.error('❌ Checkbox element not found!');
+                }
+                
+                // Load credentials if checkbox was checked AND credentials exist
+                if (rememberMeChecked) {
+                    if (savedEmail) {
+                        const emailInput = document.getElementById('loginEmail');
+                        if (emailInput) {
+                            emailInput.value = savedEmail;
+                            console.log('✅ Loaded saved email into input field:', savedEmail);
+                        } else {
+                            console.error('❌ Email input element not found!');
+                        }
+                    } else {
+                        console.log('⚠️ Checkbox checked but no saved email found');
+                    }
+                    
+                    if (savedPassword) {
+                        const passwordInput = document.getElementById('loginPassword');
+                        if (passwordInput) {
+                            passwordInput.value = savedPassword;
+                            console.log('✅ Loaded saved password into input field');
+                        } else {
+                            console.error('❌ Password input element not found!');
+                        }
+                    } else {
+                        console.log('⚠️ Checkbox checked but no saved password found');
+                    }
+                } else {
+                    console.log('ℹ️ Checkbox was not checked, not loading credentials');
+                }
+            } catch (error) {
+                console.error('❌ Error loading saved credentials:', error);
+            }
+        }
+        
         // Check if already logged in and load saved login credentials
         window.addEventListener('DOMContentLoaded', () => {
+            console.log('🚀 DOMContentLoaded event fired');
+            
+            // Use a small delay to ensure all elements are ready
+            setTimeout(() => {
+                // FIRST: Load saved credentials (this must happen before token check)
+                console.log('📥 Starting to load saved credentials...');
+                loadSavedCredentials();
+            }, 100);
+            
+            // Set up checkbox change listener
+            const rememberMeCheckbox = document.getElementById('rememberMe');
+            if (rememberMeCheckbox) {
+                rememberMeCheckbox.addEventListener('change', async function() {
+                    console.log('🔄 Checkbox changed to:', this.checked);
+                    localStorage.setItem('remember_me_checked', this.checked ? 'true' : 'false');
+                    
+                    // If user unchecks the checkbox, clear saved credentials
+                    if (!this.checked) {
+                        localStorage.removeItem('saved_login_email');
+                        localStorage.removeItem('saved_login_password');
+                        localStorage.removeItem('remember_me');
+                        console.log('🗑️ Cleared saved credentials from localStorage');
+                        
+                        // Also clear from backend API
+                        try {
+                            await fetch(`${API_BASE}/api/auth/clear-remember-me`, {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json',
+                                }
+                            });
+                            console.log('✅ Cleared credentials from backend API');
+                        } catch (error) {
+                            console.warn('⚠️ Could not clear from backend API:', error);
+                        }
+                        
+                        // Clear the input fields
+                        const emailInput = document.getElementById('loginEmail');
+                        const passwordInput = document.getElementById('loginPassword');
+                        if (emailInput) emailInput.value = '';
+                        if (passwordInput) passwordInput.value = '';
+                    }
+                });
+            } else {
+                console.error('❌ Checkbox element not found for event listener!');
+            }
+            
+            // THEN: Check if already logged in with valid token
             const token = localStorage.getItem('auth_token');
             if (token) {
                 // Verify token is still valid
@@ -751,33 +987,40 @@
                     }
                 }).then(response => {
                     if (response.ok) {
-                        window.location.href = '/chat_interface.html';
+                        // Check if we're already on the Flask server
+                        const isFlaskServer = window.location.hostname === 'localhost' && 
+                                            (window.location.port === '5000' || window.location.port === '');
+                        
+                        let redirectUrl;
+                        if (isFlaskServer) {
+                            // Use relative path if already on Flask server
+                            redirectUrl = '/chat_interface.html';
+                        } else {
+                            // Use absolute URL to Flask server
+                            redirectUrl = 'http://localhost:5000/chat_interface.html';
+                        }
+                        
+                        console.log('✅ Token valid! Redirecting to:', redirectUrl);
+                        console.log('Current location:', window.location.href);
+                        window.location.href = redirectUrl;
                     } else {
-                        // Token invalid, clear storage
-                        localStorage.clear();
+                        // Token invalid, clear only auth-related items (preserve saved credentials)
+                        localStorage.removeItem('auth_token');
+                        localStorage.removeItem('user_id');
+                        localStorage.removeItem('user_email');
+                        localStorage.removeItem('user_name');
+                        console.log('Token invalid, cleared auth tokens but preserved credentials');
                     }
                 }).catch(() => {
-                    // Server not responding, stay on login page
-                    localStorage.clear();
+                    // Server not responding, clear only auth-related items (preserve saved credentials)
+                    localStorage.removeItem('auth_token');
+                    localStorage.removeItem('user_id');
+                    localStorage.removeItem('user_email');
+                    localStorage.removeItem('user_name');
+                    console.log('Server error, cleared auth tokens but preserved credentials');
                 });
-            }
-            
-            // Load saved login credentials from sessionStorage
-            const savedEmail = sessionStorage.getItem('saved_login_email');
-            const savedPassword = sessionStorage.getItem('saved_login_password');
-            
-            if (savedEmail) {
-                const emailInput = document.getElementById('loginEmail');
-                if (emailInput) {
-                    emailInput.value = savedEmail;
-                }
-            }
-            
-            if (savedPassword) {
-                const passwordInput = document.getElementById('loginPassword');
-                if (passwordInput) {
-                    passwordInput.value = savedPassword;
-                }
+            } else {
+                console.log('No token found, showing login form');
             }
         });
     </script>

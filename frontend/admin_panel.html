@@ -403,7 +403,29 @@
 
         function logout() {
             if (confirm('Are you sure you want to logout?')) {
+                // Preserve "Remember me" settings
+                const rememberMeChecked = localStorage.getItem('remember_me_checked');
+                const savedEmail = localStorage.getItem('saved_login_email');
+                const savedPassword = localStorage.getItem('saved_login_password');
+                const rememberMe = localStorage.getItem('remember_me');
+                
+                // Clear all localStorage
                 localStorage.clear();
+                
+                // Restore "Remember me" settings if they existed
+                if (rememberMeChecked) {
+                    localStorage.setItem('remember_me_checked', rememberMeChecked);
+                }
+                if (savedEmail) {
+                    localStorage.setItem('saved_login_email', savedEmail);
+                }
+                if (savedPassword) {
+                    localStorage.setItem('saved_login_password', savedPassword);
+                }
+                if (rememberMe) {
+                    localStorage.setItem('remember_me', rememberMe);
+                }
+                
                 window.location.href = '/';
             }
         }

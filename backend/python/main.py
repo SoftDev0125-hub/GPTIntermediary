@@ -611,6 +611,112 @@ async def login_user(request: LoginRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"Login failed: {str(e)}")
 
 
+@app.post("/api/auth/save-remember-me")
+async def save_remember_me(request: dict):
+    """
+    Save "Remember me" credentials to a file (for app mode when localStorage doesn't persist)
+    This is a fallback mechanism for pywebview apps
+    """
+    try:
+        import json
+        from pathlib import Path
+        
+        # Create a secure storage directory
+        storage_dir = Path.home() / ".gpt_intermediary"
+        storage_dir.mkdir(exist_ok=True)
+        storage_file = storage_dir / "remember_me.json"
+        
+        # Save the data (in production, this should be encrypted)
+        data = {
+            "remember_me_checked": request.get("remember_me_checked", False),
+            "email": request.get("email", ""),
+            "password": request.get("password", ""),  # In production, encrypt this
+            "saved_at": datetime.now().isoformat()
+        }
+        
+        with open(storage_file, 'w', encoding='utf-8') as f:
+            json.dump(data, f)
+        
+        logger.info(f"Saved remember me credentials to {storage_file}")
+        
+        return {
+            "success": True,
+            "message": "Credentials saved successfully"
+        }
+    except Exception as e:
+        logger.error(f"Error saving remember me credentials: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to save credentials: {str(e)}")
+
+
+@app.get("/api/auth/load-remember-me")
+async def load_remember_me():
+    """
+    Load "Remember me" credentials from file (for app mode when localStorage doesn't persist)
+    This is a fallback mechanism for pywebview apps
+    """
+    try:
+        import json
+        from pathlib import Path
+        
+        storage_file = Path.home() / ".gpt_intermediary" / "remember_me.json"
+        
+        if not storage_file.exists():
+            return {
+                "success": True,
+                "data": {
+                    "remember_me_checked": False,
+                    "email": "",
+                    "password": ""
+                }
+            }
+        
+        with open(storage_file, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        
+        return {
+            "success": True,
+            "data": {
+                "remember_me_checked": data.get("remember_me_checked", False),
+                "email": data.get("email", ""),
+                "password": data.get("password", "")
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error loading remember me credentials: {e}")
+        # Return empty data on error
+        return {
+            "success": True,
+            "data": {
+                "remember_me_checked": False,
+                "email": "",
+                "password": ""
+            }
+        }
+
+
+@app.post("/api/auth/clear-remember-me")
+async def clear_remember_me():
+    """
+    Clear "Remember me" credentials from file
+    """
+    try:
+        from pathlib import Path
+        
+        storage_file = Path.home() / ".gpt_intermediary" / "remember_me.json"
+        
+        if storage_file.exists():
+            storage_file.unlink()
+            logger.info(f"Cleared remember me credentials from {storage_file}")
+        
+        return {
+            "success": True,
+            "message": "Credentials cleared successfully"
+        }
+    except Exception as e:
+        logger.error(f"Error clearing remember me credentials: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to clear credentials: {str(e)}")
+
+
 # ==================== END AUTHENTICATION ENDPOINTS ====================
 
 
