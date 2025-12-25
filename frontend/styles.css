@@ -351,6 +351,12 @@ body::before {
 
 .message-content ol {
     list-style-type: decimal;
+    counter-reset: item;
+}
+
+.message-content ol li {
+    display: list-item;
+    list-style-type: decimal;
 }
 
 .message-content code {
