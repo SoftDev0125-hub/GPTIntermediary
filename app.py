@@ -734,17 +734,24 @@ def main():
                 screen_height = root.winfo_screenheight()
                 root.destroy()
                 
-                # Use 90% of screen size, with minimum and maximum constraints
-                window_width = max(800, min(int(screen_width * 0.9), 1920))
-                window_height = max(600, min(int(screen_height * 0.9), 1080))
+                # Use a more reasonable default size (70% of screen or fixed size, whichever is smaller)
+                # Default to 1200x800, but scale down if screen is smaller
+                default_width = 1200
+                default_height = 800
+                window_width = min(default_width, int(screen_width * 0.7))
+                window_height = min(default_height, int(screen_height * 0.7))
+                
+                # Ensure minimum size
+                window_width = max(800, window_width)
+                window_height = max(600, window_height)
                 
                 # Center the window
                 x = (screen_width - window_width) // 2
                 y = (screen_height - window_height) // 2
             except Exception:
                 # Fallback to default dimensions if tkinter is not available
-                window_width = 1400
-                window_height = 900
+                window_width = 1200
+                window_height = 800
                 x = None
                 y = None
             

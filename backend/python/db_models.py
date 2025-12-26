@@ -17,9 +17,10 @@ class User(Base):
     email = Column(String(100), unique=True, index=True, nullable=False)  # Existing column
     password = Column(String(255), nullable=False)  # Existing column (stores hashed password)
     create_at = Column(DateTime, nullable=True, server_default=func.now())  # Existing column (note: create_at not created_at)
+    user_classification_id = Column(Integer, nullable=True, default=0)  # User classification (1 = admin, 0 = regular user)
 
     def __repr__(self):
-        return f"<User(id={self.id}, name='{self.name}', email='{self.email}')>"
+        return f"<User(id={self.id}, name='{self.name}', email='{self.email}', user_classification_id={self.user_classification_id})>"
 
 
 class Conversation(Base):

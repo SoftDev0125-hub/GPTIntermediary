@@ -4345,6 +4345,220 @@ body::before {
 
 /* ==================== END SETTINGS TAB STYLES ==================== */
 
+/* ==================== USER MANAGEMENT TAB STYLES ==================== */
+.users-management-container {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    padding: 24px;
+    background: rgba(15, 23, 42, 0.3);
+    overflow-y: auto;
+}
+
+.users-header-actions {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+}
+
+.users-search-container {
+    flex: 1;
+    min-width: 250px;
+    max-width: 400px;
+}
+
+.users-search-input {
+    width: 100%;
+    padding: 10px 16px;
+    background: rgba(15, 23, 42, 0.6);
+    border: 1px solid rgba(99, 102, 241, 0.3);
+    border-radius: 8px;
+    color: #e2e8f0;
+    font-size: 14px;
+    font-family: inherit;
+    transition: all 0.2s;
+}
+
+.users-search-input:focus {
+    outline: none;
+    border-color: rgba(99, 102, 241, 0.6);
+    background: rgba(15, 23, 42, 0.8);
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+}
+
+.users-search-input::placeholder {
+    color: #64748b;
+}
+
+.users-table-container {
+    flex: 1;
+    overflow-x: auto;
+    background: rgba(30, 41, 59, 0.4);
+    border-radius: 12px;
+    border: 1px solid rgba(99, 102, 241, 0.2);
+    backdrop-filter: blur(10px);
+}
+
+.users-management-table {
+    width: 100%;
+    border-collapse: collapse;
+    color: #e2e8f0;
+}
+
+.users-management-table thead {
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.2) 0%, rgba(168, 85, 247, 0.2) 100%);
+    border-bottom: 2px solid rgba(99, 102, 241, 0.3);
+}
+
+.users-management-table th {
+    padding: 16px;
+    text-align: left;
+    font-weight: 600;
+    font-size: 14px;
+    color: #c7d2fe;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.users-management-table td {
+    padding: 16px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    font-size: 14px;
+}
+
+.users-management-table tbody tr {
+    transition: background 0.2s ease;
+}
+
+.users-management-table tbody tr:hover {
+    background: rgba(99, 102, 241, 0.1);
+}
+
+.users-management-table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+.user-classification-input {
+    width: 80px;
+    padding: 6px 10px;
+    background: rgba(15, 23, 42, 0.6);
+    border: 1px solid rgba(99, 102, 241, 0.3);
+    border-radius: 6px;
+    color: #e2e8f0;
+    font-size: 14px;
+    font-weight: 500;
+    text-align: center;
+    transition: all 0.2s;
+}
+
+.user-classification-input:focus {
+    outline: none;
+    border-color: rgba(99, 102, 241, 0.6);
+    background: rgba(15, 23, 42, 0.8);
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+}
+
+.user-classification-input:read-only {
+    background: rgba(15, 23, 42, 0.4);
+    cursor: default;
+    color: #94a3b8;
+}
+
+.user-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.btn-update {
+    padding: 6px 12px;
+    background: linear-gradient(135deg, rgba(16, 185, 129, 0.5) 0%, rgba(5, 150, 105, 0.5) 100%);
+    border: 1px solid rgba(16, 185, 129, 0.6);
+    border-radius: 6px;
+    color: #ffffff;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.btn-update:hover {
+    background: linear-gradient(135deg, rgba(16, 185, 129, 0.7) 0%, rgba(5, 150, 105, 0.7) 100%);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
+}
+
+.btn-delete {
+    padding: 6px 12px;
+    background: linear-gradient(135deg, rgba(239, 68, 68, 0.5) 0%, rgba(220, 38, 38, 0.5) 100%);
+    border: 1px solid rgba(239, 68, 68, 0.6);
+    border-radius: 6px;
+    color: #ffffff;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.btn-delete:hover {
+    background: linear-gradient(135deg, rgba(239, 68, 68, 0.7) 0%, rgba(220, 38, 38, 0.7) 100%);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(239, 68, 68, 0.4);
+}
+
+.btn-update:disabled,
+.btn-delete:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+}
+
+.user-field-readonly {
+    color: #94a3b8;
+    font-weight: 500;
+}
+
+/* Responsive adjustments for user management */
+@media (max-width: 768px) {
+    .users-management-container {
+        padding: 16px;
+    }
+
+    .users-header-actions {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .users-search-container {
+        max-width: 100%;
+        width: 100%;
+    }
+
+    .users-management-table {
+        font-size: 12px;
+    }
+
+    .users-management-table th,
+    .users-management-table td {
+        padding: 12px 8px;
+    }
+
+    .user-actions {
+        flex-direction: column;
+        gap: 6px;
+    }
+
+    .btn-update,
+    .btn-delete {
+        width: 100%;
+        padding: 8px;
+    }
+}
+
+/* ==================== END USER MANAGEMENT TAB STYLES ==================== */
+
 /* ==================== RESPONSIVE DESIGN ==================== */
 
 /* Tablet and smaller screens */

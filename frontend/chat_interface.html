@@ -33,6 +33,7 @@
             <button class="tab-button" data-tab="whatsapp">WhatsApp</button>
             <button class="tab-button" data-tab="slack">Slack</button>
             <button class="tab-button" data-tab="settings">Settings</button>
+            <button class="tab-button" data-tab="users" id="usersTabButton" style="display: none;">Users</button>
         </div>
 
         <div id="chat" class="tab-content active">
@@ -911,6 +912,54 @@
                         <button type="submit" class="settings-save-button">💾 Save to .env</button>
                     </div>
                 </form>
+            </div>
+        </div>
+
+        <!-- User Management Tab -->
+        <div id="users" class="tab-content">
+            <div class="header">
+                <div class="header-content">
+                    <h1>👥 User Management</h1>
+                    <div class="status-badge">Admin Only</div>
+                </div>
+            </div>
+
+            <div class="users-management-container">
+                <div class="users-header-actions">
+                    <div class="users-search-container">
+                        <input 
+                            type="text" 
+                            id="usersSearchInput" 
+                            class="users-search-input" 
+                            placeholder="🔍 Search by name or email..."
+                            oninput="filterUsers()"
+                        />
+                    </div>
+                    <button class="btn" onclick="loadUsers()">🔄 Refresh</button>
+                </div>
+
+                <div id="usersMessage" class="message" style="display: none;"></div>
+
+                <div class="users-table-container">
+                    <table class="users-management-table">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Name</th>
+                                <th>Email</th>
+                                <th>Classification ID</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="usersTableBody">
+                            <tr>
+                                <td colspan="5" style="text-align: center; padding: 40px; color: #94a3b8;">
+                                    Loading users...
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
             </div>
         </div>
 
@@ -9828,10 +9877,299 @@ Note: User tokens are for personal use. For bots, use Bot Token instead.`
                 originalSwitchTab(tabName);
                 if (tabName === 'settings') {
                     setTimeout(loadSettings, 100);
+                } else if (tabName === 'users') {
+                    setTimeout(loadUsers, 100);
                 }
             };
         }
         // ==================== END SETTINGS FUNCTIONALITY ====================
+
+        // ==================== USER MANAGEMENT FUNCTIONALITY ====================
+        // Store all users for filtering
+        let allUsers = [];
+
+        // Check user classification and show/hide users tab
+        function checkUserClassification() {
+            const userClassificationId = parseInt(localStorage.getItem('user_classification_id') || '0');
+            const usersTabButton = document.getElementById('usersTabButton');
+            
+            if (usersTabButton) {
+                if (userClassificationId === 1) {
+                    usersTabButton.style.display = 'flex';
+                } else {
+                    usersTabButton.style.display = 'none';
+                    // If users tab is active, switch to chat tab
+                    const usersTab = document.getElementById('users');
+                    if (usersTab && usersTab.classList.contains('active')) {
+                        switchTab('chat');
+                    }
+                }
+            }
+        }
+
+        // Load all users
+        async function loadUsers() {
+            const token = localStorage.getItem('auth_token');
+            if (!token) {
+                showUsersMessage('Authentication required. Please login again.', 'error');
+                return;
+            }
+
+            const tbody = document.getElementById('usersTableBody');
+            if (!tbody) return;
+
+            tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 40px; color: #94a3b8;">Loading users...</td></tr>';
+
+            try {
+                const response = await fetch(`${API_BASE}/api/users/all`, {
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
+
+                const data = await response.json();
+
+                if (response.ok && data.success) {
+                    // Store all users for filtering
+                    allUsers = data.users;
+                    // Display users (will be filtered by search if active)
+                    filterUsers();
+                    showUsersMessage('Users loaded successfully', 'success');
+                } else {
+                    throw new Error(data.detail || 'Failed to load users');
+                }
+            } catch (error) {
+                console.error('Error loading users:', error);
+                tbody.innerHTML = `<tr><td colspan="5" style="text-align: center; padding: 40px; color: #ef4444;">Error: ${error.message}</td></tr>`;
+                showUsersMessage(`Failed to load users: ${error.message}`, 'error');
+            }
+        }
+
+        // Filter users based on search query
+        function filterUsers() {
+            const searchInput = document.getElementById('usersSearchInput');
+            const searchQuery = searchInput ? searchInput.value.toLowerCase().trim() : '';
+            
+            let filteredUsers = allUsers;
+            
+            if (searchQuery) {
+                filteredUsers = allUsers.filter(user => {
+                    const name = (user.name || '').toLowerCase();
+                    const email = (user.email || '').toLowerCase();
+                    return name.includes(searchQuery) || email.includes(searchQuery);
+                });
+            }
+            
+            displayUsers(filteredUsers, searchQuery);
+        }
+
+        // Display users in table
+        function displayUsers(users, searchQuery = '') {
+            const tbody = document.getElementById('usersTableBody');
+            if (!tbody) return;
+
+            if (users.length === 0) {
+                const message = searchQuery 
+                    ? `No users found matching "${searchQuery}"`
+                    : 'No users found';
+                tbody.innerHTML = `<tr><td colspan="5" style="text-align: center; padding: 40px; color: #94a3b8;">${message}</td></tr>`;
+                return;
+            }
+
+            tbody.innerHTML = users.map(user => `
+                <tr>
+                    <td class="user-field-readonly">#${user.id}</td>
+                    <td class="user-field-readonly">${escapeHtml(user.name)}</td>
+                    <td class="user-field-readonly">${escapeHtml(user.email)}</td>
+                    <td>
+                        <input 
+                            type="number" 
+                            class="user-classification-input" 
+                            value="${user.user_classification_id || 0}" 
+                            data-user-id="${user.id}"
+                            min="0"
+                            id="classification-${user.id}"
+                        />
+                    </td>
+                    <td>
+                        <div class="user-actions">
+                            <button 
+                                class="btn-update" 
+                                onclick="updateUserClassification(${user.id})"
+                                id="update-btn-${user.id}"
+                            >
+                                Update
+                            </button>
+                            <button 
+                                class="btn-delete" 
+                                onclick="deleteUser(${user.id}, '${escapeHtml(user.email)}')"
+                                id="delete-btn-${user.id}"
+                            >
+                                Delete
+                            </button>
+                        </div>
+                    </td>
+                </tr>
+            `).join('');
+        }
+
+        // Update user classification
+        async function updateUserClassification(userId) {
+            const token = localStorage.getItem('auth_token');
+            if (!token) {
+                showUsersMessage('Authentication required. Please login again.', 'error');
+                return;
+            }
+
+            const input = document.getElementById(`classification-${userId}`);
+            const updateBtn = document.getElementById(`update-btn-${userId}`);
+            
+            if (!input || !updateBtn) return;
+
+            const newClassificationId = parseInt(input.value);
+            if (isNaN(newClassificationId) || newClassificationId < 0) {
+                showUsersMessage('Please enter a valid classification ID (0 or greater)', 'error');
+                return;
+            }
+
+            updateBtn.disabled = true;
+            updateBtn.textContent = 'Updating...';
+
+            try {
+                const response = await fetch(`${API_BASE}/api/users/${userId}/classification`, {
+                    method: 'PUT',
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        user_classification_id: newClassificationId
+                    })
+                });
+
+                const data = await response.json();
+
+                if (response.ok && data.success) {
+                    showUsersMessage(`User classification updated successfully`, 'success');
+                    // Reload users to refresh the table (this will preserve search filter)
+                    setTimeout(async () => {
+                        await loadUsers();
+                        // Restore search filter after reload
+                        const searchInput = document.getElementById('usersSearchInput');
+                        if (searchInput && searchInput.value) {
+                            filterUsers();
+                        }
+                    }, 500);
+                } else {
+                    throw new Error(data.detail || 'Failed to update user classification');
+                }
+            } catch (error) {
+                console.error('Error updating user classification:', error);
+                showUsersMessage(`Failed to update classification: ${error.message}`, 'error');
+                // Reload to get correct value
+                loadUsers();
+            } finally {
+                updateBtn.disabled = false;
+                updateBtn.textContent = 'Update';
+            }
+        }
+
+        // Delete user
+        async function deleteUser(userId, userEmail) {
+            if (!confirm(`Are you sure you want to delete user "${userEmail}"?\n\nThis action cannot be undone!`)) {
+                return;
+            }
+
+            const token = localStorage.getItem('auth_token');
+            if (!token) {
+                showUsersMessage('Authentication required. Please login again.', 'error');
+                return;
+            }
+
+            const deleteBtn = document.getElementById(`delete-btn-${userId}`);
+            if (deleteBtn) {
+                deleteBtn.disabled = true;
+                deleteBtn.textContent = 'Deleting...';
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/api/users/${userId}`, {
+                    method: 'DELETE',
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
+
+                const data = await response.json();
+
+                if (response.ok && data.success) {
+                    showUsersMessage(`User "${userEmail}" deleted successfully`, 'success');
+                    // Reload users to refresh the table (this will preserve search filter)
+                    setTimeout(async () => {
+                        await loadUsers();
+                        // Restore search filter after reload
+                        const searchInput = document.getElementById('usersSearchInput');
+                        if (searchInput && searchInput.value) {
+                            filterUsers();
+                        }
+                    }, 500);
+                } else {
+                    throw new Error(data.detail || 'Failed to delete user');
+                }
+            } catch (error) {
+                console.error('Error deleting user:', error);
+                showUsersMessage(`Failed to delete user: ${error.message}`, 'error');
+            } finally {
+                if (deleteBtn) {
+                    deleteBtn.disabled = false;
+                    deleteBtn.textContent = 'Delete';
+                }
+            }
+        }
+
+        // Show message in users tab
+        function showUsersMessage(message, type) {
+            const messageEl = document.getElementById('usersMessage');
+            if (!messageEl) return;
+
+            messageEl.textContent = message;
+            messageEl.className = `message ${type} show`;
+            messageEl.style.display = 'block';
+
+            setTimeout(() => {
+                messageEl.style.display = 'none';
+                messageEl.className = 'message';
+            }, 5000);
+        }
+
+        // Escape HTML to prevent XSS
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Initialize user management on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            // Check user classification and show/hide tab
+            checkUserClassification();
+
+            // Load users when Users tab is clicked
+            const usersTab = document.querySelector('.tab-button[data-tab="users"]');
+            if (usersTab) {
+                usersTab.addEventListener('click', function() {
+                    setTimeout(loadUsers, 100);
+                });
+            }
+
+            // Also load users if Users tab is already active on page load
+            const usersContent = document.getElementById('users');
+            if (usersContent && usersContent.classList.contains('active')) {
+                setTimeout(loadUsers, 200);
+            }
+        });
+
+        // ==================== END USER MANAGEMENT FUNCTIONALITY ====================
     </script>
 </body>
 </html>

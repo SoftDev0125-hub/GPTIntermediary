@@ -600,7 +600,8 @@ async def login_user(request: LoginRequest, db: Session = Depends(get_db)):
             "user": {
                 "id": user.id,
                 "email": user.email,
-                "name": user.name
+                "name": user.name,
+                "user_classification_id": user.user_classification_id if hasattr(user, 'user_classification_id') else 0
             }
         }
         
@@ -2477,6 +2478,204 @@ async def generate_gmail_token(background_tasks: BackgroundTasks):
 
 
 # ==================== END SETTINGS/ENV MANAGEMENT ENDPOINTS ====================
+
+# ==================== USER MANAGEMENT ENDPOINTS ====================
+
+class UpdateUserClassificationRequest(BaseModel):
+    """Request model for updating user classification"""
+    user_classification_id: int
+
+class DeleteUserRequest(BaseModel):
+    """Request model for deleting a user"""
+    user_id: int
+
+@app.get("/api/users/all")
+async def get_all_users(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: Session = Depends(get_db)
+):
+    """
+    Get all users in the database
+    Only accessible to users with user_classification_id = 1
+    """
+    if not DATABASE_AVAILABLE or not User or not AUTH_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Service not available")
+    
+    try:
+        # Verify token and get user
+        token = credentials.credentials
+        user_id = extract_user_id_from_token(token)
+        
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        
+        # Get current user and check classification
+        current_user = db.query(User).filter(User.id == user_id).first()
+        if not current_user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # Check if user has admin privileges (user_classification_id = 1)
+        user_classification_id = getattr(current_user, 'user_classification_id', 0) or 0
+        if user_classification_id != 1:
+            raise HTTPException(status_code=403, detail="Access denied. Admin privileges required.")
+        
+        # Get all users
+        users = db.query(User).all()
+        
+        # Return user data (excluding passwords)
+        users_data = []
+        for user in users:
+            users_data.append({
+                "id": user.id,
+                "name": user.name,
+                "email": user.email,
+                "user_classification_id": getattr(user, 'user_classification_id', 0) or 0,
+                "create_at": user.create_at.isoformat() if user.create_at else None
+            })
+        
+        logger.info(f"User {current_user.email} retrieved all users list")
+        
+        return {
+            "success": True,
+            "users": users_data
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting users: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve users: {str(e)}")
+
+
+@app.put("/api/users/{user_id}/classification")
+async def update_user_classification(
+    user_id: int,
+    request: UpdateUserClassificationRequest,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: Session = Depends(get_db)
+):
+    """
+    Update a user's classification_id
+    Only accessible to users with user_classification_id = 1
+    """
+    if not DATABASE_AVAILABLE or not User or not AUTH_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Service not available")
+    
+    try:
+        # Verify token and get user
+        token = credentials.credentials
+        current_user_id = extract_user_id_from_token(token)
+        
+        if not current_user_id:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        
+        # Get current user and check classification
+        current_user = db.query(User).filter(User.id == current_user_id).first()
+        if not current_user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # Check if user has admin privileges (user_classification_id = 1)
+        user_classification_id = getattr(current_user, 'user_classification_id', 0) or 0
+        if user_classification_id != 1:
+            raise HTTPException(status_code=403, detail="Access denied. Admin privileges required.")
+        
+        # Get target user
+        target_user = db.query(User).filter(User.id == user_id).first()
+        if not target_user:
+            raise HTTPException(status_code=404, detail="Target user not found")
+        
+        # Prevent user from changing their own classification
+        if target_user.id == current_user.id:
+            raise HTTPException(status_code=400, detail="You cannot change your own classification")
+        
+        # Update classification
+        target_user.user_classification_id = request.user_classification_id
+        db.commit()
+        db.refresh(target_user)
+        
+        logger.info(f"User {current_user.email} updated classification for user {target_user.email} to {request.user_classification_id}")
+        
+        return {
+            "success": True,
+            "message": f"User classification updated successfully",
+            "user": {
+                "id": target_user.id,
+                "email": target_user.email,
+                "name": target_user.name,
+                "user_classification_id": target_user.user_classification_id
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error updating user classification: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to update user classification: {str(e)}")
+
+
+@app.delete("/api/users/{user_id}")
+async def delete_user(
+    user_id: int,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: Session = Depends(get_db)
+):
+    """
+    Delete a user from the database
+    Only accessible to users with user_classification_id = 1
+    """
+    if not DATABASE_AVAILABLE or not User or not AUTH_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Service not available")
+    
+    try:
+        # Verify token and get user
+        token = credentials.credentials
+        current_user_id = extract_user_id_from_token(token)
+        
+        if not current_user_id:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        
+        # Get current user and check classification
+        current_user = db.query(User).filter(User.id == current_user_id).first()
+        if not current_user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # Check if user has admin privileges (user_classification_id = 1)
+        user_classification_id = getattr(current_user, 'user_classification_id', 0) or 0
+        if user_classification_id != 1:
+            raise HTTPException(status_code=403, detail="Access denied. Admin privileges required.")
+        
+        # Get target user
+        target_user = db.query(User).filter(User.id == user_id).first()
+        if not target_user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # Prevent user from deleting themselves
+        if target_user.id == current_user.id:
+            raise HTTPException(status_code=400, detail="You cannot delete your own account")
+        
+        # Store email for logging
+        deleted_email = target_user.email
+        
+        # Delete user
+        db.delete(target_user)
+        db.commit()
+        
+        logger.info(f"User {current_user.email} deleted user {deleted_email}")
+        
+        return {
+            "success": True,
+            "message": f"User {deleted_email} deleted successfully"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error deleting user: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to delete user: {str(e)}")
+
+# ==================== END USER MANAGEMENT ENDPOINTS ====================
 
 
 if __name__ == "__main__":
