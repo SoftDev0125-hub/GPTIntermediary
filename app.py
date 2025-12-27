@@ -775,99 +775,31 @@ def main():
                 stop_servers()
                 print("[*] All servers stopped. Goodbye!")
         else:
-            # Desktop mode: Try webview, fallback to browser
-            print(f"[*] Opening application: {app_url}")
-            print("[*] The application window should open now...")
+            # Desktop mode: Open in browser automatically
+            print(f"[*] Opening application in browser: {app_url}")
+            print("[*] The application should open in your default browser...")
             print("[*] You will see the login page first.")
-            print("[*] Close the window or press Ctrl+C to stop all servers and exit")
+            print("[*] Close this terminal window or press Ctrl+C to stop all servers and exit")
             print("=" * 60)
             
+            # Open in default browser automatically
+            import webbrowser
+            # Wait a moment for server to be fully ready
+            time.sleep(2)
+            webbrowser.open(app_url)
+            print(f"[OK] Opened {app_url} in your default browser")
+            print("[*] Application is running in your browser.")
+            print("[*] You can close the browser tab, but servers will keep running.")
+            print("[*] Press Ctrl+C to stop all servers and exit")
+            
+            # Keep the main thread alive until Ctrl+C
             try:
-                import webview
-                
-                # Get screen dimensions for responsive window sizing
-                try:
-                    import tkinter as tk
-                    root = tk.Tk()
-                    screen_width = root.winfo_screenwidth()
-                    screen_height = root.winfo_screenheight()
-                    root.destroy()
-                    
-                    # Use a more reasonable default size (70% of screen or fixed size, whichever is smaller)
-                    # Default to 1200x800, but scale down if screen is smaller
-                    default_width = 1200
-                    default_height = 800
-                    window_width = min(default_width, int(screen_width * 0.7))
-                    window_height = min(default_height, int(screen_height * 0.7))
-                    
-                    # Ensure minimum size
-                    window_width = max(800, window_width)
-                    window_height = max(600, window_height)
-                    
-                    # Center the window
-                    x = (screen_width - window_width) // 2
-                    y = (screen_height - window_height) // 2
-                except Exception:
-                    # Fallback to default dimensions if tkinter is not available
-                    window_width = 1200
-                    window_height = 800
-                    x = None
-                    y = None
-                
-                # Create the window - open the URL instead of local file
-                # This goes through Flask server which serves login.html at root route
-                window = webview.create_window(
-                    'GPT Intermediary',
-                    app_url,
-                    width=window_width,
-                    height=window_height,
-                    x=x,
-                    y=y,
-                    resizable=True,
-                    min_size=(800, 600),  # Minimum window size
-                    fullscreen=False  # Allow user to maximize manually
-                )
-                
-                # Start the webview (this blocks until window is closed)
-                webview.start()
-                print("\n[*] Application window closed")
-                print("[*] Stopping all servers...")
-                # Stop servers when window is closed
+                while servers_running:
+                    time.sleep(1)
+            except KeyboardInterrupt:
+                print("\n[*] Stopping all servers...")
                 stop_servers()
                 print("[*] All servers stopped. Goodbye!")
-            
-            except ImportError:
-                print("[!] pywebview not installed. Opening in default browser instead...")
-                import webbrowser
-                webbrowser.open(app_url)
-                print("[*] Opened in browser.")
-                print("[*] Close this terminal window or press Ctrl+C to stop servers and exit")
-                
-                # Keep the main thread alive until Ctrl+C
-                try:
-                    while servers_running:
-                        time.sleep(1)
-                except KeyboardInterrupt:
-                    print("\n[*] Stopping all servers...")
-                    stop_servers()
-                    print("[*] All servers stopped. Goodbye!")
-                
-            except Exception as e:
-                print(f"[!] Error creating webview window: {e}")
-                print("[*] Attempting to open in default browser instead...")
-                import webbrowser
-                webbrowser.open(app_url)
-                print("[*] Opened in browser.")
-                print("[*] Close this terminal window or press Ctrl+C to stop servers and exit")
-                
-                # Keep the main thread alive until Ctrl+C
-                try:
-                    while servers_running:
-                        time.sleep(1)
-                except KeyboardInterrupt:
-                    print("\n[*] Stopping all servers...")
-                    stop_servers()
-                    print("[*] All servers stopped. Goodbye!")
         
     except KeyboardInterrupt:
         print("\n[*] Keyboard interrupt received")
