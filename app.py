@@ -154,6 +154,11 @@ def start_servers():
                 chat_log = open(os.path.join(log_dir, 'chat_server.log'), 'a', encoding='utf-8')
             except Exception:
                 chat_log = None
+            chat_log_path = None
+            if chat_log:
+                chat_log_path = os.path.join(log_dir, 'chat_server.log')
+                chat_log.flush()  # Ensure log file is ready
+            
             chat_process = subprocess.Popen(
                 [sys.executable, chat_server_file],
                 stdout=chat_log if chat_log else subprocess.DEVNULL,
@@ -163,10 +168,29 @@ def start_servers():
             )
             time.sleep(3)  # Wait for chat server to start
             if chat_process.poll() is not None:
-                stdout, stderr = chat_process.communicate()
                 print("[!] Chat server failed to start!")
-                if stderr:
-                    print(f"[!] Error: {stderr.decode('utf-8', errors='ignore')[:200]}")
+                exit_code = chat_process.returncode
+                print(f"[!] Exit code: {exit_code}")
+                
+                # Try to read error from log file
+                if chat_log_path and os.path.exists(chat_log_path):
+                    try:
+                        with open(chat_log_path, 'r', encoding='utf-8') as f:
+                            log_content = f.read()
+                            if log_content:
+                                # Show last 500 characters of log
+                                error_snippet = log_content[-500:] if len(log_content) > 500 else log_content
+                                print(f"[!] Error from log file:")
+                                print(f"    {error_snippet}")
+                            else:
+                                print(f"[!] Log file is empty. Check if {chat_server_file} exists and is executable.")
+                    except Exception as log_error:
+                        print(f"[!] Could not read log file: {log_error}")
+                else:
+                    print(f"[!] Could not find log file. Check if {chat_server_file} exists in {backend_py_dir}")
+                    print(f"[!] Full path checked: {os.path.join(backend_py_dir, chat_server_file)}")
+                
+                print(f"[!] Check logs/chat_server.log for full error details: {chat_log_path}")
                 servers_running = False
                 return
             print("[OK] Chat server started on http://localhost:5000")
@@ -484,16 +508,20 @@ def kill_process_by_port(port):
     
     # Use psutil if available
     try:
-        for proc in psutil.process_iter(['pid', 'name', 'connections']):
+        for proc in psutil.process_iter(['pid', 'name']):
             try:
-                for conn in proc.info['connections'] or []:
-                    if conn.laddr.port == port:
+                # Use net_connections() instead of connections() for newer psutil versions
+                # net_connections() returns a list of connection objects
+                connections = proc.net_connections(kind='inet')
+                for conn in connections:
+                    if conn.laddr and conn.laddr.port == port:
                         print(f"[*] Found process {proc.info['name']} (PID: {proc.info['pid']}) using port {port}")
                         proc.kill()
                         proc.wait(timeout=2)
                         print(f"[OK] Killed process on port {port}")
                         return True
-            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess, AttributeError):
+                # Some processes may not have network connections or access denied
                 continue
     except Exception as e:
         print(f"[!] Error killing process on port {port}: {e}")
@@ -716,76 +744,29 @@ def main():
         # This ensures the login page is shown first, then redirects to chat_interface.html after login
         app_url = "http://localhost:5000/"
         
-        print(f"[*] Opening application: {app_url}")
-        print("[*] The application window should open now...")
-        print("[*] You will see the login page first.")
-        print("[*] Close the window or press Ctrl+C to stop all servers and exit")
-        print("=" * 60)
+        # Check if running in server/VPS mode
+        is_server = os.environ.get("VPS") == "true" or os.environ.get("IS_SERVER") == "true"
         
-        # Try to create and show the webview window
-        try:
-            import webview
+        if is_server:
+            # Server/VPS mode: No GUI, browser-only access
+            print("=" * 60)
+            print("[*] Running in SERVER MODE (VPS/Container)")
+            print("[*] Application is running and accessible via browser")
+            print(f"[*] Local access: {app_url}")
             
-            # Get screen dimensions for responsive window sizing
+            # Try to get server IP for remote access
             try:
-                import tkinter as tk
-                root = tk.Tk()
-                screen_width = root.winfo_screenwidth()
-                screen_height = root.winfo_screenheight()
-                root.destroy()
-                
-                # Use a more reasonable default size (70% of screen or fixed size, whichever is smaller)
-                # Default to 1200x800, but scale down if screen is smaller
-                default_width = 1200
-                default_height = 800
-                window_width = min(default_width, int(screen_width * 0.7))
-                window_height = min(default_height, int(screen_height * 0.7))
-                
-                # Ensure minimum size
-                window_width = max(800, window_width)
-                window_height = max(600, window_height)
-                
-                # Center the window
-                x = (screen_width - window_width) // 2
-                y = (screen_height - window_height) // 2
+                import socket
+                hostname = socket.gethostname()
+                local_ip = socket.gethostbyname(hostname)
+                print(f"[*] Network access: http://{local_ip}:5000")
             except Exception:
-                # Fallback to default dimensions if tkinter is not available
-                window_width = 1200
-                window_height = 800
-                x = None
-                y = None
+                pass
             
-            # Create the window - open the URL instead of local file
-            # This goes through Flask server which serves login.html at root route
-            window = webview.create_window(
-                'GPT Intermediary',
-                app_url,
-                width=window_width,
-                height=window_height,
-                x=x,
-                y=y,
-                resizable=True,
-                min_size=(800, 600),  # Minimum window size
-                fullscreen=False  # Allow user to maximize manually
-            )
+            print("[*] Press Ctrl+C to stop all servers and exit")
+            print("=" * 60)
             
-            # Start the webview (this blocks until window is closed)
-            webview.start()
-            
-            print("\n[*] Application window closed")
-            print("[*] Stopping all servers...")
-            # Stop servers when window is closed
-            stop_servers()
-            print("[*] All servers stopped. Goodbye!")
-            
-        except ImportError:
-            print("[!] pywebview not installed. Opening in default browser instead...")
-            import webbrowser
-            webbrowser.open(f'file:///{html_path}')
-            print("[*] Opened in browser.")
-            print("[*] Close this terminal window or press Ctrl+C to stop servers and exit")
-            
-            # Keep the main thread alive until Ctrl+C
+            # Keep servers running until interrupted
             try:
                 while servers_running:
                     time.sleep(1)
@@ -793,23 +774,100 @@ def main():
                 print("\n[*] Stopping all servers...")
                 stop_servers()
                 print("[*] All servers stopped. Goodbye!")
+        else:
+            # Desktop mode: Try webview, fallback to browser
+            print(f"[*] Opening application: {app_url}")
+            print("[*] The application window should open now...")
+            print("[*] You will see the login page first.")
+            print("[*] Close the window or press Ctrl+C to stop all servers and exit")
+            print("=" * 60)
+            
+            try:
+                import webview
                 
-        except Exception as e:
-            print(f"[!] Error creating webview window: {e}")
-            print("[*] Attempting to open in default browser instead...")
-            import webbrowser
-            webbrowser.open(f'file:///{html_path}')
-            print("[*] Opened in browser.")
-            print("[*] Close this terminal window or press Ctrl+C to stop servers and exit")
-            
-            # Keep the main thread alive until Ctrl+C
-            try:
-                while servers_running:
-                    time.sleep(1)
-            except KeyboardInterrupt:
-                print("\n[*] Stopping all servers...")
+                # Get screen dimensions for responsive window sizing
+                try:
+                    import tkinter as tk
+                    root = tk.Tk()
+                    screen_width = root.winfo_screenwidth()
+                    screen_height = root.winfo_screenheight()
+                    root.destroy()
+                    
+                    # Use a more reasonable default size (70% of screen or fixed size, whichever is smaller)
+                    # Default to 1200x800, but scale down if screen is smaller
+                    default_width = 1200
+                    default_height = 800
+                    window_width = min(default_width, int(screen_width * 0.7))
+                    window_height = min(default_height, int(screen_height * 0.7))
+                    
+                    # Ensure minimum size
+                    window_width = max(800, window_width)
+                    window_height = max(600, window_height)
+                    
+                    # Center the window
+                    x = (screen_width - window_width) // 2
+                    y = (screen_height - window_height) // 2
+                except Exception:
+                    # Fallback to default dimensions if tkinter is not available
+                    window_width = 1200
+                    window_height = 800
+                    x = None
+                    y = None
+                
+                # Create the window - open the URL instead of local file
+                # This goes through Flask server which serves login.html at root route
+                window = webview.create_window(
+                    'GPT Intermediary',
+                    app_url,
+                    width=window_width,
+                    height=window_height,
+                    x=x,
+                    y=y,
+                    resizable=True,
+                    min_size=(800, 600),  # Minimum window size
+                    fullscreen=False  # Allow user to maximize manually
+                )
+                
+                # Start the webview (this blocks until window is closed)
+                webview.start()
+                print("\n[*] Application window closed")
+                print("[*] Stopping all servers...")
+                # Stop servers when window is closed
                 stop_servers()
                 print("[*] All servers stopped. Goodbye!")
+            
+            except ImportError:
+                print("[!] pywebview not installed. Opening in default browser instead...")
+                import webbrowser
+                webbrowser.open(app_url)
+                print("[*] Opened in browser.")
+                print("[*] Close this terminal window or press Ctrl+C to stop servers and exit")
+                
+                # Keep the main thread alive until Ctrl+C
+                try:
+                    while servers_running:
+                        time.sleep(1)
+                except KeyboardInterrupt:
+                    print("\n[*] Stopping all servers...")
+                    stop_servers()
+                    print("[*] All servers stopped. Goodbye!")
+                
+            except Exception as e:
+                print(f"[!] Error creating webview window: {e}")
+                print("[*] Attempting to open in default browser instead...")
+                import webbrowser
+                webbrowser.open(app_url)
+                print("[*] Opened in browser.")
+                print("[*] Close this terminal window or press Ctrl+C to stop servers and exit")
+                
+                # Keep the main thread alive until Ctrl+C
+                try:
+                    while servers_running:
+                        time.sleep(1)
+                except KeyboardInterrupt:
+                    print("\n[*] Stopping all servers...")
+                    stop_servers()
+                    print("[*] All servers stopped. Goodbye!")
         
     except KeyboardInterrupt:
         print("\n[*] Keyboard interrupt received")
