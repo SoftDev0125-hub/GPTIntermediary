@@ -987,18 +987,19 @@
         const CHAT_SERVER_URL = window.location.origin;
         
         // Node.js servers URLs - for localhost use direct ports, for domain use origin with paths
-        const getNodeServerUrl = (port) => {
+        const getNodeServerUrl = (port, servicePath) => {
             const hostname = window.location.hostname;
             if (hostname === 'localhost' || hostname === '127.0.0.1') {
+                // Localhost: direct connection to Node.js server
                 return `http://localhost:${port}`;
             }
-            // For domain, these should be proxied by Nginx (e.g., /whatsapp, /telegram, /slack)
-            // For now, use origin - you'll need to configure Nginx to proxy these
-            return window.location.origin;
+            // Domain: use Nginx proxy path (e.g., /whatsapp, /telegram, /slack)
+            // Nginx proxies /whatsapp to localhost:3000, /telegram to localhost:3001, etc.
+            return `${window.location.origin}${servicePath}`;
         };
-        const TELEGRAM_API_URL = getNodeServerUrl(3001);
-        const WHATSAPP_API_URL = getNodeServerUrl(3000);
-        const SLACK_API_URL = getNodeServerUrl(3002);
+        const TELEGRAM_API_URL = getNodeServerUrl(3001, '/telegram');
+        const WHATSAPP_API_URL = getNodeServerUrl(3000, '/whatsapp');
+        const SLACK_API_URL = getNodeServerUrl(3002, '/slack');
         
         // Main tab switching function - defined globally so it's accessible everywhere
         function switchTab(tabName) {
@@ -1979,7 +1980,8 @@
                     telegramSocket = null;
                 }
                 
-                telegramSocket = io(`${TELEGRAM_API_URL}`, {
+                const hostname = window.location.hostname;
+                const telegramSocketOptions = {
                     reconnection: true,
                     reconnectionDelay: 1000,
                     reconnectionDelayMax: 5000,
@@ -1987,7 +1989,17 @@
                     timeout: 20000,
                     transports: ['websocket', 'polling'],
                     autoConnect: true
-                });
+                };
+                
+                // For domain (via Nginx proxy), Socket.IO needs the path prefix
+                if (hostname !== 'localhost' && hostname !== '127.0.0.1') {
+                    telegramSocketOptions.path = '/telegram/socket.io';
+                }
+                
+                telegramSocket = io(hostname === 'localhost' || hostname === '127.0.0.1' 
+                    ? TELEGRAM_API_URL 
+                    : window.location.origin, 
+                    telegramSocketOptions);
                 
                 telegramSocket.on('connect', () => {
                     console.log('[Telegram] WebSocket connected');
@@ -3886,14 +3898,25 @@
             }
 
             console.log('[*] Initializing WhatsApp WebSocket connection...');
-            whatsappSocket = io(`${WHATSAPP_API_URL}`, {
+            const hostname = window.location.hostname;
+            const whatsappSocketOptions = {
                 reconnection: true,
                 reconnectionDelay: 1000,
                 reconnectionDelayMax: 5000,
                 reconnectionAttempts: Infinity,
                 timeout: 20000,
                 transports: ['websocket', 'polling']
-            });
+            };
+            
+            // For domain (via Nginx proxy), Socket.IO needs the path prefix
+            if (hostname !== 'localhost' && hostname !== '127.0.0.1') {
+                whatsappSocketOptions.path = '/whatsapp/socket.io';
+            }
+            
+            whatsappSocket = io(hostname === 'localhost' || hostname === '127.0.0.1' 
+                ? WHATSAPP_API_URL 
+                : window.location.origin, 
+                whatsappSocketOptions);
 
             whatsappSocket.on('connect', () => {
                 console.log('[*] WhatsApp WebSocket connected - Real-time messaging active');
@@ -5123,13 +5146,24 @@
             }
 
             try {
-                slackSocket = io(`${SLACK_API_URL}`, {
+                const hostname = window.location.hostname;
+                const slackSocketOptions = {
                     transports: ['websocket', 'polling'],
                     reconnection: true,
                     reconnectionAttempts: Infinity,
                     reconnectionDelay: 1000,
                     timeout: 20000
-                });
+                };
+                
+                // For domain (via Nginx proxy), Socket.IO needs the path prefix
+                if (hostname !== 'localhost' && hostname !== '127.0.0.1') {
+                    slackSocketOptions.path = '/slack/socket.io';
+                }
+                
+                slackSocket = io(hostname === 'localhost' || hostname === '127.0.0.1' 
+                    ? SLACK_API_URL 
+                    : window.location.origin, 
+                    slackSocketOptions);
 
                 slackSocket.on('connect', () => {
                     console.log('[Slack] WebSocket connected');
