@@ -673,20 +673,19 @@
 
     <script>
         // Dynamic API base URL - uses current page protocol and host
-        // For VPS with domain: uses https://americanelitebiz.com/api (proxied by Nginx)
-        // For local: uses http://localhost:8000 (direct connection)
+        // For VPS with domain: uses https://americanelitebiz.com (then /api is added in fetch calls)
+        // For local: uses http://localhost:8000 (direct connection to backend)
         const getApiBase = () => {
             const origin = window.location.origin;
-            const protocol = window.location.protocol;
             const hostname = window.location.hostname;
             
-            // If on localhost, use direct port connection
+            // If on localhost, use direct port connection to backend
             if (hostname === 'localhost' || hostname === '127.0.0.1') {
                 return 'http://localhost:8000';
             }
             
-            // For domain/VPS: use /api path (proxied by Nginx to port 8000)
-            return `${origin}/api`;
+            // For domain/VPS: use origin (Nginx will proxy /api to port 8000)
+            return origin;
         };
         const API_BASE = getApiBase();
 

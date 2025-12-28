@@ -440,13 +440,13 @@
             const origin = window.location.origin;
             const hostname = window.location.hostname;
             
-            // If on localhost, use direct port connection
+            // If on localhost, use direct port connection to backend
             if (hostname === 'localhost' || hostname === '127.0.0.1') {
                 return 'http://localhost:8000';
             }
             
-            // For domain/VPS: use /api path (proxied by Nginx to port 8000)
-            return `${origin}/api`;
+            // For domain/VPS: use origin (Nginx will proxy /api to port 8000)
+            return origin;
         };
         const API_BASE = getApiBase();
         let authToken = '';
