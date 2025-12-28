@@ -27,7 +27,7 @@ app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max request size
 
 # Configuration
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
-BACKEND_URL = "http://72.62.162.44:8000"
+BACKEND_URL = "http://localhost:8000"
 
 # Initialize OpenAI - use a single client instance for better performance
 # Reusing a client is faster than creating a new one for each request
@@ -608,8 +608,8 @@ if __name__ == '__main__':
     api_status = '[OK] Configured' if OPENAI_API_KEY and OPENAI_API_KEY != 'your_openai_api_key_here' else '[X] Not configured'
     print(f"OpenAI API Key: {api_status}")
     print("=" * 60)
-    print("\n[*] Server running on http://72.62.162.44:5000")
-    print("[*] Open http://72.62.162.44:5000/chat_interface.html in your browser to start chatting")
+    print("\n[*] Server running on http://localhost:5000")
+    print("[*] Open http://localhost:5000/chat_interface.html in your browser to start chatting")
     print("\n[*] Make sure the backend is running on port 8000!")
     print("=" * 60)
     
