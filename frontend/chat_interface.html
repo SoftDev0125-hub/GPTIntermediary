@@ -1444,7 +1444,7 @@
             console.log('[CHAT] User ID:', userIdInt);
             
             try {
-                const response = await fetch('http://72.62.162.44:5000/chat', {
+                const response = await fetch(`${CHAT_SERVER_URL}/chat`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -1539,7 +1539,7 @@
         // Get credentials from environment (exposed by backend)
         async function getUserCredentials() {
             try {
-                const response = await fetch('http://72.62.162.44:5000/get_user_credentials');
+                const response = await fetch(`${CHAT_SERVER_URL}/get_user_credentials`);
                 const data = await response.json();
                 return data;
             } catch (error) {
@@ -1642,7 +1642,7 @@
                 }
                 
                 // Call API to mark email as read
-                const response = await fetch('http://72.62.162.44:8000/api/email/mark-read', {
+                const response = await fetch(`${API_BASE}/api/email/mark-read`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -1797,7 +1797,7 @@
                 }
 
                 console.log('[*] Requesting unread emails from backend...');
-                const response = await fetch('http://72.62.162.44:8000/api/email/unread', {
+                const response = await fetch(`${API_BASE}/api/email/unread`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -1891,8 +1891,7 @@
 
 
         // Telegram functionality - Node.js backend
-        const TELEGRAM_API_URL = 'http://72.62.162.44:3001';
-        const WHATSAPP_API_URL = 'http://72.62.162.44:3000';
+        // TELEGRAM_API_URL and WHATSAPP_API_URL are now defined above
         let currentTelegramChatId = null;
         const telegramMessageInput = document.getElementById('telegramMessageInput');
         const telegramSendButton = document.getElementById('telegramSendButton');
@@ -3468,7 +3467,7 @@
             }
             try {
                 console.log('[*] Checking WhatsApp authentication status...');
-                const response = await fetch('http://72.62.162.44:3000/api/whatsapp/status', {
+                const response = await fetch('${WHATSAPP_API_URL}/api/whatsapp/status', {
                     method: 'GET',
                     headers: {
                         'Content-Type': 'application/json',
@@ -3623,8 +3622,8 @@
             try {
                 console.log(`[*] Requesting WhatsApp QR code (forceRefresh=${forceRefresh})...`);
                 const url = forceRefresh 
-                    ? 'http://72.62.162.44:3000/api/whatsapp/qr-code?force_refresh=true'
-                    : 'http://72.62.162.44:3000/api/whatsapp/qr-code';
+                    ? '${WHATSAPP_API_URL}/api/whatsapp/qr-code?force_refresh=true'
+                    : '${WHATSAPP_API_URL}/api/whatsapp/qr-code';
                 const response = await fetch(url, {
                     method: 'GET',
                     headers: {
@@ -3725,7 +3724,7 @@
                     return;
                 }
 
-                const contactsResponse = await fetch('http://72.62.162.44:3000/api/whatsapp/contacts', {
+                const contactsResponse = await fetch('${WHATSAPP_API_URL}/api/whatsapp/contacts', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -3798,7 +3797,7 @@
                                 const batch = list.slice(i, i + concurrency);
                                 await Promise.all(batch.map(async (c) => {
                                     try {
-                                        const r = await fetch(`http://72.62.162.44:3000/api/whatsapp/avatar?contact_id=${encodeURIComponent(c.contact_id)}`, { signal: AbortSignal.timeout(20000) });
+                                        const r = await fetch(`${WHATSAPP_API_URL}/api/whatsapp/avatar?contact_id=${encodeURIComponent(c.contact_id)}`, { signal: AbortSignal.timeout(20000) });
                                         if (!r.ok) return;
                                         const data = await r.json();
                                         if (!data || !data.success || !data.avatar_url) return;
@@ -3853,7 +3852,7 @@
             }
 
             console.log('[*] Initializing WhatsApp WebSocket connection...');
-            whatsappSocket = io('http://72.62.162.44:3000', {
+            whatsappSocket = io('${WHATSAPP_API_URL}', {
                 reconnection: true,
                 reconnectionDelay: 1000,
                 reconnectionDelayMax: 5000,
@@ -4191,7 +4190,7 @@
             }
 
             try {
-                const response = await fetch(`http://72.62.162.44:3000/api/whatsapp/message/${messageId}`, {
+                const response = await fetch(`${WHATSAPP_API_URL}/api/whatsapp/message/${messageId}`, {
                     method: 'PUT',
                     headers: {
                         'Content-Type': 'application/json',
@@ -4226,7 +4225,7 @@
             }
 
             try {
-                const response = await fetch(`http://72.62.162.44:3000/api/whatsapp/message/${messageId}`, {
+                const response = await fetch(`${WHATSAPP_API_URL}/api/whatsapp/message/${messageId}`, {
                     method: 'DELETE',
                     headers: {
                         'Content-Type': 'application/json',
@@ -4326,7 +4325,7 @@
             try {
                 console.log(`[*] Loading messages for contact: ${contactName} (${contactId})`);
                 
-                const response = await fetch('http://72.62.162.44:3000/api/whatsapp/messages', {
+                const response = await fetch('${WHATSAPP_API_URL}/api/whatsapp/messages', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -4568,7 +4567,7 @@
             
             try {
                 console.log(`[*] Sending message to ${currentWhatsAppChatId}: ${messageText}`);
-                const response = await fetch('http://72.62.162.44:3000/api/whatsapp/send', {
+                const response = await fetch('${WHATSAPP_API_URL}/api/whatsapp/send', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -4660,7 +4659,7 @@
                 
                 // Initialize WhatsApp service first (lazy initialization)
                 try {
-                    const initResponse = await fetch('http://72.62.162.44:3000/api/whatsapp/initialize', {
+                    const initResponse = await fetch('${WHATSAPP_API_URL}/api/whatsapp/initialize', {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
@@ -4850,7 +4849,7 @@
             // Load messages for this channel (if not cached)
             if (!slackMessagesByChannel[channelId]) {
                 try {
-                    const response = await fetch('http://72.62.162.44:3002/api/slack/messages', {
+                    const response = await fetch('${SLACK_API_URL}/api/slack/messages', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
@@ -5023,7 +5022,7 @@
 
             try {
                 // Check status first
-                const statusResponse = await fetch('http://72.62.162.44:3002/api/slack/status', {
+                const statusResponse = await fetch('${SLACK_API_URL}/api/slack/status', {
                     method: 'GET',
                     headers: { 'Content-Type': 'application/json' }
                 });
@@ -5034,7 +5033,7 @@
                 }
 
                 // Fetch channels
-                const channelsResponse = await fetch('http://72.62.162.44:3002/api/slack/channels', {
+                const channelsResponse = await fetch('${SLACK_API_URL}/api/slack/channels', {
                     method: 'GET',
                     headers: { 'Content-Type': 'application/json' }
                 });
@@ -5090,7 +5089,7 @@
             }
 
             try {
-                slackSocket = io('http://72.62.162.44:3002', {
+                slackSocket = io('${SLACK_API_URL}', {
                     transports: ['websocket', 'polling'],
                     reconnection: true,
                     reconnectionAttempts: Infinity,
@@ -5193,7 +5192,7 @@
 
                 try {
                     const lastTs = slackLastMessageTs[currentSlackChannelId];
-                    const response = await fetch('http://72.62.162.44:3002/api/slack/poll', {
+                    const response = await fetch('${SLACK_API_URL}/api/slack/poll', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
@@ -5234,7 +5233,7 @@
             if (!newText || newText === currentText) return;
 
             try {
-                const response = await fetch('http://72.62.162.44:3002/api/slack/edit', {
+                const response = await fetch('${SLACK_API_URL}/api/slack/edit', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -5265,7 +5264,7 @@
             if (!confirm('Are you sure you want to delete this message?')) return;
 
             try {
-                const response = await fetch('http://72.62.162.44:3002/api/slack/delete', {
+                const response = await fetch('${SLACK_API_URL}/api/slack/delete', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -5355,7 +5354,7 @@
                         defaultPath;
                     
                     // Call backend to open native file picker
-                    const response = await fetch(`http://72.62.162.44:8000/api/word/select-file?initial_path=${encodeURIComponent(initialDir)}`);
+                    const response = await fetch(`${API_BASE}/api/word/select-file?initial_path=${encodeURIComponent(initialDir)}`);
                     
                     if (!response.ok) {
                         throw new Error(`Failed to open file picker: ${response.status}`);
@@ -5382,7 +5381,7 @@
         // Helper function to get default Documents path
         async function getDefaultDocumentsPath() {
             try {
-                const response = await fetch('http://72.62.162.44:8000/api/word/list-directory');
+                const response = await fetch('${API_BASE}/api/word/list-directory');
                 const data = await response.json();
                 if (data.success && data.path) {
                     return data.path;
@@ -5983,8 +5982,8 @@
             
             try {
                 const url = currentPath ? 
-                    `http://72.62.162.44:8000/api/word/select-folder?initial_path=${encodeURIComponent(currentPath)}` :
-                    'http://72.62.162.44:8000/api/word/select-folder';
+                    `${API_BASE}/api/word/select-folder?initial_path=${encodeURIComponent(currentPath)}` :
+                    '${API_BASE}/api/word/select-folder';
                 
                 const response = await fetch(url);
                 const data = await response.json();
@@ -6041,8 +6040,8 @@
 
             try {
                 const url = path ? 
-                    `http://72.62.162.44:8000/api/word/list-directory?path=${encodeURIComponent(path)}` :
-                    'http://72.62.162.44:8000/api/word/list-directory';
+                    `${API_BASE}/api/word/list-directory?path=${encodeURIComponent(path)}` :
+                    '${API_BASE}/api/word/list-directory';
                 
                 const response = await fetch(url);
                 const data = await response.json();
@@ -6213,7 +6212,7 @@
             wordFolderBrowserNavUp.addEventListener('click', async () => {
                 if (currentFolderBrowserPath) {
                     try {
-                        const response = await fetch(`http://72.62.162.44:8000/api/word/list-directory?path=${encodeURIComponent(currentFolderBrowserPath)}`);
+                        const response = await fetch(`${API_BASE}/api/word/list-directory?path=${encodeURIComponent(currentFolderBrowserPath)}`);
                         const data = await response.json();
                         if (data.success && data.parent_path) {
                             loadFolderBrowserDirectory(data.parent_path);
@@ -6374,7 +6373,7 @@
                 console.log('Content to save length:', contentToSave.length);
                 console.log('Content to save preview:', contentToSave.substring(0, 300));
                 
-                const saveResponse = await fetch('http://72.62.162.44:8000/api/word/save-html', {
+                const saveResponse = await fetch('${API_BASE}/api/word/save-html', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -6455,7 +6454,7 @@
                 createWordDocButton.textContent = 'Creating...';
                 
                 try {
-                    const response = await fetch('http://72.62.162.44:8000/api/word/create', {
+                    const response = await fetch('${API_BASE}/api/word/create', {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
@@ -6539,7 +6538,7 @@
                 wordCreateSubmit.textContent = 'Creating...';
 
                 try {
-                    const response = await fetch('http://72.62.162.44:8000/api/word/create', {
+                    const response = await fetch('${API_BASE}/api/word/create', {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
@@ -6596,7 +6595,7 @@
                 wordOpenSubmit.textContent = 'Opening...';
 
                 try {
-                    const response = await fetch('http://72.62.162.44:8000/api/word/open', {
+                    const response = await fetch('${API_BASE}/api/word/open', {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
@@ -6668,7 +6667,7 @@
                 const threadTs = slackMessageInput.dataset.threadTs;
                 console.log(`[*] Sending message to channel ${currentSlackChannelId}...`);
                 
-                const url = threadTs ? 'http://72.62.162.44:3002/api/slack/reply' : 'http://72.62.162.44:3002/api/slack/send';
+                const url = threadTs ? '${SLACK_API_URL}/api/slack/reply' : '${SLACK_API_URL}/api/slack/send';
                 const body = threadTs ? {
                     channel_id: currentSlackChannelId,
                     thread_ts: threadTs,
@@ -7948,7 +7947,7 @@
                     console.log(`Sheet "${sheetName}": ${nonEmptyRows.length} non-empty rows, ${totalCells} cells with data`);
                 }
                 
-                const response = await fetch('http://72.62.162.44:8000/api/excel/save', {
+                const response = await fetch('${API_BASE}/api/excel/save', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -9220,7 +9219,7 @@
                 createExcelButton.textContent = 'Creating...';
                 
                 try {
-                    const response = await fetch('http://72.62.162.44:8000/api/excel/create', {
+                    const response = await fetch('${API_BASE}/api/excel/create', {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
@@ -9330,7 +9329,7 @@
                     console.log('Trying backend file picker API...');
                     
                     const defaultPath = await getDefaultDocumentsPath();
-                    const response = await fetch(`http://72.62.162.44:8000/api/excel/select-file?initial_path=${encodeURIComponent(defaultPath)}`);
+                    const response = await fetch(`${API_BASE}/api/excel/select-file?initial_path=${encodeURIComponent(defaultPath)}`);
                     
                     if (response.ok) {
                         const result = await response.json();
@@ -9442,9 +9441,9 @@
                     console.log('==========================================');
                     console.log('📂 Opening spreadsheet...');
                     console.log('File path:', filePath);
-                    console.log('Request URL:', 'http://72.62.162.44:8000/api/excel/open');
+                    console.log('Request URL:', '${API_BASE}/api/excel/open');
                     
-                    const response = await fetch('http://72.62.162.44:8000/api/excel/open', {
+                    const response = await fetch('${API_BASE}/api/excel/open', {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
@@ -9594,7 +9593,7 @@
         });
 
         // ==================== SETTINGS FUNCTIONALITY ====================
-        const API_BASE = 'http://72.62.162.44:8000';
+        // API_BASE is already defined above
 
         // Help text for each environment variable
         const helpTexts = {

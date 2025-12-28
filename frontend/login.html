@@ -672,7 +672,23 @@
     </div>
 
     <script>
-        const API_BASE = 'http://72.62.162.44:8000';
+        // Dynamic API base URL - uses current page protocol and host
+        // For VPS with domain: uses https://americanelitebiz.com/api (proxied by Nginx)
+        // For local: uses http://localhost:8000 (direct connection)
+        const getApiBase = () => {
+            const origin = window.location.origin;
+            const protocol = window.location.protocol;
+            const hostname = window.location.hostname;
+            
+            // If on localhost, use direct port connection
+            if (hostname === 'localhost' || hostname === '127.0.0.1') {
+                return 'http://localhost:8000';
+            }
+            
+            // For domain/VPS: use /api path (proxied by Nginx to port 8000)
+            return `${origin}/api`;
+        };
+        const API_BASE = getApiBase();
 
         function switchTab(tab) {
             // Update tab buttons
@@ -862,7 +878,7 @@
                             redirectUrl = '/chat_interface.html';
                         } else {
                             // Use absolute URL to Flask server
-                            redirectUrl = 'http://72.62.162.44:5000/chat_interface.html';
+                            redirectUrl = `${window.location.origin}/chat_interface.html`;
                         }
                         
                         console.log('✅ Login successful! Redirecting to:', redirectUrl);
@@ -1222,7 +1238,7 @@
                             redirectUrl = '/chat_interface.html';
                         } else {
                             // Use absolute URL to Flask server
-                            redirectUrl = 'http://72.62.162.44:5000/chat_interface.html';
+                            redirectUrl = `${window.location.origin}/chat_interface.html`;
                         }
                         
                         console.log('✅ Token valid! Redirecting to:', redirectUrl);

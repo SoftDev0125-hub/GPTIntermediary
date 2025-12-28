@@ -435,7 +435,20 @@
     </div>
 
     <script>
-        const API_BASE = 'http://72.62.162.44:8000';
+        // Dynamic API base URL - uses current page protocol and host
+        const getApiBase = () => {
+            const origin = window.location.origin;
+            const hostname = window.location.hostname;
+            
+            // If on localhost, use direct port connection
+            if (hostname === 'localhost' || hostname === '127.0.0.1') {
+                return 'http://localhost:8000';
+            }
+            
+            // For domain/VPS: use /api path (proxied by Nginx to port 8000)
+            return `${origin}/api`;
+        };
+        const API_BASE = getApiBase();
         let authToken = '';
 
         function showMessage(message, type) {
