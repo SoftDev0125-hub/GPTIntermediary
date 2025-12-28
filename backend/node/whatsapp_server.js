@@ -1010,7 +1010,7 @@ io.on('connection', (socket) => {
 
 // Start server
 server.listen(PORT, () => {
-    console.log(`[WhatsApp Server] Server running on http://localhost:${PORT}`);
+    console.log(`[WhatsApp Server] Server running on http://72.62.162.44:${PORT}`);
     console.log(`[WhatsApp Server] WebSocket server ready`);
     console.log(`[WhatsApp Server] WhatsApp client initializing...`);
 });

@@ -1629,7 +1629,7 @@ io.on('connection', (socket) => {
 
 // Start server
 server.listen(PORT, () => {
-    console.log(`[Telegram Server] Server running on http://localhost:${PORT}`);
+    console.log(`[Telegram Server] Server running on http://72.62.162.44:${PORT}`);
     console.log(`[Telegram Server] WebSocket server ready`);
     if (API_ID && API_HASH) {
         console.log(`[Telegram Server] API credentials found - initializing client...`);

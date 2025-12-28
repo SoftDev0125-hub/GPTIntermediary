@@ -225,7 +225,7 @@ cd backend/django_app
 python manage.py runserver 8001
 ```
 
-Then open `frontend/chat_interface.html` (or `http://localhost:5000/chat_interface.html`).
+Then open `frontend/chat_interface.html` (or `http://72.62.162.44:5000/chat_interface.html`).
 
 ## 📖 Usage Guide
 

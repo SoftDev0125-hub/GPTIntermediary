@@ -1136,7 +1136,7 @@ process.on('SIGTERM', () => {
 
 // Start server
 server.listen(PORT, () => {
-    console.log(`[Slack] Server running on http://localhost:${PORT}`);
-    console.log(`[Slack] Health check: http://localhost:${PORT}/health`);
+    console.log(`[Slack] Server running on http://72.62.162.44:${PORT}`);
+    console.log(`[Slack] Health check: http://72.62.162.44:${PORT}/health`);
 });
 

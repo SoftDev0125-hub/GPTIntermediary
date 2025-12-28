@@ -51,7 +51,7 @@ OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 openai.api_key = OPENAI_API_KEY
 USE_OPENAI = OPENAI_API_KEY and OPENAI_API_KEY != 'your_openai_api_key_here'
 
-BACKEND_URL = "http://localhost:8000"
+BACKEND_URL = "http://72.62.162.44:8000"
 
 # User credentials (mock)
 USER_CREDENTIALS = {
@@ -743,7 +743,7 @@ if __name__ == '__main__':
     print(f"OpenAI API Key: {'[OK] Configured - Full ChatGPT mode' if USE_OPENAI else '[X] Not configured - Keyword mode'}")
     print(f"Mode: {'OpenAI + Fallback' if USE_OPENAI else 'Keyword-based only'}")
     print("=" * 60)
-    print("\nServer running on http://localhost:5000")
+    print("\nServer running on http://72.62.162.44:5000")
     print("Open /chat_interface.html in your browser to start")
     print("\nFeatures:")
     if USE_OPENAI:

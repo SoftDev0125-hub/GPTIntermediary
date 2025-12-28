@@ -19,7 +19,7 @@
 	VS Code task configured to run the server. Use Terminal > Run Task > "Run ChatGPT Backend Server"
 
 - [x] Launch the Project
-	Run: python main.py to start the FastAPI server on http://localhost:8000
+	Run: python main.py to start the FastAPI server on http://72.62.162.44:8000
 
 - [x] Ensure Documentation is Complete
 	README.md contains comprehensive setup instructions, API documentation, and ChatGPT integration guide.

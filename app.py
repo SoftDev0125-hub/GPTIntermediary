@@ -94,8 +94,8 @@ def start_servers():
                     return
                 
                 try:
-                    response = urllib.request.urlopen('http://localhost:8000/', timeout=2)  # Reduced timeout for faster checks
-                    print("[OK] Backend server started and responding on http://localhost:8000")
+                    response = urllib.request.urlopen('http://72.62.162.44:8000/', timeout=2)  # Reduced timeout for faster checks
+                    print("[OK] Backend server started and responding on http://72.62.162.44:8000")
                     backend_ready = True
                     break
                 except (urllib.error.URLError, socket.timeout, ConnectionRefusedError):
@@ -193,7 +193,7 @@ def start_servers():
                 print(f"[!] Check logs/chat_server.log for full error details: {chat_log_path}")
                 servers_running = False
                 return
-            print("[OK] Chat server started on http://localhost:5000")
+            print("[OK] Chat server started on http://72.62.162.44:5000")
         except Exception as e:
             print(f"[!] Error starting chat server: {e}")
             servers_running = False
@@ -228,7 +228,7 @@ def start_servers():
                             if stderr:
                                 print(f"[!] Error: {stderr.decode('utf-8', errors='ignore')[:200]}")
                         else:
-                            print(f"[OK] Django server started on http://localhost:{DJANGO_PORT}")
+                            print(f"[OK] Django server started on http://72.62.162.44:{DJANGO_PORT}")
                     except Exception as e:
                         print(f"[!] Error starting Django server: {e}")
                 else:
@@ -296,7 +296,7 @@ def start_servers():
                             result = sock.connect_ex(('localhost', 3000))
                             sock.close()
                             if result == 0:
-                                print("[OK] WhatsApp Node.js server started on http://localhost:3000")
+                                print("[OK] WhatsApp Node.js server started on http://72.62.162.44:3000")
                             else:
                                 print("[!] WhatsApp server process started but not listening on port 3000")
                         except Exception as e:
@@ -364,7 +364,7 @@ def start_servers():
                             result = sock.connect_ex(('localhost', 3001))
                             sock.close()
                             if result == 0:
-                                print("[OK] Telegram Node.js server started on http://localhost:3001")
+                                print("[OK] Telegram Node.js server started on http://72.62.162.44:3001")
                             else:
                                 print("[!] Telegram server process started but not listening on port 3001")
                         except Exception as e:
@@ -432,7 +432,7 @@ def start_servers():
                             result = sock.connect_ex(('localhost', 3002))
                             sock.close()
                             if result == 0:
-                                print("[OK] Slack Node.js server started on http://localhost:3002")
+                                print("[OK] Slack Node.js server started on http://72.62.162.44:3002")
                             else:
                                 print("[!] Slack server process started but not listening on port 3002")
                         except Exception as e:
@@ -445,16 +445,16 @@ def start_servers():
         
         print("[OK] All servers started successfully!")
         print("[*] Server status:")
-        print(f"    - Backend API: http://localhost:8000")
-        print(f"    - Chat Server: http://localhost:5000")
+        print(f"    - Backend API: http://72.62.162.44:8000")
+        print(f"    - Chat Server: http://72.62.162.44:5000")
         if whatsapp_node_process and whatsapp_node_process.poll() is None:
-            print(f"    - WhatsApp Server: http://localhost:3000")
+            print(f"    - WhatsApp Server: http://72.62.162.44:3000")
         if telegram_node_process and telegram_node_process.poll() is None:
-            print(f"    - Telegram Server: http://localhost:3001")
+            print(f"    - Telegram Server: http://72.62.162.44:3001")
         if slack_node_process and slack_node_process.poll() is None:
-            print(f"    - Slack Server: http://localhost:3002")
+            print(f"    - Slack Server: http://72.62.162.44:3002")
         if django_process and django_process.poll() is None:
-            print(f"    - Django Server: http://localhost:{DJANGO_PORT}")
+            print(f"    - Django Server: http://72.62.162.44:{DJANGO_PORT}")
         print("[*] You can now use the application interface.")
         
     except Exception as e:
@@ -716,8 +716,8 @@ def main():
         backend_ready = False
         for i in range(max_retries):
             try:
-                response = urllib.request.urlopen('http://localhost:8000/', timeout=3)  # Increased timeout slightly
-                print("[OK] Backend server is responding on http://localhost:8000")
+                response = urllib.request.urlopen('http://72.62.162.44:8000/', timeout=3)  # Increased timeout slightly
+                print("[OK] Backend server is responding on http://72.62.162.44:8000")
                 backend_ready = True
                 break
             except (urllib.error.URLError, socket.timeout, ConnectionRefusedError) as e:
@@ -742,7 +742,7 @@ def main():
         
         # Open the application through the chat server (which serves login page at root)
         # This ensures the login page is shown first, then redirects to chat_interface.html after login
-        app_url = "http://localhost:5000/"
+        app_url = "http://72.62.162.44:5000/"
         
         # Check if running in server/VPS mode
         is_server = os.environ.get("VPS") == "true" or os.environ.get("IS_SERVER") == "true"
