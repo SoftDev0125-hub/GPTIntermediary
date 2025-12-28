@@ -1001,6 +1001,12 @@
         const WHATSAPP_API_URL = getNodeServerUrl(3000, '/whatsapp');
         const SLACK_API_URL = getNodeServerUrl(3002, '/slack');
         
+        // Debug: Log the configured URLs
+        console.log('[CONFIG] API_BASE:', API_BASE);
+        console.log('[CONFIG] TELEGRAM_API_URL:', TELEGRAM_API_URL);
+        console.log('[CONFIG] WHATSAPP_API_URL:', WHATSAPP_API_URL);
+        console.log('[CONFIG] SLACK_API_URL:', SLACK_API_URL);
+        
         // Main tab switching function - defined globally so it's accessible everywhere
         function switchTab(tabName) {
             if (!tabName) {
