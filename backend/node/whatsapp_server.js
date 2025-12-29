@@ -388,6 +388,19 @@ app.get('/api/whatsapp/qr-code', async (req, res) => {
             await new Promise(resolve => setTimeout(resolve, 2000));
         }
 
+        // If client is not initialized, initialize it now
+        if (!client) {
+            console.log('[WhatsApp] Client not initialized - initializing now...');
+            initializeWhatsApp();
+            // Wait for QR code to be generated (up to 5 seconds)
+            for (let i = 0; i < 10; i++) {
+                await new Promise(resolve => setTimeout(resolve, 500));
+                if (qrCodeData) {
+                    break;
+                }
+            }
+        }
+
         // If QR code is available, return it
         if (qrCodeData) {
             return res.json({
@@ -400,6 +413,7 @@ app.get('/api/whatsapp/qr-code', async (req, res) => {
 
         // If no QR code yet, wait a bit and check again
         // This handles the case where client is initializing
+        console.log('[WhatsApp] QR code not available yet - client may still be initializing');
         return res.json({
             success: false,
             is_authenticated: false,
@@ -1008,9 +1022,9 @@ io.on('connection', (socket) => {
     });
 });
 
-// Start server
-server.listen(PORT, () => {
-    console.log(`[WhatsApp Server] Server running on http://72.62.162.44:${PORT}`);
+// Start server - listen on all interfaces (0.0.0.0) for VPS compatibility
+server.listen(PORT, '0.0.0.0', () => {
+    console.log(`[WhatsApp Server] Server running on http://0.0.0.0:${PORT}`);
     console.log(`[WhatsApp Server] WebSocket server ready`);
     console.log(`[WhatsApp Server] WhatsApp client initializing...`);
 });

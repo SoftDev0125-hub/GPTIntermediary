@@ -3673,46 +3673,15 @@
         async function loadWhatsAppQRCode(forceRefresh = false) {
             try {
                 console.log(`[*] Requesting WhatsApp QR code (forceRefresh=${forceRefresh})...`);
-                
-                // Use Python backend QR code endpoint (works on VPS)
-                // Fallback to Node.js server if Python endpoint fails
-                const getApiBase = () => {
-                    const origin = window.location.origin;
-                    const hostname = window.location.hostname;
-                    if (hostname === 'localhost' || hostname === '127.0.0.1') {
-                        return 'http://localhost:8000';
+                const url = forceRefresh 
+                    ? `${WHATSAPP_API_URL}/api/whatsapp/qr-code?force_refresh=true`
+                    : `${WHATSAPP_API_URL}/api/whatsapp/qr-code`;
+                const response = await fetch(url, {
+                    method: 'GET',
+                    headers: {
+                        'Content-Type': 'application/json',
                     }
-                    return origin;
-                };
-                const API_BASE = getApiBase();
-                
-                // Try Python backend first (works on VPS)
-                let url = `${API_BASE}/api/whatsapp/qr-code`;
-                if (forceRefresh) {
-                    url += '?force_refresh=true';
-                }
-                
-                let response;
-                try {
-                    response = await fetch(url, {
-                        method: 'GET',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        }
-                    });
-                } catch (error) {
-                    // Fallback to Node.js server if Python endpoint fails
-                    console.warn('[!] Python QR code endpoint failed, trying Node.js server...', error);
-                    const fallbackUrl = forceRefresh 
-                        ? `${WHATSAPP_API_URL}/api/whatsapp/qr-code?force_refresh=true`
-                        : `${WHATSAPP_API_URL}/api/whatsapp/qr-code`;
-                    response = await fetch(fallbackUrl, {
-                        method: 'GET',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        }
-                    });
-                }
+                });
 
                 if (!response.ok) {
                     throw new Error(`HTTP ${response.status}: ${response.statusText}`);
