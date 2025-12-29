@@ -240,3 +240,74 @@ class UserServiceCredential(Base):
 
     def __repr__(self):
         return f"<UserServiceCredential(id={self.id}, user_id={self.user_id}, service='{self.service_name}', is_connected={self.is_connected})>"
+
+
+class GmailInfo(Base):
+    """Gmail account information and credentials for users"""
+    __tablename__ = "gmail_info"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
+    
+    # Google OAuth credentials
+    google_client_id = Column(String(500), nullable=True)
+    google_client_secret = Column(String(500), nullable=True)
+    
+    # User's Gmail account info
+    user_access_token = Column(Text, nullable=True)
+    user_refresh_token = Column(Text, nullable=True)
+    user_email = Column(String(255), nullable=True)
+    
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    # Relationships
+    user = relationship("User", foreign_keys=[user_id])
+
+    def __repr__(self):
+        return f"<GmailInfo(id={self.id}, user_id={self.user_id}, email='{self.user_email}')>"
+
+
+class TelegramSession(Base):
+    """Telegram API configuration and session info for users"""
+    __tablename__ = "telegram_sessions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
+    
+    # Telegram API credentials
+    telegram_api_id = Column(String(100), nullable=True)
+    telegram_api_hash = Column(String(255), nullable=True)
+    telegram_phone_number = Column(String(50), nullable=True)
+    
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    # Relationships
+    user = relationship("User", foreign_keys=[user_id])
+
+    def __repr__(self):
+        return f"<TelegramSession(id={self.id}, user_id={self.user_id}, phone='{self.telegram_phone_number}')>"
+
+
+class SlackInfo(Base):
+    """Slack integration information for users"""
+    __tablename__ = "slack_info"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
+    
+    # Slack credentials
+    slack_user_token = Column(Text, nullable=True)
+    
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    # Relationships
+    user = relationship("User", foreign_keys=[user_id])
+
+    def __repr__(self):
+        return f"<SlackInfo(id={self.id}, user_id={self.user_id})>"

@@ -403,6 +403,7 @@ app.get('/api/whatsapp/qr-code', async (req, res) => {
 
         // If QR code is available, return it
         if (qrCodeData) {
+            console.log('[WhatsApp] Returning QR code to client');
             return res.json({
                 success: true,
                 qr_code: qrCodeData,
@@ -411,13 +412,34 @@ app.get('/api/whatsapp/qr-code', async (req, res) => {
             });
         }
 
-        // If no QR code yet, wait a bit and check again
-        // This handles the case where client is initializing
-        console.log('[WhatsApp] QR code not available yet - client may still be initializing');
+        // If no QR code yet, wait longer and check again (up to 10 seconds)
+        // This handles the case where client is still initializing on VPS
+        console.log('[WhatsApp] QR code not available yet - waiting for client to initialize...');
+        for (let i = 0; i < 20; i++) {
+            await new Promise(resolve => setTimeout(resolve, 500));
+            if (qrCodeData) {
+                console.log('[WhatsApp] QR code became available after waiting');
+                return res.json({
+                    success: true,
+                    qr_code: qrCodeData,
+                    is_authenticated: false,
+                    message: 'Scan the QR code with WhatsApp to connect'
+                });
+            }
+            // Check if client failed to initialize
+            if (!client) {
+                console.log('[WhatsApp] Client initialization failed - retrying...');
+                initializeWhatsApp();
+            }
+        }
+        
+        // Still no QR code after waiting - return error
+        console.error('[WhatsApp] QR code not available after waiting - client may have failed to initialize');
         return res.json({
             success: false,
             is_authenticated: false,
-            message: 'QR code not available yet. Please wait...'
+            message: 'QR code generation failed. Please try refreshing the page or check server logs.',
+            error: 'qr_generation_timeout'
         });
     } catch (error) {
         console.error('[WhatsApp] Error getting QR code:', error);
