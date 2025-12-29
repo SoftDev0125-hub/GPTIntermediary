@@ -918,6 +918,66 @@ class WhatsAppService:
             import traceback
             logger.error(traceback.format_exc())
     
+    async def get_qr_code(self) -> Optional[str]:
+        """
+        Extract QR code from WhatsApp Web page as base64 data URL
+        Returns None if QR code is not available or user is already authenticated
+        """
+        if not self.page:
+            return None
+        
+        if self.is_connected:
+            return None  # Already authenticated, no QR code needed
+        
+        try:
+            # Wait a moment for page to load
+            await asyncio.sleep(1)
+            
+            # Check if QR code exists on the page
+            qr_exists = await self.page.evaluate("""
+                () => {
+                    const qrSelectors = [
+                        'div[data-ref] canvas',
+                        'div[data-ref] img',
+                        'canvas[aria-label*="QR"]'
+                    ];
+                    for (let selector of qrSelectors) {
+                        const elem = document.querySelector(selector);
+                        if (elem && elem.offsetParent !== null) {
+                            return true;
+                        }
+                    }
+                    return false;
+                }
+            """)
+            
+            if not qr_exists:
+                return None
+            
+            # Extract QR code as base64 image
+            # Try canvas first (WhatsApp Web uses canvas for QR codes)
+            qr_data = await self.page.evaluate("""
+                () => {
+                    // Try to find QR code canvas
+                    const canvas = document.querySelector('div[data-ref] canvas');
+                    if (canvas) {
+                        return canvas.toDataURL('image/png');
+                    }
+                    // Try image as fallback
+                    const img = document.querySelector('div[data-ref] img');
+                    if (img) {
+                        return img.src;
+                    }
+                    return null;
+                }
+            """)
+            
+            return qr_data
+            
+        except Exception as e:
+            logger.error(f"Error extracting QR code: {e}")
+            return None
+    
     async def _monitor_authentication(self):
         """Monitor for authentication completion"""
         max_attempts = 300  # 5 minutes

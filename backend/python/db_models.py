@@ -2,7 +2,7 @@
 Database models for GPTIntermediary application
 Models are designed to work with existing database structure
 """
-from sqlalchemy import Column, Integer, String, Text, DateTime, Boolean, ForeignKey, JSON, Float
+from sqlalchemy import Column, Integer, String, Text, DateTime, Boolean, ForeignKey, JSON, Float, UniqueConstraint
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from database import Base
@@ -203,3 +203,40 @@ class ChatWithGPT(Base):
     def __repr__(self):
         return f"<ChatWithGPT(id={self.id}, user_id={self.user_id}, created_at='{self.created_at}')>"
 
+
+class UserServiceCredential(Base):
+    """Store per-user service credentials and tokens (Gmail, WhatsApp, Telegram, Slack, etc.)"""
+    __tablename__ = "user_service_credentials"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    service_name = Column(String(50), nullable=False, index=True)  # 'gmail', 'whatsapp', 'telegram', 'slack'
+    
+    # Service-specific credentials (encrypted in production!)
+    # For Gmail: access_token, refresh_token
+    # For WhatsApp/Telegram/Slack: session_data (JSON)
+    credentials_data = Column(JSON, nullable=False)  # Store service-specific credentials as JSON
+    
+    # Status
+    is_active = Column(Boolean, default=True)
+    is_connected = Column(Boolean, default=False)  # Whether service is currently connected
+    
+    # Metadata
+    last_connected_at = Column(DateTime(timezone=True), nullable=True)
+    last_error = Column(Text, nullable=True)  # Last error message if connection failed
+    
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    
+    # Relationships
+    user = relationship("User", foreign_keys=[user_id])
+    
+    # Unique constraint: one credential record per user per service
+    __table_args__ = (
+        UniqueConstraint('user_id', 'service_name', name='uq_user_service'),
+        {'extend_existing': True},  # Allow extending if table already exists
+    )
+
+    def __repr__(self):
+        return f"<UserServiceCredential(id={self.id}, user_id={self.user_id}, service='{self.service_name}', is_connected={self.is_connected})>"

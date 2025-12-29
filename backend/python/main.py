@@ -30,7 +30,7 @@ from services.excel_service import ExcelService
 # Database imports
 try:
     from database import get_db, init_db, engine
-    from db_models import User
+    from db_models import User, UserServiceCredential
     from sqlalchemy.orm import Session
     from sqlalchemy.sql import func
     DATABASE_AVAILABLE = True
@@ -566,8 +566,23 @@ async def login_user(request: LoginRequest, db: Session = Depends(get_db)):
         if not request.password:
             raise HTTPException(status_code=400, detail="Password is required")
         
-        # Find user by email
-        user = db.query(User).filter(User.email == request.email.strip()).first()
+        # Find user by email - catch database connection errors
+        try:
+            user = db.query(User).filter(User.email == request.email.strip()).first()
+        except Exception as db_error:
+            error_str = str(db_error).lower()
+            logger.error(f"Database connection error during login: {db_error}")
+            if 'password authentication failed' in error_str or 'connection' in error_str or 'operationalerror' in error_str:
+                raise HTTPException(
+                    status_code=503, 
+                    detail="Database connection failed. Please check your DATABASE_URL in .env file and ensure PostgreSQL is running."
+                )
+            else:
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"Database error: {str(db_error)}"
+                )
+        
         if not user:
             # User not found in database - return error
             logger.warning(f"Login attempt with non-existent email: {request.email}")
@@ -972,6 +987,70 @@ async def initialize_whatsapp():
         import traceback
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/whatsapp/qr-code")
+async def get_whatsapp_qr_code():
+    """
+    Get WhatsApp QR code for authentication
+    Alternative to Node.js server endpoint - works on VPS
+    """
+    try:
+        # If already authenticated, return success
+        if whatsapp_service.is_connected:
+            return {
+                "success": True,
+                "is_authenticated": True,
+                "message": "Already authenticated"
+            }
+        
+        # Ensure WhatsApp service is initialized
+        if not whatsapp_service.page:
+            try:
+                await whatsapp_service.initialize()
+                # Wait a moment for page to load
+                await asyncio.sleep(3)
+            except Exception as e:
+                logger.error(f"Error initializing WhatsApp service: {e}")
+                return {
+                    "success": False,
+                    "is_authenticated": False,
+                    "message": f"Error initializing: {str(e)}"
+                }
+        
+        # Get QR code from page
+        qr_code_data = await whatsapp_service.get_qr_code()
+        
+        if qr_code_data:
+            return {
+                "success": True,
+                "qr_code": qr_code_data,
+                "is_authenticated": False,
+                "message": "Scan the QR code with WhatsApp to connect"
+            }
+        else:
+            # QR code not available yet - might still be loading
+            if whatsapp_service.has_session:
+                return {
+                    "success": False,
+                    "is_authenticated": False,
+                    "has_session": True,
+                    "message": "Session exists - connecting..."
+                }
+            else:
+                return {
+                    "success": False,
+                    "is_authenticated": False,
+                    "message": "QR code not available yet. Please wait..."
+                }
+    except Exception as e:
+        logger.error(f"Error getting QR code: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return {
+            "success": False,
+            "is_authenticated": False,
+            "error": str(e)
+        }
 
 @app.get("/api/whatsapp/status", response_model=WhatsAppStatusResponse)
 async def get_whatsapp_status():
@@ -2478,6 +2557,267 @@ async def generate_gmail_token(background_tasks: BackgroundTasks):
 
 
 # ==================== END SETTINGS/ENV MANAGEMENT ENDPOINTS ====================
+
+# ==================== USER SERVICE CREDENTIALS ENDPOINTS ====================
+
+class SaveServiceCredentialsRequest(BaseModel):
+    """Request model for saving service credentials"""
+    service_name: str  # 'gmail', 'whatsapp', 'telegram', 'slack'
+    credentials_data: Dict  # Service-specific credentials (e.g., {access_token, refresh_token} for Gmail)
+
+class ServiceCredentialsResponse(BaseModel):
+    """Response model for service credentials"""
+    success: bool
+    message: str
+    service_name: str
+    is_connected: bool
+
+@app.post("/api/user/services/{service_name}/connect", response_model=ServiceCredentialsResponse)
+async def save_service_credentials(
+    service_name: str,
+    request: SaveServiceCredentialsRequest,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: Session = Depends(get_db)
+):
+    """
+    Save or update service credentials for the authenticated user
+    Service names: 'gmail', 'whatsapp', 'telegram', 'slack'
+    """
+    if not DATABASE_AVAILABLE or not UserServiceCredential or not AUTH_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Service not available")
+    
+    try:
+        # Verify token and get user
+        token = credentials.credentials
+        user_id = extract_user_id_from_token(token)
+        
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        
+        # Verify user exists
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # Validate service name
+        valid_services = ['gmail', 'whatsapp', 'telegram', 'slack']
+        if service_name.lower() not in valid_services:
+            raise HTTPException(status_code=400, detail=f"Invalid service name. Must be one of: {', '.join(valid_services)}")
+        
+        service_name = service_name.lower()
+        
+        # Check if credentials already exist
+        existing = db.query(UserServiceCredential).filter(
+            UserServiceCredential.user_id == user_id,
+            UserServiceCredential.service_name == service_name
+        ).first()
+        
+        if existing:
+            # Update existing credentials
+            existing.credentials_data = request.credentials_data
+            existing.is_active = True
+            existing.updated_at = datetime.now()
+            db.commit()
+            db.refresh(existing)
+            logger.info(f"Updated {service_name} credentials for user {user_id}")
+        else:
+            # Create new credentials
+            new_credential = UserServiceCredential(
+                user_id=user_id,
+                service_name=service_name,
+                credentials_data=request.credentials_data,
+                is_active=True,
+                is_connected=False
+            )
+            db.add(new_credential)
+            db.commit()
+            db.refresh(new_credential)
+            logger.info(f"Created {service_name} credentials for user {user_id}")
+        
+        return ServiceCredentialsResponse(
+            success=True,
+            message=f"{service_name.capitalize()} credentials saved successfully",
+            service_name=service_name,
+            is_connected=False  # Will be updated when connection is verified
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error saving service credentials: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to save credentials: {str(e)}")
+
+
+@app.get("/api/user/services/{service_name}/credentials")
+async def get_service_credentials(
+    service_name: str,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: Session = Depends(get_db)
+):
+    """
+    Get service credentials for the authenticated user
+    Returns credentials data (sensitive fields may be masked)
+    """
+    if not DATABASE_AVAILABLE or not UserServiceCredential or not AUTH_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Service not available")
+    
+    try:
+        # Verify token and get user
+        token = credentials.credentials
+        user_id = extract_user_id_from_token(token)
+        
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        
+        service_name = service_name.lower()
+        
+        # Get credentials
+        credential = db.query(UserServiceCredential).filter(
+            UserServiceCredential.user_id == user_id,
+            UserServiceCredential.service_name == service_name,
+            UserServiceCredential.is_active == True
+        ).first()
+        
+        if not credential:
+            return {
+                "success": False,
+                "message": f"{service_name.capitalize()} credentials not found. Please connect your account.",
+                "has_credentials": False
+            }
+        
+        # Return credentials (mask sensitive data if needed)
+        credentials_data = credential.credentials_data.copy()
+        
+        # Mask sensitive tokens in response
+        if service_name == 'gmail':
+            if 'access_token' in credentials_data:
+                credentials_data['access_token'] = credentials_data['access_token'][:20] + '...' if len(credentials_data['access_token']) > 20 else '***'
+            if 'refresh_token' in credentials_data:
+                credentials_data['refresh_token'] = credentials_data['refresh_token'][:20] + '...' if len(credentials_data['refresh_token']) > 20 else '***'
+        
+        return {
+            "success": True,
+            "has_credentials": True,
+            "service_name": service_name,
+            "is_connected": credential.is_connected,
+            "credentials_data": credentials_data,  # Masked version
+            "last_connected_at": credential.last_connected_at.isoformat() if credential.last_connected_at else None
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting service credentials: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to get credentials: {str(e)}")
+
+
+@app.delete("/api/user/services/{service_name}/disconnect")
+async def disconnect_service(
+    service_name: str,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: Session = Depends(get_db)
+):
+    """
+    Disconnect/remove service credentials for the authenticated user
+    """
+    if not DATABASE_AVAILABLE or not UserServiceCredential or not AUTH_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Service not available")
+    
+    try:
+        # Verify token and get user
+        token = credentials.credentials
+        user_id = extract_user_id_from_token(token)
+        
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        
+        service_name = service_name.lower()
+        
+        # Find and delete credentials
+        credential = db.query(UserServiceCredential).filter(
+            UserServiceCredential.user_id == user_id,
+            UserServiceCredential.service_name == service_name
+        ).first()
+        
+        if credential:
+            db.delete(credential)
+            db.commit()
+            logger.info(f"Disconnected {service_name} for user {user_id}")
+            return {
+                "success": True,
+                "message": f"{service_name.capitalize()} disconnected successfully"
+            }
+        else:
+            return {
+                "success": False,
+                "message": f"{service_name.capitalize()} not connected"
+            }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error disconnecting service: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to disconnect service: {str(e)}")
+
+
+@app.get("/api/user/services/status")
+async def get_all_services_status(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: Session = Depends(get_db)
+):
+    """
+    Get status of all connected services for the authenticated user
+    """
+    if not DATABASE_AVAILABLE or not UserServiceCredential or not AUTH_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Service not available")
+    
+    try:
+        # Verify token and get user
+        token = credentials.credentials
+        user_id = extract_user_id_from_token(token)
+        
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        
+        # Get all active credentials for user
+        credentials_list = db.query(UserServiceCredential).filter(
+            UserServiceCredential.user_id == user_id,
+            UserServiceCredential.is_active == True
+        ).all()
+        
+        services_status = {}
+        for cred in credentials_list:
+            services_status[cred.service_name] = {
+                "is_connected": cred.is_connected,
+                "last_connected_at": cred.last_connected_at.isoformat() if cred.last_connected_at else None,
+                "has_credentials": True
+            }
+        
+        # Add services that are not connected
+        all_services = ['gmail', 'whatsapp', 'telegram', 'slack']
+        for service in all_services:
+            if service not in services_status:
+                services_status[service] = {
+                    "is_connected": False,
+                    "last_connected_at": None,
+                    "has_credentials": False
+                }
+        
+        return {
+            "success": True,
+            "services": services_status
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting services status: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to get services status: {str(e)}")
+
+
+# ==================== END USER SERVICE CREDENTIALS ENDPOINTS ====================
 
 # ==================== USER MANAGEMENT ENDPOINTS ====================
 
