@@ -613,4 +613,6 @@ if __name__ == '__main__':
     print("\n[*] Make sure the backend is running on port 8000!")
     print("=" * 60)
     
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    # Run without Flask debug/reloader so the process stays single-threaded
+    # and parent process (`app.py`) can correctly detect its status.
+    app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False, threaded=True)

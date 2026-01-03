@@ -314,9 +314,40 @@ def start_servers():
             try:
                 # Check if port 3001 is already in use and kill the process
                 print("[*] Checking if port 3001 is available...")
-                if kill_process_by_port(3001):
-                    print("[*] Killed existing process on port 3001")
-                    time.sleep(1)  # Wait a moment for port to be released
+                import socket
+                # Check if port is in use first
+                port_in_use = False
+                try:
+                    test_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    test_sock.settimeout(0.5)
+                    result = test_sock.connect_ex(('localhost', 3001))
+                    test_sock.close()
+                    if result == 0:
+                        port_in_use = True
+                except:
+                    pass
+                
+                if port_in_use:
+                    print("[*] Port 3001 is in use, attempting to kill existing process...")
+                    if kill_process_by_port(3001):
+                        print("[*] Killed existing process on port 3001")
+                        time.sleep(2)  # Wait longer for port to be fully released
+                        # Verify port is now free
+                        for verify_attempt in range(5):
+                            try:
+                                test_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                                test_sock.settimeout(0.5)
+                                result = test_sock.connect_ex(('localhost', 3001))
+                                test_sock.close()
+                                if result != 0:
+                                    break  # Port is free
+                            except:
+                                pass
+                            if verify_attempt < 4:
+                                time.sleep(0.5)
+                    else:
+                        print("[!] Could not kill process on port 3001, but continuing anyway...")
+                        time.sleep(1)
                 
                 # Check if Node.js is available (reuse check from WhatsApp or check again)
                 try:
@@ -466,66 +497,105 @@ def start_servers():
 
 def kill_process_by_port(port):
     """Kill process using a specific port (Windows/Linux compatible)"""
-    if not HAS_PSUTIL:
-        # Fallback: Use netstat and taskkill on Windows, or lsof and kill on Unix
+    killed_any = False
+    
+    # Try psutil first if available (more reliable)
+    if HAS_PSUTIL:
         try:
-            if sys.platform == 'win32':
-                # Use netstat to find PID, then taskkill
+            for proc in psutil.process_iter(['pid', 'name']):
+                try:
+                    connections = proc.net_connections(kind='inet')
+                    for conn in connections:
+                        if conn.laddr and conn.laddr.port == port:
+                            print(f"[*] Found process {proc.info['name']} (PID: {proc.info['pid']}) using port {port}")
+                            try:
+                                proc.kill()
+                                proc.wait(timeout=2)
+                                print(f"[OK] Killed process {proc.info['pid']} on port {port}")
+                                killed_any = True
+                                time.sleep(0.5)  # Wait for port to be released
+                            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.TimeoutExpired):
+                                pass
+                except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess, AttributeError):
+                    continue
+            if killed_any:
+                return True
+        except Exception as e:
+            print(f"[!] Error killing process on port {port} (psutil method): {e}")
+    
+    # Fallback: Use netstat and taskkill on Windows, or lsof and kill on Unix
+    try:
+        if sys.platform == 'win32':
+            # Use netstat to find PID, then taskkill
+            # Try multiple times to catch all processes
+            for attempt in range(3):
                 result = subprocess.run(
                     ['netstat', '-ano'],
                     capture_output=True,
                     text=True,
                     timeout=5
                 )
+                found_any = False
+                pids_to_kill = set()  # Use set to avoid killing same PID multiple times
+                
                 for line in result.stdout.split('\n'):
+                    line = line.strip()
+                    # Check for both IPv4 and IPv6 formats, and LISTENING state
                     if f':{port}' in line and 'LISTENING' in line:
+                        # Parse the line - format is: PROTO  Local Address  Foreign Address  State  PID
                         parts = line.split()
                         if len(parts) >= 5:
                             pid = parts[-1]
+                            # Validate PID is numeric
                             try:
-                                subprocess.run(['taskkill', '/F', '/PID', pid], 
-                                             capture_output=True, timeout=2)
-                                print(f"[OK] Killed process {pid} on port {port}")
-                                return True
-                            except:
-                                pass
-            else:
-                # Unix-like: use lsof to find PID, then kill
-                result = subprocess.run(
-                    ['lsof', '-ti', f':{port}'],
-                    capture_output=True,
-                    text=True,
-                    timeout=5
-                )
-                if result.returncode == 0 and result.stdout.strip():
-                    pid = result.stdout.strip()
-                    subprocess.run(['kill', '-9', pid], timeout=2)
-                    print(f"[OK] Killed process {pid} on port {port}")
-                    return True
-        except Exception as e:
-            print(f"[!] Error killing process on port {port} (fallback method): {e}")
-        return False
-    
-    # Use psutil if available
-    try:
-        for proc in psutil.process_iter(['pid', 'name']):
-            try:
-                # Use net_connections() instead of connections() for newer psutil versions
-                # net_connections() returns a list of connection objects
-                connections = proc.net_connections(kind='inet')
-                for conn in connections:
-                    if conn.laddr and conn.laddr.port == port:
-                        print(f"[*] Found process {proc.info['name']} (PID: {proc.info['pid']}) using port {port}")
-                        proc.kill()
-                        proc.wait(timeout=2)
-                        print(f"[OK] Killed process on port {port}")
-                        return True
-            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess, AttributeError):
-                # Some processes may not have network connections or access denied
-                continue
+                                int(pid)
+                                pids_to_kill.add(pid)
+                            except ValueError:
+                                continue
+                
+                # Kill all found PIDs
+                for pid in pids_to_kill:
+                    try:
+                        kill_result = subprocess.run(
+                            ['taskkill', '/F', '/PID', pid], 
+                            capture_output=True, 
+                            timeout=3
+                        )
+                        if kill_result.returncode == 0:
+                            print(f"[OK] Killed process {pid} on port {port}")
+                            killed_any = True
+                            found_any = True
+                            time.sleep(0.5)  # Wait for port to be released
+                        else:
+                            # Check if process doesn't exist (already killed)
+                            error_msg = kill_result.stderr.decode('utf-8', errors='ignore') if kill_result.stderr else ''
+                            if 'not found' not in error_msg.lower():
+                                print(f"[!] Failed to kill process {pid}: {error_msg.strip()}")
+                    except Exception as e:
+                        print(f"[!] Exception killing PID {pid}: {e}")
+                
+                if not found_any:
+                    break  # No more processes found
+        else:
+            # Unix-like: use lsof to find PID, then kill
+            result = subprocess.run(
+                ['lsof', '-ti', f':{port}'],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                pids = result.stdout.strip().split('\n')
+                for pid in pids:
+                    try:
+                        subprocess.run(['kill', '-9', pid], timeout=2, capture_output=True)
+                        print(f"[OK] Killed process {pid} on port {port}")
+                        killed_any = True
+                    except:
+                        pass
     except Exception as e:
-        print(f"[!] Error killing process on port {port}: {e}")
-    return False
+        print(f"[!] Error killing process on port {port} (fallback method): {e}")
+    return killed_any
 
 def stop_servers():
     """Stop all servers"""
@@ -669,6 +739,45 @@ def stop_servers():
     
     print("[OK] All servers stopped")
 
+def open_browser(url):
+    """Open URL in default browser (cross-platform)"""
+    # Try multiple methods to ensure browser opens
+    methods = []
+    
+    # Method 1: webbrowser module (most common)
+    try:
+        import webbrowser
+        methods.append(('webbrowser', lambda: webbrowser.open(url)))
+    except ImportError:
+        pass
+    
+    # Method 2: Windows startfile (Windows-specific, very reliable)
+    if sys.platform == 'win32':
+        methods.append(('Windows startfile', lambda: os.startfile(url)))
+    
+    # Method 3: Direct command execution (fallback)
+    if sys.platform == 'win32':
+        methods.append(('Windows cmd', lambda: subprocess.Popen(['cmd', '/c', 'start', '', url], shell=False)))
+    elif sys.platform == 'darwin':  # macOS
+        methods.append(('macOS open', lambda: subprocess.Popen(['open', url])))
+    else:  # Linux
+        methods.append(('xdg-open', lambda: subprocess.Popen(['xdg-open', url])))
+    
+    # Try each method until one succeeds
+    for method_name, method_func in methods:
+        try:
+            method_func()
+            print(f"[OK] Opened {url} in browser (using {method_name})")
+            time.sleep(0.5)  # Small delay to ensure browser starts
+            return True
+        except Exception as e:
+            continue
+    
+    # If all methods failed
+    print(f"[!] Failed to open browser automatically.")
+    print(f"[!] Please manually open: {url}")
+    return False
+
 def signal_handler(signum, frame):
     """Handle interrupt signals (Ctrl+C)"""
     print("\n[*] Interrupt signal received...")
@@ -740,6 +849,21 @@ def main():
             print("[!] Continuing anyway - the app window will open.")
             print("[!] If features don't work, check if the backend server is running.")
         
+        # Verify chat server is ready before opening browser
+        print("[*] Verifying chat server is ready...")
+        chat_ready = False
+        for i in range(10):
+            try:
+                response = urllib.request.urlopen('http://localhost:5000/', timeout=2)
+                print("[OK] Chat server is ready on http://localhost:5000")
+                chat_ready = True
+                break
+            except (urllib.error.URLError, socket.timeout, ConnectionRefusedError):
+                if i < 9:
+                    time.sleep(1)
+                else:
+                    print("[!] Chat server not ready, but opening browser anyway...")
+        
         # Open the application through the chat server (which serves login page at root)
         # This ensures the login page is shown first, then redirects to chat_interface.html after login
         app_url = "http://localhost:5000/"
@@ -775,99 +899,32 @@ def main():
                 stop_servers()
                 print("[*] All servers stopped. Goodbye!")
         else:
-            # Desktop mode: Try webview, fallback to browser
-            print(f"[*] Opening application: {app_url}")
-            print("[*] The application window should open now...")
+            # Desktop mode: Always open in browser (skip webview)
+            print("=" * 60)
+            print(f"[*] Opening application in browser: {app_url}")
+            print("[*] The browser should open automatically...")
             print("[*] You will see the login page first.")
-            print("[*] Close the window or press Ctrl+C to stop all servers and exit")
+            print("[*] Close the browser and press Ctrl+C to stop all servers and exit")
             print("=" * 60)
             
+            # Open browser directly (skip webview)
+            browser_opened = open_browser(app_url)
+            
+            if browser_opened:
+                print("[*] Browser opened successfully!")
+            else:
+                print(f"[!] Could not open browser automatically.")
+                print(f"[!] Please manually open: {app_url}")
+            
+            # Keep servers running until Ctrl+C
+            print("[*] Servers are running. Press Ctrl+C to stop all servers and exit")
             try:
-                import webview
-                
-                # Get screen dimensions for responsive window sizing
-                try:
-                    import tkinter as tk
-                    root = tk.Tk()
-                    screen_width = root.winfo_screenwidth()
-                    screen_height = root.winfo_screenheight()
-                    root.destroy()
-                    
-                    # Use a more reasonable default size (70% of screen or fixed size, whichever is smaller)
-                    # Default to 1200x800, but scale down if screen is smaller
-                    default_width = 1200
-                    default_height = 800
-                    window_width = min(default_width, int(screen_width * 0.7))
-                    window_height = min(default_height, int(screen_height * 0.7))
-                    
-                    # Ensure minimum size
-                    window_width = max(800, window_width)
-                    window_height = max(600, window_height)
-                    
-                    # Center the window
-                    x = (screen_width - window_width) // 2
-                    y = (screen_height - window_height) // 2
-                except Exception:
-                    # Fallback to default dimensions if tkinter is not available
-                    window_width = 1200
-                    window_height = 800
-                    x = None
-                    y = None
-                
-                # Create the window - open the URL instead of local file
-                # This goes through Flask server which serves login.html at root route
-                window = webview.create_window(
-                    'GPT Intermediary',
-                    app_url,
-                    width=window_width,
-                    height=window_height,
-                    x=x,
-                    y=y,
-                    resizable=True,
-                    min_size=(800, 600),  # Minimum window size
-                    fullscreen=False  # Allow user to maximize manually
-                )
-                
-                # Start the webview (this blocks until window is closed)
-                webview.start()
-                print("\n[*] Application window closed")
-                print("[*] Stopping all servers...")
-                # Stop servers when window is closed
+                while servers_running:
+                    time.sleep(1)
+            except KeyboardInterrupt:
+                print("\n[*] Stopping all servers...")
                 stop_servers()
                 print("[*] All servers stopped. Goodbye!")
-            
-            except ImportError:
-                print("[!] pywebview not installed. Opening in default browser instead...")
-                import webbrowser
-                webbrowser.open(app_url)
-                print("[*] Opened in browser.")
-                print("[*] Close this terminal window or press Ctrl+C to stop servers and exit")
-                
-                # Keep the main thread alive until Ctrl+C
-                try:
-                    while servers_running:
-                        time.sleep(1)
-                except KeyboardInterrupt:
-                    print("\n[*] Stopping all servers...")
-                    stop_servers()
-                    print("[*] All servers stopped. Goodbye!")
-                
-            except Exception as e:
-                print(f"[!] Error creating webview window: {e}")
-                print("[*] Attempting to open in default browser instead...")
-                import webbrowser
-                webbrowser.open(app_url)
-                print("[*] Opened in browser.")
-                print("[*] Close this terminal window or press Ctrl+C to stop servers and exit")
-                
-                # Keep the main thread alive until Ctrl+C
-                try:
-                    while servers_running:
-                        time.sleep(1)
-                except KeyboardInterrupt:
-                    print("\n[*] Stopping all servers...")
-                    stop_servers()
-                    print("[*] All servers stopped. Goodbye!")
         
     except KeyboardInterrupt:
         print("\n[*] Keyboard interrupt received")
