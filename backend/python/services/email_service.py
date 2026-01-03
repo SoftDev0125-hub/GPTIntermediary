@@ -49,15 +49,23 @@ class EmailService:
         """Cleanup resources"""
         logger.info("Email service cleanup completed")
     
-    def _get_service(self, access_token: str, refresh_token: Optional[str] = None):
+    def _get_service(self, access_token: str, refresh_token: Optional[str] = None, 
+                     google_client_id: Optional[str] = None, google_client_secret: Optional[str] = None):
         """Create Gmail service from user's access token"""
         try:
+            # Use provided client_id/secret, or fallback to .env for backward compatibility
+            client_id = google_client_id or os.getenv('GOOGLE_CLIENT_ID')
+            client_secret = google_client_secret or os.getenv('GOOGLE_CLIENT_SECRET')
+            
+            if not client_id or not client_secret:
+                raise Exception("Google Client ID and Client Secret are required. Please configure them in Settings.")
+            
             creds = Credentials(
                 token=access_token,
                 refresh_token=refresh_token,
                 token_uri='https://oauth2.googleapis.com/token',
-                client_id=os.getenv('GOOGLE_CLIENT_ID'),
-                client_secret=os.getenv('GOOGLE_CLIENT_SECRET'),
+                client_id=client_id,
+                client_secret=client_secret,
                 scopes=SCOPES
             )
             
@@ -89,7 +97,9 @@ class EmailService:
         subject: str,
         body: str,
         html: Optional[str] = None,
-        refresh_token: Optional[str] = None
+        refresh_token: Optional[str] = None,
+        google_client_id: Optional[str] = None,
+        google_client_secret: Optional[str] = None
     ) -> str:
         """
         Send an email via Gmail
@@ -145,7 +155,9 @@ class EmailService:
         self,
         access_token: str,
         limit: int = 1000,
-        refresh_token: Optional[str] = None
+        refresh_token: Optional[str] = None,
+        google_client_id: Optional[str] = None,
+        google_client_secret: Optional[str] = None
     ) -> tuple[List[EmailMessage], int]:
         """
         Retrieve unread emails
@@ -158,7 +170,7 @@ class EmailService:
         """
         try:
             # Get service with user credentials
-            service = self._get_service(access_token, refresh_token)
+            service = self._get_service(access_token, refresh_token, google_client_id, google_client_secret)
             
             # Get total unread count from system label (more accurate than page-limited list)
             # Add timeout handling
@@ -212,7 +224,9 @@ class EmailService:
         sender_email: Optional[str] = None,
         body: str = "",
         html: Optional[str] = None,
-        refresh_token: Optional[str] = None
+        refresh_token: Optional[str] = None,
+        google_client_id: Optional[str] = None,
+        google_client_secret: Optional[str] = None
     ) -> str:
         """
         Reply to an email
@@ -228,7 +242,7 @@ class EmailService:
         """
         try:
             # Get service with user credentials
-            service = self._get_service(access_token, refresh_token)
+            service = self._get_service(access_token, refresh_token, google_client_id, google_client_secret)
             
             # If sender_email provided, find the most recent message from that sender
             if sender_email and not message_id:
@@ -296,7 +310,9 @@ class EmailService:
         self,
         access_token: str,
         message_id: str,
-        refresh_token: Optional[str] = None
+        refresh_token: Optional[str] = None,
+        google_client_id: Optional[str] = None,
+        google_client_secret: Optional[str] = None
     ) -> None:
         """
         Mark an email as read in Gmail
@@ -308,7 +324,7 @@ class EmailService:
         """
         try:
             # Get service with user credentials
-            service = self._get_service(access_token, refresh_token)
+            service = self._get_service(access_token, refresh_token, google_client_id, google_client_secret)
             
             # Remove UNREAD label to mark as read
             service.users().messages().modify(

@@ -866,26 +866,50 @@ def main():
         
         # Open the application through the chat server (which serves login page at root)
         # This ensures the login page is shown first, then redirects to chat_interface.html after login
-        app_url = "http://localhost:5000/"
         
         # Check if running in server/VPS mode
         is_server = os.environ.get("VPS") == "true" or os.environ.get("IS_SERVER") == "true"
+        domain = os.environ.get("DOMAIN", None)
+        use_https = os.environ.get("USE_HTTPS", "false").lower() == "true"
+        
+        # Determine app URL based on environment
+        if is_server and domain:
+            # VPS with domain: Use domain (assumes reverse proxy handles ports)
+            protocol = "https" if use_https else "http"
+            app_url = f"{protocol}://{domain}/"
+        else:
+            # Local development: Use localhost
+            app_url = "http://localhost:5000/"
         
         if is_server:
             # Server/VPS mode: No GUI, browser-only access
             print("=" * 60)
             print("[*] Running in SERVER MODE (VPS/Container)")
             print("[*] Application is running and accessible via browser")
-            print(f"[*] Local access: {app_url}")
             
-            # Try to get server IP for remote access
-            try:
-                import socket
-                hostname = socket.gethostname()
-                local_ip = socket.gethostbyname(hostname)
-                print(f"[*] Network access: http://{local_ip}:5000")
-            except Exception:
-                pass
+            if domain:
+                print(f"[*] Domain access: {app_url}")
+                print(f"[*] Access from your browser: {app_url}")
+            else:
+                print(f"[*] Local access: http://localhost:5000/")
+                # Try to get server IP for remote access
+                try:
+                    import socket
+                    # Get the actual network IP (not 127.0.0.1)
+                    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                    s.connect(("8.8.8.8", 80))
+                    server_ip = s.getsockname()[0]
+                    s.close()
+                    print(f"[*] Network access: http://{server_ip}:5000")
+                except Exception:
+                    try:
+                        # Fallback method
+                        hostname = socket.gethostname()
+                        server_ip = socket.gethostbyname(hostname)
+                        if server_ip != "127.0.0.1":
+                            print(f"[*] Network access: http://{server_ip}:5000")
+                    except Exception:
+                        pass
             
             print("[*] Press Ctrl+C to stop all servers and exit")
             print("=" * 60)

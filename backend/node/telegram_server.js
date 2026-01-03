@@ -28,9 +28,23 @@ const io = new Server(server, {
 
 const PORT = 3001; // Different port from WhatsApp server
 
-// Middleware
-app.use(cors());
+// Middleware - CORS with explicit configuration
+app.use(cors({
+    origin: '*',
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+    credentials: false
+}));
+
+// Handle preflight OPTIONS requests
+app.options('*', cors());
+
 app.use(express.json());
+
+// Health check endpoint - must be defined before other routes
+app.get('/health', (req, res) => {
+    res.json({ status: 'ok', service: 'telegram-server' });
+});
 
 // Telegram client instance
 let client = null;
@@ -1543,11 +1557,6 @@ app.post('/api/telegram/send', async (req, res) => {
     }
 });
 
-// Health check endpoint
-app.get('/health', (req, res) => {
-    res.json({ status: 'ok', service: 'telegram-server' });
-});
-
 // Debug endpoint to test sendCode
 app.post('/api/telegram/debug/sendcode', async (req, res) => {
     try {
@@ -1627,9 +1636,9 @@ io.on('connection', (socket) => {
     });
 });
 
-// Start server
-server.listen(PORT, () => {
-    console.log(`[Telegram Server] Server running on http://localhost:${PORT}`);
+// Start server - listen on all interfaces (0.0.0.0) for VPS compatibility
+server.listen(PORT, '0.0.0.0', () => {
+    console.log(`[Telegram Server] Server running on http://0.0.0.0:${PORT}`);
     console.log(`[Telegram Server] WebSocket server ready`);
     if (API_ID && API_HASH) {
         console.log(`[Telegram Server] API credentials found - initializing client...`);

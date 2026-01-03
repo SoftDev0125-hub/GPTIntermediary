@@ -3,14 +3,31 @@ Database configuration and session management for PostgreSQL
 Connects to existing gptintermediarydb database
 """
 import os
+from pathlib import Path
 from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import NullPool
 from dotenv import load_dotenv
 
-# Load environment variables
-load_dotenv()
+# Load environment variables from multiple possible locations
+# 1. Try current directory (backend/python/.env)
+# 2. Try parent directory (root .env)
+current_dir = Path(__file__).parent
+root_dir = current_dir.parent.parent
+
+# Try loading from both locations
+env_loaded = False
+if (current_dir / ".env").exists():
+    load_dotenv(dotenv_path=current_dir / ".env")
+    env_loaded = True
+if (root_dir / ".env").exists():
+    load_dotenv(dotenv_path=root_dir / ".env", override=not env_loaded)
+    env_loaded = True
+
+# If no .env file found, try default load_dotenv() behavior
+if not env_loaded:
+    load_dotenv()
 
 # Get database URL from environment variable
 # Format: postgresql://user:password@host:port/database
@@ -19,6 +36,15 @@ DATABASE_URL = os.getenv(
     "DATABASE_URL", 
     "postgresql://postgres:password@localhost:5432/gptintermediarydb"
 )
+
+# Log the DATABASE_URL (with password masked for security)
+if DATABASE_URL and DATABASE_URL != "postgresql://postgres:password@localhost:5432/gptintermediarydb":
+    # Mask password in URL for logging
+    import re
+    masked_url = re.sub(r':([^:@]+)@', r':****@', DATABASE_URL)
+    print(f"[DATABASE] Loaded DATABASE_URL: {masked_url}")
+else:
+    print(f"[DATABASE] WARNING: Using default DATABASE_URL (environment variable not found)")
 
 # Create SQLAlchemy engine
 engine = create_engine(

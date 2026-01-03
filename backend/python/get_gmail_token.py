@@ -26,7 +26,7 @@ def get_gmail_credentials():
             "client_secret": os.getenv('GOOGLE_CLIENT_SECRET'),
             "auth_uri": "https://accounts.google.com/o/oauth2/auth",
             "token_uri": "https://oauth2.googleapis.com/token",
-            "redirect_uris": ["http://localhost:8085/", "urn:ietf:wg:oauth:2.0:oob"]
+            "redirect_uris": ["http://72.62.162.44:8085/", "urn:ietf:wg:oauth:2.0:oob"]
         }
     }
     

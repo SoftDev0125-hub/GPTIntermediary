@@ -30,7 +30,7 @@ from services.excel_service import ExcelService
 # Database imports
 try:
     from database import get_db, init_db, engine
-    from db_models import User
+    from db_models import User, UserServiceCredential, GmailInfo, TelegramSession, SlackInfo, APIKey
     from sqlalchemy.orm import Session
     from sqlalchemy.sql import func
     DATABASE_AVAILABLE = True
@@ -55,11 +55,76 @@ try:
     from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
     AUTH_AVAILABLE = True
     security = HTTPBearer()
+    optional_security = HTTPBearer(auto_error=False)  # Optional security for backward compatibility
 except ImportError as e:
     print(f"[WARNING] Authentication modules not available: {e}")
     print("[WARNING] Install required packages: pip install passlib bcrypt python-jose python-multipart")
     AUTH_AVAILABLE = False
     security = None
+    optional_security = None
+
+# Helper function to get current user ID from JWT token (optional)
+async def get_current_user_id_optional(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(optional_security) if optional_security else None,
+    db: Session = Depends(get_db)
+) -> Optional[int]:
+    """
+    Extract and verify user ID from JWT token (optional - for backward compatibility)
+    Returns user_id if token is valid and present, None otherwise
+    """
+    if not AUTH_AVAILABLE or not credentials:
+        return None
+    
+    try:
+        token = credentials.credentials
+        user_id = extract_user_id_from_token(token)
+        
+        if not user_id:
+            return None
+        
+        # Verify user exists in database
+        if DATABASE_AVAILABLE and User:
+            user = db.query(User).filter(User.id == user_id).first()
+            if not user:
+                return None
+        
+        return user_id
+    except Exception as e:
+        logger.debug(f"Error extracting user from token (optional): {e}")
+        return None
+
+# Helper function to get current user ID from JWT token (required)
+async def get_current_user_id(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: Session = Depends(get_db)
+) -> int:
+    """
+    Extract and verify user ID from JWT token
+    Returns user_id if token is valid, raises HTTPException if invalid
+    """
+    if not AUTH_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Authentication service not available")
+    
+    try:
+        token = credentials.credentials
+        user_id = extract_user_id_from_token(token)
+        
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+        
+        # Verify user exists in database
+        if DATABASE_AVAILABLE and User:
+            user = db.query(User).filter(User.id == user_id).first()
+            if not user:
+                raise HTTPException(status_code=404, detail="User not found")
+        
+        return user_id
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error extracting user from token: {e}")
+        raise HTTPException(status_code=401, detail="Invalid token")
+
 from models.schemas import (
     SendEmailRequest, 
     EmailReplyRequest, 
@@ -566,8 +631,23 @@ async def login_user(request: LoginRequest, db: Session = Depends(get_db)):
         if not request.password:
             raise HTTPException(status_code=400, detail="Password is required")
         
-        # Find user by email
-        user = db.query(User).filter(User.email == request.email.strip()).first()
+        # Find user by email - catch database connection errors
+        try:
+            user = db.query(User).filter(User.email == request.email.strip()).first()
+        except Exception as db_error:
+            error_str = str(db_error).lower()
+            logger.error(f"Database connection error during login: {db_error}")
+            if 'password authentication failed' in error_str or 'connection' in error_str or 'operationalerror' in error_str:
+                raise HTTPException(
+                    status_code=503, 
+                    detail="Database connection failed. Please check your DATABASE_URL in .env file and ensure PostgreSQL is running."
+                )
+            else:
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"Database error: {str(db_error)}"
+                )
+        
         if not user:
             # User not found in database - return error
             logger.warning(f"Login attempt with non-existent email: {request.email}")
@@ -722,25 +802,62 @@ async def clear_remember_me():
 
 
 @app.post("/api/email/send", response_model=OperationResponse)
-async def send_email(request: SendEmailRequest):
+async def send_email(
+    request: SendEmailRequest,
+    user_id: Optional[int] = Depends(get_current_user_id_optional),
+    db: Session = Depends(get_db)
+):
     """
-    Send an email via Gmail using user's credentials from ChatGPT
+    Send an email via Gmail using user's credentials
+    Uses per-user credentials from database if authenticated, otherwise uses request credentials
     
     Args:
         request: Email details including user credentials, recipient, subject, and body
+        user_id: User ID from JWT token (optional - for backward compatibility)
+        db: Database session
     
     Returns:
         Operation status and message ID
     """
     try:
+        # Try to get user's Gmail credentials from database first (if authenticated)
+        access_token = None
+        refresh_token = None
+        google_client_id = None
+        google_client_secret = None
+        
+        if user_id and DATABASE_AVAILABLE:
+            from config_helpers import get_gmail_config
+            from user_service_helpers import get_user_gmail_credentials
+            gmail_config = get_gmail_config(db, user_id)
+            user_creds = get_user_gmail_credentials(db, user_id)
+            if gmail_config:
+                google_client_id = gmail_config.get('google_client_id')
+                google_client_secret = gmail_config.get('google_client_secret')
+            if user_creds and user_creds.get('access_token'):
+                access_token = user_creds['access_token']
+                refresh_token = user_creds.get('refresh_token')
+                logger.info(f"Using per-user Gmail credentials for user {user_id}")
+        
+        # Fallback to credentials from request body (backward compatibility)
+        if not access_token:
+            if request.user_credentials and request.user_credentials.access_token:
+                access_token = request.user_credentials.access_token
+                refresh_token = request.user_credentials.refresh_token
+                logger.info("Using credentials from request body (backward compatibility)")
+            else:
+                raise HTTPException(status_code=400, detail="No Gmail credentials provided. Please connect your Gmail account first.")
+        
         logger.info(f"Sending email to {request.to}")
         message_id = await email_service.send_email(
-            access_token=request.user_credentials.access_token,
-            refresh_token=request.user_credentials.refresh_token,
+            access_token=access_token,
+            refresh_token=refresh_token,
             to=request.to,
             subject=request.subject,
             body=request.body,
-            html=request.html
+            html=request.html,
+            google_client_id=google_client_id,
+            google_client_secret=google_client_secret
         )
         return OperationResponse(
             success=True,
@@ -804,26 +921,63 @@ async def test_email():
 
 
 @app.post("/api/email/unread", response_model=EmailListResponse)
-async def get_unread_emails(request: GetUnreadEmailsRequest):
+async def get_unread_emails(
+    request: GetUnreadEmailsRequest,
+    user_id: Optional[int] = Depends(get_current_user_id_optional),
+    db: Session = Depends(get_db)
+):
     """
-    Retrieve unread emails from Gmail using user's credentials from ChatGPT
+    Retrieve unread emails from Gmail using user's credentials
+    Uses per-user credentials from database if authenticated, otherwise uses request credentials
     
     Args:
         request: User credentials and limit for emails to retrieve
+        user_id: User ID from JWT token (optional - for backward compatibility)
+        db: Database session
     
     Returns:
         List of unread emails
     """
     try:
+        # Try to get user's Gmail credentials from database first (if authenticated)
+        access_token = None
+        refresh_token = None
+        google_client_id = None
+        google_client_secret = None
+        
+        if user_id and DATABASE_AVAILABLE:
+            from config_helpers import get_gmail_config
+            from user_service_helpers import get_user_gmail_credentials
+            gmail_config = get_gmail_config(db, user_id)
+            user_creds = get_user_gmail_credentials(db, user_id)
+            if gmail_config:
+                google_client_id = gmail_config.get('google_client_id')
+                google_client_secret = gmail_config.get('google_client_secret')
+            if user_creds and user_creds.get('access_token'):
+                access_token = user_creds['access_token']
+                refresh_token = user_creds.get('refresh_token')
+                logger.info(f"Using per-user Gmail credentials for user {user_id}")
+        
+        # Fallback to credentials from request body (backward compatibility)
+        if not access_token:
+            if request.user_credentials and request.user_credentials.access_token:
+                access_token = request.user_credentials.access_token
+                refresh_token = request.user_credentials.refresh_token
+                logger.info("Using credentials from request body (backward compatibility)")
+            else:
+                raise HTTPException(status_code=400, detail="No Gmail credentials provided. Please connect your Gmail account first.")
+        
         # Cap limit to prevent slow loading
         actual_limit = min(request.limit, 50)  # Max 50 emails for performance
         if request.limit > 50:
             logger.info(f"Requested {request.limit} emails, capping to {actual_limit} for performance")
         logger.info(f"Fetching {actual_limit} unread emails")
         emails, total_unread = await email_service.get_unread_emails(
-            access_token=request.user_credentials.access_token,
-            refresh_token=request.user_credentials.refresh_token,
-            limit=actual_limit
+            access_token=access_token,
+            refresh_token=refresh_token,
+            limit=actual_limit,
+            google_client_id=google_client_id,
+            google_client_secret=google_client_secret
         )
         logger.info(f"Successfully retrieved {len(emails)} emails")
         return EmailListResponse(
@@ -848,25 +1002,62 @@ async def get_unread_emails(request: GetUnreadEmailsRequest):
 
 
 @app.post("/api/email/reply", response_model=OperationResponse)
-async def reply_to_email(request: EmailReplyRequest):
+async def reply_to_email(
+    request: EmailReplyRequest,
+    user_id: Optional[int] = Depends(get_current_user_id_optional),
+    db: Session = Depends(get_db)
+):
     """
-    Reply to a specific email using user's credentials from ChatGPT
+    Reply to a specific email using user's credentials
+    Uses per-user credentials from database if authenticated, otherwise uses request credentials
     
     Args:
         request: Reply details including user credentials, message ID or sender email
+        user_id: User ID from JWT token (optional - for backward compatibility)
+        db: Database session
     
     Returns:
         Operation status
     """
     try:
+        # Try to get user's Gmail credentials from database first (if authenticated)
+        access_token = None
+        refresh_token = None
+        google_client_id = None
+        google_client_secret = None
+        
+        if user_id and DATABASE_AVAILABLE:
+            from config_helpers import get_gmail_config
+            from user_service_helpers import get_user_gmail_credentials
+            gmail_config = get_gmail_config(db, user_id)
+            user_creds = get_user_gmail_credentials(db, user_id)
+            if gmail_config:
+                google_client_id = gmail_config.get('google_client_id')
+                google_client_secret = gmail_config.get('google_client_secret')
+            if user_creds and user_creds.get('access_token'):
+                access_token = user_creds['access_token']
+                refresh_token = user_creds.get('refresh_token')
+                logger.info(f"Using per-user Gmail credentials for user {user_id}")
+        
+        # Fallback to credentials from request body (backward compatibility)
+        if not access_token:
+            if request.user_credentials and request.user_credentials.access_token:
+                access_token = request.user_credentials.access_token
+                refresh_token = request.user_credentials.refresh_token
+                logger.info("Using credentials from request body (backward compatibility)")
+            else:
+                raise HTTPException(status_code=400, detail="No Gmail credentials provided. Please connect your Gmail account first.")
+        
         logger.info(f"Replying to email from {request.sender_email or request.message_id}")
         message_id = await email_service.reply_to_email(
-            access_token=request.user_credentials.access_token,
-            refresh_token=request.user_credentials.refresh_token,
+            access_token=access_token,
+            refresh_token=refresh_token,
             message_id=request.message_id,
             sender_email=request.sender_email,
             body=request.body,
-            html=request.html
+            html=request.html,
+            google_client_id=google_client_id,
+            google_client_secret=google_client_secret
         )
         return OperationResponse(
             success=True,
@@ -879,22 +1070,59 @@ async def reply_to_email(request: EmailReplyRequest):
 
 
 @app.post("/api/email/mark-read", response_model=OperationResponse)
-async def mark_email_read(request: MarkEmailReadRequest):
+async def mark_email_read(
+    request: MarkEmailReadRequest,
+    user_id: Optional[int] = Depends(get_current_user_id_optional),
+    db: Session = Depends(get_db)
+):
     """
     Mark an email as read in Gmail
+    Uses per-user credentials from database if authenticated, otherwise uses request credentials
     
     Args:
         request: User credentials and message ID to mark as read
+        user_id: User ID from JWT token (optional - for backward compatibility)
+        db: Database session
     
     Returns:
         Operation status
     """
     try:
+        # Try to get user's Gmail credentials from database first (if authenticated)
+        access_token = None
+        refresh_token = None
+        google_client_id = None
+        google_client_secret = None
+        
+        if user_id and DATABASE_AVAILABLE:
+            from config_helpers import get_gmail_config
+            from user_service_helpers import get_user_gmail_credentials
+            gmail_config = get_gmail_config(db, user_id)
+            user_creds = get_user_gmail_credentials(db, user_id)
+            if gmail_config:
+                google_client_id = gmail_config.get('google_client_id')
+                google_client_secret = gmail_config.get('google_client_secret')
+            if user_creds and user_creds.get('access_token'):
+                access_token = user_creds['access_token']
+                refresh_token = user_creds.get('refresh_token')
+                logger.info(f"Using per-user Gmail credentials for user {user_id}")
+        
+        # Fallback to credentials from request body (backward compatibility)
+        if not access_token:
+            if request.user_credentials and request.user_credentials.access_token:
+                access_token = request.user_credentials.access_token
+                refresh_token = request.user_credentials.refresh_token
+                logger.info("Using credentials from request body (backward compatibility)")
+            else:
+                raise HTTPException(status_code=400, detail="No Gmail credentials provided. Please connect your Gmail account first.")
+        
         logger.info(f"Marking email {request.message_id} as read")
         await email_service.mark_email_as_read(
-            access_token=request.user_credentials.access_token,
-            refresh_token=request.user_credentials.refresh_token,
-            message_id=request.message_id
+            access_token=access_token,
+            refresh_token=refresh_token,
+            message_id=request.message_id,
+            google_client_id=google_client_id,
+            google_client_secret=google_client_secret
         )
         return OperationResponse(
             success=True,
@@ -972,6 +1200,70 @@ async def initialize_whatsapp():
         import traceback
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/whatsapp/qr-code")
+async def get_whatsapp_qr_code():
+    """
+    Get WhatsApp QR code for authentication
+    Alternative to Node.js server endpoint - works on VPS
+    """
+    try:
+        # If already authenticated, return success
+        if whatsapp_service.is_connected:
+            return {
+                "success": True,
+                "is_authenticated": True,
+                "message": "Already authenticated"
+            }
+        
+        # Ensure WhatsApp service is initialized
+        if not whatsapp_service.page:
+            try:
+                await whatsapp_service.initialize()
+                # Wait a moment for page to load
+                await asyncio.sleep(3)
+            except Exception as e:
+                logger.error(f"Error initializing WhatsApp service: {e}")
+                return {
+                    "success": False,
+                    "is_authenticated": False,
+                    "message": f"Error initializing: {str(e)}"
+                }
+        
+        # Get QR code from page
+        qr_code_data = await whatsapp_service.get_qr_code()
+        
+        if qr_code_data:
+            return {
+                "success": True,
+                "qr_code": qr_code_data,
+                "is_authenticated": False,
+                "message": "Scan the QR code with WhatsApp to connect"
+            }
+        else:
+            # QR code not available yet - might still be loading
+            if whatsapp_service.has_session:
+                return {
+                    "success": False,
+                    "is_authenticated": False,
+                    "has_session": True,
+                    "message": "Session exists - connecting..."
+                }
+            else:
+                return {
+                    "success": False,
+                    "is_authenticated": False,
+                    "message": "QR code not available yet. Please wait..."
+                }
+    except Exception as e:
+        logger.error(f"Error getting QR code: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return {
+            "success": False,
+            "is_authenticated": False,
+            "error": str(e)
+        }
 
 @app.get("/api/whatsapp/status", response_model=WhatsAppStatusResponse)
 async def get_whatsapp_status():
@@ -2226,205 +2518,163 @@ class EnvVariablesRequest(BaseModel):
 
 
 @app.get("/api/settings/env")
-async def get_env_variables():
+async def get_env_variables(
+    user_id: int = Depends(get_current_user_id) if AUTH_AVAILABLE and security else None,
+    db: Session = Depends(get_db)
+):
     """
-    Get current environment variables from .env file
+    Get current environment variables from database for the authenticated user
     
     Returns:
         Dictionary of environment variable values
     """
+    if not DATABASE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Database not available")
+    
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
     try:
-        # Try to find .env file in project root (parent directory of backend/python)
-        import pathlib
-        current_file = pathlib.Path(__file__).resolve()
-        project_root = current_file.parent.parent.parent  # Go up from backend/python/main.py to project root
-        env_path = project_root / '.env'
+        from config_helpers import (
+            get_gmail_config, get_openai_api_key, 
+            get_telegram_config, get_slack_config
+        )
         
-        # Fallback: try current working directory
-        if not env_path.exists():
-            cwd_env = pathlib.Path.cwd() / '.env'
-            if cwd_env.exists():
-                env_path = cwd_env
-            else:
-                # Last fallback: current directory relative to script
-                env_path = pathlib.Path('.env')
+        # Get values from database
+        gmail_config = get_gmail_config(db, user_id)
+        openai_key = get_openai_api_key(db, user_id)
+        telegram_config = get_telegram_config(db, user_id)
+        slack_config = get_slack_config(db, user_id)
         
-        env_vars = {}
-        
-        # Read .env file if it exists
-        logger.info(f"Looking for .env file at: {env_path}")
-        if env_path.exists():
-            logger.info(f"Found .env file at: {env_path}")
-            with open(env_path, 'r', encoding='utf-8') as f:
-                for line_num, line in enumerate(f, 1):
-                    original_line = line
-                    line = line.strip()
-                    # Skip empty lines and comments
-                    if not line or line.startswith('#'):
-                        continue
-                    # Parse key=value pairs
-                    if '=' in line:
-                        key, value = line.split('=', 1)
-                        key = key.strip()
-                        value = value.strip()
-                        # Remove quotes if present
-                        if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
-                            value = value[1:-1]
-                        # Store the value (even if empty)
-                        env_vars[key] = value
-                        logger.debug(f"Line {line_num}: {key} = {value[:20]}..." if len(value) > 20 else f"Line {line_num}: {key} = {value}")
-            logger.info(f"Read {len(env_vars)} variables from .env file: {list(env_vars.keys())}")
-        else:
-            logger.warning(f".env file not found at: {env_path}")
-        
-        # Also check environment variables (they take precedence)
-        import os
-        env_vars_from_os = {
-            "TELEGRAM_API_ID": os.getenv("TELEGRAM_API_ID", ""),
-            "TELEGRAM_API_HASH": os.getenv("TELEGRAM_API_HASH", ""),
-            "TELEGRAM_PHONE_NUMBER": os.getenv("TELEGRAM_PHONE_NUMBER", ""),
-            "SLACK_USER_TOKEN": os.getenv("SLACK_USER_TOKEN", ""),
-            "GOOGLE_CLIENT_ID": os.getenv("GOOGLE_CLIENT_ID", ""),
-            "GOOGLE_CLIENT_SECRET": os.getenv("GOOGLE_CLIENT_SECRET", ""),
-            "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY", ""),
-            "USER_ACCESS_TOKEN": os.getenv("USER_ACCESS_TOKEN", ""),
-            "USER_REFRESH_TOKEN": os.getenv("USER_REFRESH_TOKEN", ""),
-            "USER_EMAIL": os.getenv("USER_EMAIL", "")
+        # Build response dictionary
+        final_vars = {
+            "TELEGRAM_API_ID": telegram_config.get('telegram_api_id') if telegram_config else "",
+            "TELEGRAM_API_HASH": telegram_config.get('telegram_api_hash') if telegram_config else "",
+            "TELEGRAM_PHONE_NUMBER": telegram_config.get('telegram_phone_number') if telegram_config else "",
+            "SLACK_USER_TOKEN": slack_config.get('slack_user_token') if slack_config else "",
+            "GOOGLE_CLIENT_ID": gmail_config.get('google_client_id') if gmail_config else "",
+            "GOOGLE_CLIENT_SECRET": gmail_config.get('google_client_secret') if gmail_config else "",
+            "OPENAI_API_KEY": openai_key if openai_key else "",
+            "USER_ACCESS_TOKEN": gmail_config.get('user_access_token') if gmail_config else "",
+            "USER_REFRESH_TOKEN": gmail_config.get('user_refresh_token') if gmail_config else "",
+            "USER_EMAIL": gmail_config.get('user_email') if gmail_config else ""
         }
         
-        # Merge: OS env vars take precedence, then .env file
-        final_vars = {}
-        for key in env_vars_from_os.keys():
-            # Use OS env var if it exists and is not empty, otherwise use .env file value
-            os_value = env_vars_from_os[key]
-            env_value = env_vars.get(key, "")
-            final_vars[key] = os_value if os_value else env_value
-        
-        logger.info(f"Returning {len(final_vars)} variables. Sample: {dict(list(final_vars.items())[:2])}")
+        logger.info(f"Retrieved settings for user {user_id}")
         
         return {
             "success": True,
-            "variables": final_vars,
-            "env_file_path": str(env_path),
-            "env_file_exists": env_path.exists(),
-            "debug": {
-                "env_file_path": str(env_path),
-                "env_vars_count": len(env_vars),
-                "env_vars_keys": list(env_vars.keys())[:5]
-            }
+            "variables": final_vars
         }
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error reading .env file: {str(e)}")
+        logger.error(f"Error reading settings from database: {str(e)}")
         import traceback
         logger.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=f"Failed to read environment variables: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to read settings: {str(e)}")
 
 
 @app.post("/api/settings/env")
-async def update_env_variables(request: EnvVariablesRequest):
+async def update_env_variables(
+    request: EnvVariablesRequest,
+    user_id: int = Depends(get_current_user_id) if AUTH_AVAILABLE and security else None,
+    db: Session = Depends(get_db)
+):
     """
-    Update environment variables in .env file
+    Update environment variables in database for the authenticated user
     
     Args:
         request: Environment variable values to update
+        user_id: User ID from JWT token
+        db: Database session
     
     Returns:
         Success status
     """
+    if not DATABASE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Database not available")
+    
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
     try:
-        # Try to find .env file in project root (parent directory of backend/python)
-        import pathlib
-        current_file = pathlib.Path(__file__).resolve()
-        project_root = current_file.parent.parent.parent  # Go up from backend/python/main.py to project root
-        env_path = project_root / '.env'
+        from config_helpers import (
+            update_gmail_config, update_openai_api_key,
+            update_telegram_config, update_slack_config
+        )
         
-        # Fallback: try current working directory
-        if not env_path.exists():
-            cwd_env = pathlib.Path.cwd() / '.env'
-            if cwd_env.exists():
-                env_path = cwd_env
+        success_count = 0
+        errors = []
+        
+        # Update Gmail config
+        gmail_updates = {}
+        if request.google_client_id is not None:
+            gmail_updates['google_client_id'] = request.google_client_id.strip() if request.google_client_id else None
+        if request.google_client_secret is not None:
+            gmail_updates['google_client_secret'] = request.google_client_secret.strip() if request.google_client_secret else None
+        if request.user_access_token is not None:
+            gmail_updates['user_access_token'] = request.user_access_token.strip() if request.user_access_token else None
+        if request.user_refresh_token is not None:
+            gmail_updates['user_refresh_token'] = request.user_refresh_token.strip() if request.user_refresh_token else None
+        if request.user_email is not None:
+            gmail_updates['user_email'] = request.user_email.strip() if request.user_email else None
+        
+        if gmail_updates:
+            if update_gmail_config(db, user_id, **gmail_updates):
+                success_count += 1
             else:
-                # Last fallback: current directory relative to script
-                env_path = pathlib.Path('.env')
+                errors.append("Failed to update Gmail config")
         
-        env_vars = {}
-        
-        # Read existing .env file if it exists
-        if env_path.exists():
-            with open(env_path, 'r', encoding='utf-8') as f:
-                lines = f.readlines()
-                for line in lines:
-                    line_stripped = line.strip()
-                    if line_stripped and not line_stripped.startswith('#') and '=' in line_stripped:
-                        key, value = line_stripped.split('=', 1)
-                        key = key.strip()
-                        value = value.strip().strip('"').strip("'")
-                        env_vars[key] = value
-        else:
-            # Create new .env file
-            lines = []
-        
-        # Update variables from request
-        updates = {
-            "TELEGRAM_API_ID": request.telegram_api_id,
-            "TELEGRAM_API_HASH": request.telegram_api_hash,
-            "TELEGRAM_PHONE_NUMBER": request.telegram_phone_number,
-            "SLACK_USER_TOKEN": request.slack_user_token,
-            "GOOGLE_CLIENT_ID": request.google_client_id,
-            "GOOGLE_CLIENT_SECRET": request.google_client_secret,
-            "OPENAI_API_KEY": request.openai_api_key,
-            "USER_ACCESS_TOKEN": request.user_access_token,
-            "USER_REFRESH_TOKEN": request.user_refresh_token,
-            "USER_EMAIL": request.user_email
-        }
-        
-        # Update env_vars dict
-        for key, value in updates.items():
-            if value is not None and value.strip():
-                env_vars[key] = value.strip()
-        
-        # Write back to .env file
-        # First, preserve comments and structure
-        output_lines = []
-        written_vars = set()
-        
-        # Process existing lines, updating values
-        for line in lines:
-            line_stripped = line.strip()
-            if line_stripped and not line_stripped.startswith('#') and '=' in line_stripped:
-                key = line_stripped.split('=', 1)[0].strip()
-                if key in updates and updates[key] is not None and updates[key].strip():
-                    output_lines.append(f"{key}={updates[key].strip()}\n")
-                    written_vars.add(key)
-                elif key in env_vars:
-                    output_lines.append(f"{key}={env_vars[key]}\n")
-                    written_vars.add(key)
-                else:
-                    output_lines.append(line)
+        # Update OpenAI API key
+        if request.openai_api_key is not None:
+            api_key = request.openai_api_key.strip() if request.openai_api_key else ""
+            if update_openai_api_key(db, user_id, api_key):
+                success_count += 1
             else:
-                output_lines.append(line)
+                errors.append("Failed to update OpenAI API key")
         
-        # Add any new variables that weren't in the file
-        for key, value in env_vars.items():
-            if key not in written_vars and value:
-                # Find appropriate section or add at end
-                output_lines.append(f"{key}={value}\n")
+        # Update Telegram config
+        telegram_updates = {}
+        if request.telegram_api_id is not None:
+            telegram_updates['telegram_api_id'] = request.telegram_api_id.strip() if request.telegram_api_id else None
+        if request.telegram_api_hash is not None:
+            telegram_updates['telegram_api_hash'] = request.telegram_api_hash.strip() if request.telegram_api_hash else None
+        if request.telegram_phone_number is not None:
+            telegram_updates['telegram_phone_number'] = request.telegram_phone_number.strip() if request.telegram_phone_number else None
         
-        # Write to file
-        with open(env_path, 'w', encoding='utf-8') as f:
-            f.writelines(output_lines)
+        if telegram_updates:
+            if update_telegram_config(db, user_id, **telegram_updates):
+                success_count += 1
+            else:
+                errors.append("Failed to update Telegram config")
         
-        logger.info(f"Updated .env file with new environment variables")
+        # Update Slack config
+        if request.slack_user_token is not None:
+            slack_token = request.slack_user_token.strip() if request.slack_user_token else ""
+            if update_slack_config(db, user_id, slack_token):
+                success_count += 1
+            else:
+                errors.append("Failed to update Slack config")
+        
+        if errors:
+            logger.warning(f"Some updates failed for user {user_id}: {errors}")
+        
+        logger.info(f"Updated settings for user {user_id}")
         
         return {
             "success": True,
-            "message": "Environment variables updated successfully. Please restart the application manually for changes to take effect."
+            "message": "Settings updated successfully",
+            "updated_sections": success_count,
+            "errors": errors if errors else None
         }
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error updating .env file: {str(e)}")
+        logger.error(f"Error updating settings in database: {str(e)}")
         import traceback
         logger.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=f"Failed to update environment variables: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to update settings: {str(e)}")
 
 
 @app.post("/api/settings/gmail-token")
@@ -2478,6 +2728,267 @@ async def generate_gmail_token(background_tasks: BackgroundTasks):
 
 
 # ==================== END SETTINGS/ENV MANAGEMENT ENDPOINTS ====================
+
+# ==================== USER SERVICE CREDENTIALS ENDPOINTS ====================
+
+class SaveServiceCredentialsRequest(BaseModel):
+    """Request model for saving service credentials"""
+    service_name: str  # 'gmail', 'whatsapp', 'telegram', 'slack'
+    credentials_data: Dict  # Service-specific credentials (e.g., {access_token, refresh_token} for Gmail)
+
+class ServiceCredentialsResponse(BaseModel):
+    """Response model for service credentials"""
+    success: bool
+    message: str
+    service_name: str
+    is_connected: bool
+
+@app.post("/api/user/services/{service_name}/connect", response_model=ServiceCredentialsResponse)
+async def save_service_credentials(
+    service_name: str,
+    request: SaveServiceCredentialsRequest,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: Session = Depends(get_db)
+):
+    """
+    Save or update service credentials for the authenticated user
+    Service names: 'gmail', 'whatsapp', 'telegram', 'slack'
+    """
+    if not DATABASE_AVAILABLE or not UserServiceCredential or not AUTH_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Service not available")
+    
+    try:
+        # Verify token and get user
+        token = credentials.credentials
+        user_id = extract_user_id_from_token(token)
+        
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        
+        # Verify user exists
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # Validate service name
+        valid_services = ['gmail', 'whatsapp', 'telegram', 'slack']
+        if service_name.lower() not in valid_services:
+            raise HTTPException(status_code=400, detail=f"Invalid service name. Must be one of: {', '.join(valid_services)}")
+        
+        service_name = service_name.lower()
+        
+        # Check if credentials already exist
+        existing = db.query(UserServiceCredential).filter(
+            UserServiceCredential.user_id == user_id,
+            UserServiceCredential.service_name == service_name
+        ).first()
+        
+        if existing:
+            # Update existing credentials
+            existing.credentials_data = request.credentials_data
+            existing.is_active = True
+            existing.updated_at = datetime.now()
+            db.commit()
+            db.refresh(existing)
+            logger.info(f"Updated {service_name} credentials for user {user_id}")
+        else:
+            # Create new credentials
+            new_credential = UserServiceCredential(
+                user_id=user_id,
+                service_name=service_name,
+                credentials_data=request.credentials_data,
+                is_active=True,
+                is_connected=False
+            )
+            db.add(new_credential)
+            db.commit()
+            db.refresh(new_credential)
+            logger.info(f"Created {service_name} credentials for user {user_id}")
+        
+        return ServiceCredentialsResponse(
+            success=True,
+            message=f"{service_name.capitalize()} credentials saved successfully",
+            service_name=service_name,
+            is_connected=False  # Will be updated when connection is verified
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error saving service credentials: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to save credentials: {str(e)}")
+
+
+@app.get("/api/user/services/{service_name}/credentials")
+async def get_service_credentials(
+    service_name: str,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: Session = Depends(get_db)
+):
+    """
+    Get service credentials for the authenticated user
+    Returns credentials data (sensitive fields may be masked)
+    """
+    if not DATABASE_AVAILABLE or not UserServiceCredential or not AUTH_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Service not available")
+    
+    try:
+        # Verify token and get user
+        token = credentials.credentials
+        user_id = extract_user_id_from_token(token)
+        
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        
+        service_name = service_name.lower()
+        
+        # Get credentials
+        credential = db.query(UserServiceCredential).filter(
+            UserServiceCredential.user_id == user_id,
+            UserServiceCredential.service_name == service_name,
+            UserServiceCredential.is_active == True
+        ).first()
+        
+        if not credential:
+            return {
+                "success": False,
+                "message": f"{service_name.capitalize()} credentials not found. Please connect your account.",
+                "has_credentials": False
+            }
+        
+        # Return credentials (mask sensitive data if needed)
+        credentials_data = credential.credentials_data.copy()
+        
+        # Mask sensitive tokens in response
+        if service_name == 'gmail':
+            if 'access_token' in credentials_data:
+                credentials_data['access_token'] = credentials_data['access_token'][:20] + '...' if len(credentials_data['access_token']) > 20 else '***'
+            if 'refresh_token' in credentials_data:
+                credentials_data['refresh_token'] = credentials_data['refresh_token'][:20] + '...' if len(credentials_data['refresh_token']) > 20 else '***'
+        
+        return {
+            "success": True,
+            "has_credentials": True,
+            "service_name": service_name,
+            "is_connected": credential.is_connected,
+            "credentials_data": credentials_data,  # Masked version
+            "last_connected_at": credential.last_connected_at.isoformat() if credential.last_connected_at else None
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting service credentials: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to get credentials: {str(e)}")
+
+
+@app.delete("/api/user/services/{service_name}/disconnect")
+async def disconnect_service(
+    service_name: str,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: Session = Depends(get_db)
+):
+    """
+    Disconnect/remove service credentials for the authenticated user
+    """
+    if not DATABASE_AVAILABLE or not UserServiceCredential or not AUTH_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Service not available")
+    
+    try:
+        # Verify token and get user
+        token = credentials.credentials
+        user_id = extract_user_id_from_token(token)
+        
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        
+        service_name = service_name.lower()
+        
+        # Find and delete credentials
+        credential = db.query(UserServiceCredential).filter(
+            UserServiceCredential.user_id == user_id,
+            UserServiceCredential.service_name == service_name
+        ).first()
+        
+        if credential:
+            db.delete(credential)
+            db.commit()
+            logger.info(f"Disconnected {service_name} for user {user_id}")
+            return {
+                "success": True,
+                "message": f"{service_name.capitalize()} disconnected successfully"
+            }
+        else:
+            return {
+                "success": False,
+                "message": f"{service_name.capitalize()} not connected"
+            }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error disconnecting service: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to disconnect service: {str(e)}")
+
+
+@app.get("/api/user/services/status")
+async def get_all_services_status(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: Session = Depends(get_db)
+):
+    """
+    Get status of all connected services for the authenticated user
+    """
+    if not DATABASE_AVAILABLE or not UserServiceCredential or not AUTH_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Service not available")
+    
+    try:
+        # Verify token and get user
+        token = credentials.credentials
+        user_id = extract_user_id_from_token(token)
+        
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        
+        # Get all active credentials for user
+        credentials_list = db.query(UserServiceCredential).filter(
+            UserServiceCredential.user_id == user_id,
+            UserServiceCredential.is_active == True
+        ).all()
+        
+        services_status = {}
+        for cred in credentials_list:
+            services_status[cred.service_name] = {
+                "is_connected": cred.is_connected,
+                "last_connected_at": cred.last_connected_at.isoformat() if cred.last_connected_at else None,
+                "has_credentials": True
+            }
+        
+        # Add services that are not connected
+        all_services = ['gmail', 'whatsapp', 'telegram', 'slack']
+        for service in all_services:
+            if service not in services_status:
+                services_status[service] = {
+                    "is_connected": False,
+                    "last_connected_at": None,
+                    "has_credentials": False
+                }
+        
+        return {
+            "success": True,
+            "services": services_status
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting services status: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to get services status: {str(e)}")
+
+
+# ==================== END USER SERVICE CREDENTIALS ENDPOINTS ====================
 
 # ==================== USER MANAGEMENT ENDPOINTS ====================
 
