@@ -21,7 +21,7 @@ const io = new Server(server, {
     }
 });
 
-const PORT = 3000;
+const PORT = process.env.WHATSAPP_PORT || process.env.PORT || 3000;
 
 // Middleware
 app.use(cors());
@@ -1019,6 +1019,39 @@ app.post('/api/whatsapp/send', async (req, res) => {
     }
 });
 
+/**
+ * POST /api/whatsapp/open
+ * Emit an `open_url` event to client(s) so the browser can open the URL locally.
+ * Body: { url: string, socket_id?: string }
+ */
+app.post('/api/whatsapp/open', (req, res) => {
+    try {
+        const { url, socket_id } = req.body || {};
+        if (!url) return res.status(400).json({ success: false, error: 'url required' });
+
+        let parsed;
+        try { parsed = new URL(String(url)); } catch (e) {
+            return res.status(400).json({ success: false, error: 'invalid url' });
+        }
+        if (!['http:', 'https:'].includes(parsed.protocol)) {
+            return res.status(400).json({ success: false, error: 'only http/https allowed' });
+        }
+
+        const payload = { url: parsed.toString() };
+
+        if (socket_id) {
+            io.to(String(socket_id)).emit('open_url', payload);
+        } else {
+            io.emit('open_url', payload);
+        }
+
+        return res.json({ success: true, emitted_to: socket_id || 'all' });
+    } catch (err) {
+        console.error('[WhatsApp] Error in /api/whatsapp/open:', err);
+        return res.status(500).json({ success: false, error: err.message });
+    }
+});
+
 // Health check endpoint
 app.get('/health', (req, res) => {
     res.json({ status: 'ok', service: 'whatsapp-server' });
@@ -1049,6 +1082,15 @@ server.listen(PORT, '0.0.0.0', () => {
     console.log(`[WhatsApp Server] Server running on http://0.0.0.0:${PORT}`);
     console.log(`[WhatsApp Server] WebSocket server ready`);
     console.log(`[WhatsApp Server] WhatsApp client initializing...`);
+});
+
+// Global error handlers to avoid silent exits and get better diagnostics
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('[WhatsApp] Unhandled Rejection:', reason);
+});
+
+process.on('uncaughtException', (err) => {
+    console.error('[WhatsApp] Uncaught Exception:', err);
 });
 
 // Graceful shutdown

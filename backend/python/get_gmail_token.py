@@ -6,8 +6,20 @@ Run this to authorize your Gmail account and get real tokens
 from google_auth_oauthlib.flow import InstalledAppFlow
 import os
 from dotenv import load_dotenv
+import sys
 
 load_dotenv()
+
+# Ensure stdout is using UTF-8 where possible to avoid UnicodeEncodeError
+try:
+    if hasattr(sys, 'stdout') and (sys.stdout is None or sys.stdout.encoding is None or 'utf' not in sys.stdout.encoding.lower()):
+        # Python 3.7+: reconfigure stdout encoding
+        try:
+            sys.stdout.reconfigure(encoding='utf-8')
+        except Exception:
+            pass
+except Exception:
+    pass
 
 # Gmail API scopes (must match backend email_service.py)
 SCOPES = [

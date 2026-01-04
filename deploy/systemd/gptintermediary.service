@@ -1,0 +1,17 @@
+[Unit]
+Description=GPTIntermediary service
+After=network.target
+
+[Service]
+User=root
+Group=root
+WorkingDirectory=/var/www/GPTIntermediary
+EnvironmentFile=/var/www/GPTIntermediary/.env
+ExecStart=/var/www/GPTIntermediary/venv/bin/python /var/www/GPTIntermediary/app.py
+Restart=always
+RestartSec=5
+KillSignal=SIGINT
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target
