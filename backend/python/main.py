@@ -1230,9 +1230,20 @@ async def get_whatsapp_qr_code():
                     "message": f"Error initializing: {str(e)}"
                 }
         
-        # Get QR code from page
+        # If a session exists on disk, do NOT return a QR image to the client.
+        # The app UI should show a "restoring" state instead of prompting a fresh QR
+        # when authentication info is already present in the session storage.
+        if whatsapp_service.has_session:
+            return {
+                "success": False,
+                "is_authenticated": False,
+                "has_session": True,
+                "message": "Session exists - restoring authentication (QR not shown)"
+            }
+
+        # Get QR code from page (only when no session info exists)
         qr_code_data = await whatsapp_service.get_qr_code()
-        
+
         if qr_code_data:
             return {
                 "success": True,
@@ -1242,19 +1253,11 @@ async def get_whatsapp_qr_code():
             }
         else:
             # QR code not available yet - might still be loading
-            if whatsapp_service.has_session:
-                return {
-                    "success": False,
-                    "is_authenticated": False,
-                    "has_session": True,
-                    "message": "Session exists - connecting..."
-                }
-            else:
-                return {
-                    "success": False,
-                    "is_authenticated": False,
-                    "message": "QR code not available yet. Please wait..."
-                }
+            return {
+                "success": False,
+                "is_authenticated": False,
+                "message": "QR code not available yet. Please wait..."
+            }
     except Exception as e:
         logger.error(f"Error getting QR code: {e}")
         import traceback

@@ -923,32 +923,109 @@ def main():
                 stop_servers()
                 print("[*] All servers stopped. Goodbye!")
         else:
-            # Desktop mode: Always open in browser (skip webview)
+            # Desktop mode: Run as Windows app using webview
             print("=" * 60)
-            print(f"[*] Opening application in browser: {app_url}")
-            print("[*] The browser should open automatically...")
+            print(f"[*] Starting application as Windows app...")
+            print(f"[*] Application URL: {app_url}")
+            print("[*] The application window should open now...")
             print("[*] You will see the login page first.")
-            print("[*] Close the browser and press Ctrl+C to stop all servers and exit")
+            print("[*] Close the window or press Ctrl+C to stop all servers and exit")
             print("=" * 60)
             
-            # Open browser directly (skip webview)
-            browser_opened = open_browser(app_url)
-            
-            if browser_opened:
-                print("[*] Browser opened successfully!")
-            else:
-                print(f"[!] Could not open browser automatically.")
-                print(f"[!] Please manually open: {app_url}")
-            
-            # Keep servers running until Ctrl+C
-            print("[*] Servers are running. Press Ctrl+C to stop all servers and exit")
             try:
-                while servers_running:
-                    time.sleep(1)
-            except KeyboardInterrupt:
-                print("\n[*] Stopping all servers...")
+                import webview
+                
+                # Get screen dimensions for responsive window sizing
+                try:
+                    import tkinter as tk
+                    root = tk.Tk()
+                    screen_width = root.winfo_screenwidth()
+                    screen_height = root.winfo_screenheight()
+                    root.destroy()
+                    
+                    # Use a reasonable default size (70% of screen or fixed size, whichever is smaller)
+                    default_width = 1200
+                    default_height = 800
+                    window_width = min(default_width, int(screen_width * 0.7))
+                    window_height = min(default_height, int(screen_height * 0.7))
+                    
+                    # Ensure minimum size
+                    window_width = max(800, window_width)
+                    window_height = max(600, window_height)
+                    
+                    # Center the window
+                    x = (screen_width - window_width) // 2
+                    y = (screen_height - window_height) // 2
+                except Exception:
+                    # Fallback to default dimensions if tkinter is not available
+                    window_width = 1200
+                    window_height = 800
+                    x = None
+                    y = None
+                
+                # Create the window - open the URL
+                window = webview.create_window(
+                    'GPT Intermediary',
+                    app_url,
+                    width=window_width,
+                    height=window_height,
+                    x=x,
+                    y=y,
+                    resizable=True,
+                    min_size=(800, 600),
+                    fullscreen=False
+                )
+                
+                # Start the webview (this blocks until window is closed)
+                webview.start(debug=False)
+                print("\n[*] Application window closed")
+                print("[*] Stopping all servers...")
+                # Stop servers when window is closed
                 stop_servers()
                 print("[*] All servers stopped. Goodbye!")
+            
+            except ImportError:
+                print("[!] pywebview not installed. Falling back to browser...")
+                print("[!] Install with: pip install pywebview")
+                print("[*] Opening in default browser instead...")
+                browser_opened = open_browser(app_url)
+                
+                if browser_opened:
+                    print("[*] Browser opened successfully!")
+                else:
+                    print(f"[!] Could not open browser automatically.")
+                    print(f"[!] Please manually open: {app_url}")
+                
+                # Keep servers running until Ctrl+C
+                print("[*] Servers are running. Press Ctrl+C to stop all servers and exit")
+                try:
+                    while servers_running:
+                        time.sleep(1)
+                except KeyboardInterrupt:
+                    print("\n[*] Stopping all servers...")
+                    stop_servers()
+                    print("[*] All servers stopped. Goodbye!")
+            
+            except Exception as e:
+                print(f"[!] Error creating webview window: {e}")
+                print("[*] Falling back to browser...")
+                browser_opened = open_browser(app_url)
+                
+                if browser_opened:
+                    print("[*] Browser opened successfully!")
+                else:
+                    print(f"[!] Could not open browser automatically.")
+                    print(f"[!] Please manually open: {app_url}")
+                
+                # Keep servers running until Ctrl+C
+                print("[*] Servers are running. Press Ctrl+C to stop all servers and exit")
+                try:
+                    while servers_running:
+                        time.sleep(1)
+                except KeyboardInterrupt:
+                    print("\n[*] Stopping all servers...")
+                    stop_servers()
+                    print("[*] All servers stopped. Goodbye!")
         
     except KeyboardInterrupt:
         print("\n[*] Keyboard interrupt received")

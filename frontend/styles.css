@@ -538,6 +538,56 @@ body::before {
     color: #64748b;
 }
 
+/* Voice Recognition Button */
+.voice-recognition-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    background: rgba(99, 102, 241, 0.2);
+    border: 1px solid rgba(99, 102, 241, 0.3);
+    border-radius: 10px;
+    color: #818cf8;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    padding: 0;
+    flex-shrink: 0;
+}
+
+.voice-recognition-btn:hover {
+    background: rgba(99, 102, 241, 0.3);
+    border-color: rgba(99, 102, 241, 0.5);
+    color: #a5b4fc;
+    transform: scale(1.05);
+}
+
+.voice-recognition-btn.listening {
+    background: rgba(239, 68, 68, 0.3);
+    border-color: rgba(239, 68, 68, 0.5);
+    color: #f87171;
+    animation: pulse 1.5s ease-in-out infinite;
+}
+
+.voice-recognition-btn.listening:hover {
+    background: rgba(239, 68, 68, 0.4);
+    border-color: rgba(239, 68, 68, 0.6);
+}
+
+@keyframes pulse {
+    0%, 100% {
+        box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7);
+    }
+    50% {
+        box-shadow: 0 0 0 8px rgba(239, 68, 68, 0);
+    }
+}
+
+.voice-recognition-btn svg {
+    width: 20px;
+    height: 20px;
+}
+
 /* Buttons */
 .btn {
     padding: 10px 20px;
@@ -4674,6 +4724,16 @@ body::before {
 
     .input-wrapper input {
         font-size: 14px;
+    }
+
+    .voice-recognition-btn {
+        width: 36px;
+        height: 36px;
+    }
+
+    .voice-recognition-btn svg {
+        width: 18px;
+        height: 18px;
     }
 
     .btn {

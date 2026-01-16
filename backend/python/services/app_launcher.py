@@ -8,7 +8,11 @@ import sys
 import subprocess
 import logging
 import platform
+import shutil
 from typing import Optional, List
+import json
+import urllib.request
+import urllib.error
 
 logger = logging.getLogger(__name__)
 
@@ -38,10 +42,40 @@ class AppLauncher:
         """
         try:
             command = self._build_command(app_name, args)
-            
+
             logger.info(f"Launching: {' '.join(command)}")
-            
+
+            # Validate the command/executable exists before attempting to start it.
+            exe = command[0]
+            resolved_exe = shutil.which(exe) if not os.path.isabs(exe) else (exe if os.path.exists(exe) else None)
+            if resolved_exe is None:
+                logger.error(f"Executable not found on PATH: {exe}")
+                return False
+
             if self.os_type == "Windows":
+                # If running inside the Services session, try forwarding the launch
+                # to a small agent running in the interactive user session.
+                try:
+                    session_name = os.environ.get('SESSIONNAME', '').lower()
+                except Exception:
+                    session_name = ''
+
+                if session_name == 'services':
+                    try:
+                        port = os.environ.get('LAUNCH_AGENT_PORT', '5001')
+                        secret = os.environ.get('LAUNCH_AGENT_SECRET', '')
+                        url = f'http://127.0.0.1:{port}/launch'
+                        payload = json.dumps({'app': app_name, 'args': args}).encode('utf-8')
+                        req = urllib.request.Request(url, data=payload, headers={
+                            'Content-Type': 'application/json',
+                            'Authorization': f'Bearer {secret}'
+                        })
+                        with urllib.request.urlopen(req, timeout=2) as resp:
+                            if resp.getcode() == 200:
+                                logger.info(f'Forwarded launch to desktop agent: {app_name}')
+                                return True
+                    except Exception as e:
+                        logger.debug(f'Desktop agent not available or failed: {e}')
                 # Use os.startfile for simpler Windows app launching
                 # This handles both classic apps and protocol handlers like telegram:, whatsapp:
                 if command[0].endswith(':'):
@@ -57,36 +91,59 @@ class AppLauncher:
                             stdout=subprocess.DEVNULL,
                             stderr=subprocess.DEVNULL
                         )
+                    else:
+                        logger.info(f"Successfully launched protocol handler: {app_name}")
+                        return True
                 else:
-                    # Regular executable - use Start-Process for better compatibility
-                    ps_command = f'Start-Process "{command[0]}"'
-                    if len(command) > 1:
-                        args_str = ' '.join(f'"{arg}"' for arg in command[1:])
-                        ps_command = f'Start-Process "{command[0]}" -ArgumentList @({args_str})'
-                    
-                    subprocess.Popen(
-                        ['powershell.exe', '-NoProfile', '-Command', ps_command],
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL
-                    )
+                    # Regular executable - prefer os.startfile to open in interactive session
+                    target = resolved_exe or command[0]
+                    try:
+                        os.startfile(target)
+                        logger.info(f"Successfully launched: {app_name}")
+                        return True
+                    except Exception as e:
+                        logger.warning(f"os.startfile failed for {target}: {e}, falling back to Start-Process")
+                        # Fallback to Start-Process for broader compatibility
+                        ps_target = resolved_exe or command[0]
+                        ps_command = f'Start-Process "{ps_target}"'
+                        if len(command) > 1:
+                            args_str = ' '.join(f'"{arg}"' for arg in command[1:])
+                            ps_command = f'Start-Process "{ps_target}" -ArgumentList @({args_str})'
+
+                        subprocess.Popen(
+                            ['powershell.exe', '-NoProfile', '-Command', ps_command],
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL
+                        )
+                        logger.info(f"Successfully launched via Start-Process: {app_name}")
+                        return True
             else:
                 # Unix-like systems
-                subprocess.Popen(
-                    command,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    start_new_session=True
-                )
-            
-            logger.info(f"Successfully launched: {app_name}")
-            return True
-        
+                try:
+                    # Ensure child inherits current environment (incl. DISPLAY when set)
+                    env = os.environ.copy()
+                    subprocess.Popen(
+                        command,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        start_new_session=True,
+                        env=env,
+                    )
+                    logger.info(f"Successfully launched: {app_name}")
+                    return True
+                except FileNotFoundError:
+                    logger.error(f"Application not found: {app_name}")
+                    return False
+                except Exception as e:
+                    logger.error(f"Error launching app: {str(e)}")
+                    return False
+
         except FileNotFoundError:
             logger.error(f"Application not found: {app_name}")
             return False
         except Exception as e:
-            logger.error(f"Error launching app: {str(e)}")
-            raise
+            logger.error(f"Error preparing launch: {str(e)}")
+            return False
     
     def _build_command(self, app_name: str, args: Optional[List[str]] = None) -> List[str]:
         """Build the command to launch the app"""
@@ -126,8 +183,87 @@ class AppLauncher:
                 return ["open", "-a", app_name] + args
         
         else:
-            # Linux and other Unix-like systems
-            return [app_name] + args
+                # Linux and other Unix-like systems
+                app_name_lower = app_name.lower()
+
+                # Detect headless (no X/Wayland display). If headless, GUI openers won't work.
+                headless = not (os.environ.get('DISPLAY') or os.environ.get('WAYLAND_DISPLAY') or os.environ.get('XDG_SESSION_TYPE'))
+
+                # Map common Windows app names to Linux equivalents (try the first available)
+                windows_aliases = {
+                    'notepad': ['nano', 'gedit', 'xed', 'mousepad'],
+                    'explorer': ['nautilus', 'thunar', 'pcmanfm'],
+                    'calculator': ['gnome-calculator', 'galculator', 'xcalc', 'bc'],
+                    'paint': ['gimp', 'pinta'],
+                    'word': ['libreoffice', 'libreoffice --writer'],
+                    'excel': ['libreoffice', 'libreoffice --calc'],
+                }
+
+                # Common Linux mappings for friendly aliases (try the first available)
+                linux_mappings = {
+                    'calculator': ['gnome-calculator', 'galculator', 'xcalc', 'bc'],
+                    'calc': ['gnome-calculator', 'galculator', 'xcalc', 'bc'],
+                    'chrome': ['google-chrome', 'chrome', 'chromium', 'chromium-browser'],
+                    'firefox': ['firefox'],
+                    'vlc': ['vlc'],
+                    'code': ['code', 'code-oss'],
+                    'telegram': ['telegram-desktop'],
+                    'discord': ['discord']
+                }
+
+                # If user provided a friendly alias, try mapped executables first
+                if app_name_lower in linux_mappings:
+                    for candidate in linux_mappings[app_name_lower]:
+                        path = shutil.which(candidate.split()[0])
+                        if path:
+                            return [path] + args
+
+                # Try Windows alias mappings (e.g., user says 'notepad')
+                if app_name_lower in windows_aliases:
+                    for candidate in windows_aliases[app_name_lower]:
+                        # candidate may include spaces (e.g., 'libreoffice --writer')
+                        parts = candidate.split()
+                        exe = parts[0]
+                        path = shutil.which(exe)
+                        if path:
+                            # If headless and candidate is a GUI app, try to run with xvfb-run if available
+                            if headless and exe not in ['nano', 'vi', 'vim', 'bc', 'cat']:
+                                xvfb = shutil.which('xvfb-run')
+                                if xvfb:
+                                    extra = parts[1:] if len(parts) > 1 else []
+                                    return [xvfb, '-a', path] + extra + args
+                                else:
+                                    logger.warning(f"Headless environment and no xvfb-run; launching {exe} may not show a display")
+                            extra = parts[1:] if len(parts) > 1 else []
+                            return [path] + extra + args
+
+                # If the name itself is on PATH, use it
+                path = shutil.which(app_name)
+                if path:
+                    return [path] + args
+
+                # If the target looks like a URL, protocol handler, or an existing file,
+                # prefer the desktop opener (xdg-open, gio, sensible-browser) so it
+                # works for URLs and protocol handlers on Unix systems.
+                try:
+                    looks_like_url = ('://' in app_name) or app_name.startswith('www.')
+                except Exception:
+                    looks_like_url = False
+
+                if os.path.exists(app_name) or looks_like_url or (':' in app_name and not app_name.startswith('/')):
+                    opener = shutil.which('xdg-open') or shutil.which('gio') or shutil.which('sensible-browser')
+                    if opener:
+                        if headless:
+                            # In headless VPS, attempting to run a GUI opener will fail silently.
+                            logger.warning(f"Headless environment detected; cannot open GUI target: {app_name}")
+                            # Return the opener command so logs show intent, but raising FileNotFoundError
+                            # later will convert to a 404 response. Alternatively, return the opener
+                            # to attempt it anyway: return [opener, app_name] + args
+                            return [opener, app_name] + args
+                        return [opener, app_name] + args
+
+                # Fall back to executing the app name directly (may raise FileNotFoundError)
+                return [app_name] + args
     
     def _get_windows_app_path(self, app_name: str) -> Optional[str]:
         """Get Windows application path from common locations"""

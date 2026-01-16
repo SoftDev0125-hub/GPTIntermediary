@@ -93,6 +93,14 @@
                         placeholder="Type your message or command..."
                         autocomplete="off"
                     />
+                    <button id="voiceRecognitionButton" class="voice-recognition-btn" title="Voice Recognition">
+                        <svg id="voiceIcon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
+                            <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+                            <line x1="12" y1="19" x2="12" y2="23"></line>
+                            <line x1="8" y1="23" x2="16" y2="23"></line>
+                        </svg>
+                    </button>
                     <button id="sendButton" class="btn">Send</button>
                 </div>
             </div>
@@ -1431,7 +1439,7 @@
             return text;
         }
 
-        async function sendMessage() {
+        async function sendMessage(speak = false) {
             const message = messageInput.value.trim();
             if (!message) return;
 
@@ -1522,6 +1530,20 @@
 
                 if (data.response) {
                     addMessage(data.response, 'assistant');
+
+                    // If this message was sent from voice input, speak the response
+                    if (speak && 'speechSynthesis' in window) {
+                        try {
+                            // Cancel any existing utterances and speak the new response
+                            window.speechSynthesis.cancel();
+                            const utter = new SpeechSynthesisUtterance(data.response);
+                            // Prefer recognition language if available
+                            try { utter.lang = (recognition && recognition.lang) ? recognition.lang : 'en-US'; } catch (e) {}
+                            window.speechSynthesis.speak(utter);
+                        } catch (e) {
+                            console.warn('TTS playback failed:', e);
+                        }
+                    }
                 } else {
                     const errorMsg = data.error || data.detail || 'No response received';
                     console.error('[CHAT] Error in response:', errorMsg);
@@ -1544,10 +1566,103 @@
             }
         }
 
-        sendButton.addEventListener('click', sendMessage);
+        sendButton.addEventListener('click', () => sendMessage(false));
         messageInput.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') sendMessage();
+            if (e.key === 'Enter') sendMessage(false);
         });
+
+        // Voice Recognition Feature
+        const voiceRecognitionButton = document.getElementById('voiceRecognitionButton');
+        const voiceIcon = document.getElementById('voiceIcon');
+        let recognition = null;
+        let isListening = false;
+
+        // Check if Web Speech API is available
+        if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            recognition = new SpeechRecognition();
+            
+            recognition.continuous = false; // Stop after user stops speaking
+            recognition.interimResults = false; // Only return final results
+            recognition.lang = 'en-US'; // Set language (can be made configurable)
+
+            recognition.onstart = () => {
+                console.log('[VOICE] Voice recognition started');
+                isListening = true;
+                voiceRecognitionButton.classList.add('listening');
+                voiceRecognitionButton.title = 'Listening... Click to stop';
+            };
+
+            recognition.onresult = (event) => {
+                const transcript = event.results[0][0].transcript;
+                console.log('[VOICE] Recognized text:', transcript);
+                
+                // Set the recognized text in the input field
+                messageInput.value = transcript.trim();
+                
+                // Automatically send the message and request client-side speech playback
+                sendMessage(true);
+            };
+
+            recognition.onerror = (event) => {
+                console.error('[VOICE] Recognition error:', event.error);
+                isListening = false;
+                voiceRecognitionButton.classList.remove('listening');
+                voiceRecognitionButton.title = 'Voice Recognition';
+                
+                let errorMessage = 'Voice recognition error: ';
+                switch(event.error) {
+                    case 'no-speech':
+                        errorMessage += 'No speech detected. Please try again.';
+                        break;
+                    case 'audio-capture':
+                        errorMessage += 'No microphone found. Please check your microphone.';
+                        break;
+                    case 'not-allowed':
+                        errorMessage += 'Microphone permission denied. Please allow microphone access.';
+                        break;
+                    default:
+                        errorMessage += event.error;
+                }
+                addMessage(errorMessage, 'error');
+            };
+
+            recognition.onend = () => {
+                console.log('[VOICE] Voice recognition ended');
+                isListening = false;
+                voiceRecognitionButton.classList.remove('listening');
+                voiceRecognitionButton.title = 'Voice Recognition';
+            };
+
+            // Handle button click
+            voiceRecognitionButton.addEventListener('click', () => {
+                if (isListening) {
+                    // Stop recognition
+                    recognition.stop();
+                    console.log('[VOICE] Stopping voice recognition');
+                } else {
+                    // Start recognition
+                    try {
+                        recognition.start();
+                        console.log('[VOICE] Starting voice recognition');
+                    } catch (error) {
+                        console.error('[VOICE] Error starting recognition:', error);
+                        if (error.message.includes('already started')) {
+                            // Recognition already running, just stop it
+                            recognition.stop();
+                        } else {
+                            addMessage('Error starting voice recognition. Please try again.', 'error');
+                        }
+                    }
+                }
+            });
+        } else {
+            // Web Speech API not supported
+            console.warn('[VOICE] Web Speech API not supported in this browser');
+            voiceRecognitionButton.style.display = 'none';
+            // Or show a message
+            // addMessage('Voice recognition is not supported in your browser.', 'error');
+        }
 
         const unreadButton = document.getElementById('unreadButton');
         const refreshButton = document.getElementById('refreshButton');
@@ -3656,7 +3771,19 @@
                     }
                 } else {
                     // Session exists but not connected yet - wait longer for restoration
-                    console.log('[*] Session exists but not connected yet - continuing to wait for restoration');
+                    console.log('[*] Session exists but not connected yet - hiding QR code and waiting for restoration');
+                    // Hide QR code container when session exists
+                    if (whatsappQrContainer) {
+                        whatsappQrContainer.style.display = 'none';
+                    }
+                    if (whatsappEmptyState) {
+                        whatsappEmptyState.style.display = 'flex';
+                    }
+                    // Stop any QR refresh intervals
+                    if (whatsappQrRefreshInterval) {
+                        clearInterval(whatsappQrRefreshInterval);
+                        whatsappQrRefreshInterval = null;
+                    }
                 }
                 
                 return false;
@@ -3689,6 +3816,28 @@
 
                 const data = await response.json();
                 console.log('[*] QR code response:', data);
+
+                // Check if session exists - if so, don't show QR code
+                if (data.has_session && !data.is_authenticated) {
+                    console.log('[*] Session exists but not authenticated yet - hiding QR code and waiting...');
+                    // Hide QR code container - session is being restored
+                    if (whatsappQrContainer) {
+                        whatsappQrContainer.style.display = 'none';
+                    }
+                    if (whatsappEmptyState) {
+                        whatsappEmptyState.style.display = 'flex';
+                    }
+                    if (whatsappQrStatus) {
+                        whatsappQrStatus.textContent = data.message || 'Session exists - connecting...';
+                        whatsappQrStatus.style.color = '#8696a0';
+                    }
+                    // Stop any QR refresh intervals
+                    if (whatsappQrRefreshInterval) {
+                        clearInterval(whatsappQrRefreshInterval);
+                        whatsappQrRefreshInterval = null;
+                    }
+                    return; // Don't show QR code when session exists
+                }
 
                 if (data.success && data.qr_code) {
                     if (whatsappQrImage) {
@@ -3730,8 +3879,26 @@
                                 return;
                             }
                             
-                            // Force refresh QR code only if still not authenticated
-                            console.log('[*] Refreshing QR code (not authenticated yet)...');
+                            // Check if session exists before refreshing
+                            try {
+                                const statusResponse = await fetch(`${WHATSAPP_API_URL}/api/whatsapp/status`);
+                                const statusData = await statusResponse.json();
+                                if (statusData.has_session) {
+                                    // Session exists, stop refreshing and hide QR code
+                                    console.log('[*] Session exists - stopping QR code refresh');
+                                    clearInterval(whatsappQrRefreshInterval);
+                                    whatsappQrRefreshInterval = null;
+                                    if (whatsappQrContainer) {
+                                        whatsappQrContainer.style.display = 'none';
+                                    }
+                                    return;
+                                }
+                            } catch (err) {
+                                console.error('[*] Error checking status before refresh:', err);
+                            }
+                            
+                            // Force refresh QR code only if still not authenticated and no session
+                            console.log('[*] Refreshing QR code (not authenticated yet, no session)...');
                             await loadWhatsAppQRCode(true);
                         }, 20000); // Refresh every 20 seconds
                     }

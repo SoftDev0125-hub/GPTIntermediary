@@ -11,6 +11,7 @@ import requests
 import json
 import logging
 from dotenv import load_dotenv
+ 
 
 load_dotenv()
 
@@ -486,6 +487,8 @@ Be conversational and helpful, like ChatGPT."""
             'response': final_message,
             'function_called': function_called
         }
+
+        
         
         # Return response immediately
         total_duration = time.time() - request_start_time

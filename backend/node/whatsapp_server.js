@@ -347,45 +347,62 @@ initializeWhatsApp();
 /**
  * GET /api/whatsapp/qr-code
  * Get QR code for authentication
+ * Only returns QR code if there is no existing session (unless force_refresh is true)
  */
 app.get('/api/whatsapp/qr-code', async (req, res) => {
     try {
         const forceRefresh = req.query.force_refresh === 'true';
         
-        // If already authenticated, return success
+        // Check if session exists
+        const sessionPath = path.join(SESSION_DIR, '.wwebjs_auth');
+        const hasSession = fs.existsSync(sessionPath);
+        
+        // If already authenticated, return success (no QR code needed)
         if (isAuthenticated && isReady) {
             return res.json({
                 success: true,
                 is_authenticated: true,
+                has_session: hasSession,
                 message: 'Already authenticated'
             });
         }
 
-        // If session exists but not ready yet, wait a bit
-        if (isAuthenticated && !isReady) {
+        // If session exists and we're not forcing refresh, don't show QR code
+        // The session is being restored, so we should wait for authentication
+        if (hasSession && !forceRefresh) {
+            console.log('[WhatsApp] Session exists - not generating QR code. Wait for session restoration.');
             return res.json({
                 success: false,
                 is_authenticated: false,
                 has_session: true,
-                message: 'Session exists - connecting...'
+                message: 'Session exists - connecting... Please wait for authentication.'
             });
         }
 
-        // If force refresh, reinitialize client to get new QR code
-        if (forceRefresh && client) {
-            console.log('[WhatsApp] Force refreshing QR code - reinitializing client...');
-            qrCodeData = null;
+        // If session exists but force refresh is requested, delete session first
+        if (hasSession && forceRefresh) {
+            console.log('[WhatsApp] Force refresh requested - removing existing session...');
             try {
-                await client.destroy();
+                // Delete the session directory
+                if (client) {
+                    try {
+                        await client.destroy();
+                    } catch (err) {
+                        console.error('[WhatsApp] Error destroying client:', err);
+                    }
+                }
+                // Remove session directory
+                if (fs.existsSync(sessionPath)) {
+                    fs.rmSync(sessionPath, { recursive: true, force: true });
+                    console.log('[WhatsApp] Existing session removed for force refresh');
+                }
+                client = null;
+                isAuthenticated = false;
+                isReady = false;
+                qrCodeData = null;
             } catch (err) {
-                console.error('[WhatsApp] Error destroying client:', err);
+                console.error('[WhatsApp] Error removing session:', err);
             }
-            client = null;
-            isAuthenticated = false;
-            isReady = false;
-            initializeWhatsApp();
-            // Wait a moment for QR code to be generated
-            await new Promise(resolve => setTimeout(resolve, 2000));
         }
 
         // If client is not initialized, initialize it now
