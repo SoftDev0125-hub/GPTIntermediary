@@ -20,6 +20,44 @@ import random
 import uuid
 import asyncio
 from datetime import datetime
+import requests
+from dotenv import load_dotenv
+
+# Load .env file (if present) so NEWSAPI_KEY and other settings are available
+load_dotenv()
+
+# Early logging so helper functions can safely log before full app init
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+# Robust env loader (fallback to manual .env parsing) to handle .env lines with spaces
+def _read_env_key_from_dotenv(key_name):
+    val = os.getenv(key_name)
+    if val:
+        return val.strip()
+    try:
+        base = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+        env_path = os.path.join(base, '.env')
+        if not os.path.exists(env_path):
+            return ''
+        with open(env_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                if '=' not in line or line.strip().startswith('#'):
+                    continue
+                k, v = line.split('=', 1)
+                if k.strip() == key_name:
+                    return v.strip().strip('"').strip("'")
+    except Exception as e:
+        logger.warning(f"Failed to read .env fallback for {key_name}: {e}")
+    return ''
+
+# Read NewsAPI key from environment (set in .env or system env)
+NEWSAPI_KEY = _read_env_key_from_dotenv('NEWSAPI_KEY')
+if not NEWSAPI_KEY:
+    logger.warning('NEWSAPI_KEY not found in environment or .env; news endpoints will return error')
 
 from services.email_service import EmailService
 from services.app_launcher import AppLauncher
@@ -175,6 +213,8 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -417,6 +457,64 @@ async def root():
         "version": "1.0.0",
         "database": "available" if DATABASE_AVAILABLE else "unavailable"
     }
+
+
+@app.get("/api/news")
+async def get_latest_news(country: Optional[str] = 'us', q: Optional[str] = None, pageSize: int = 5):
+    """
+    Fetch latest news using NewsAPI.org's top-headlines endpoint.
+    Query params:
+      - country: 2-letter country code (default 'us')
+      - q: optional search query
+      - pageSize: number of articles to return (default 5)
+    """
+    if not NEWSAPI_KEY or NEWSAPI_KEY == '':
+        raise HTTPException(status_code=503, detail="NewsAPI key not configured")
+
+    url = 'https://newsapi.org/v2/top-headlines'
+    # If a specific query/topic is provided, use the 'everything' endpoint
+    if q:
+        url = 'https://newsapi.org/v2/everything'
+        params = {
+            'apiKey': NEWSAPI_KEY,
+            'q': q,
+            'pageSize': min(pageSize, 20),
+            'sortBy': 'publishedAt',
+            'language': 'en'
+        }
+    else:
+        params = {
+            'apiKey': NEWSAPI_KEY,
+            'country': country,
+            'pageSize': min(pageSize, 20)
+        }
+
+    try:
+        resp = requests.get(url, params=params, timeout=10)
+        data = resp.json()
+
+        if data.get('status') != 'ok':
+            msg = data.get('message', 'Unknown error from NewsAPI')
+            logger.error(f"NewsAPI returned error: {msg}")
+            raise HTTPException(status_code=500, detail=f"NewsAPI error: {msg}")
+
+        articles = []
+        for a in data.get('articles', []):
+            articles.append({
+                'title': a.get('title'),
+                'source': (a.get('source') or {}).get('name'),
+                'url': a.get('url'),
+                'publishedAt': a.get('publishedAt'),
+                'description': a.get('description')
+            })
+
+        return { 'success': True, 'articles': articles }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching news: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to fetch news: {str(e)}")
 
 
 # ==================== AUTHENTICATION ENDPOINTS ====================

@@ -6,6 +6,7 @@ This provides a ChatGPT-like experience with email and app control
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 import openai
+import re
 import os
 import requests
 import json
@@ -14,6 +15,73 @@ from dotenv import load_dotenv
  
 
 load_dotenv()
+
+# Robust env loader (fallback) to handle .env formatting variations
+def _read_env_key_from_dotenv(key_name):
+    val = os.getenv(key_name)
+    if val:
+        return val.strip()
+    try:
+        base = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+        env_path = os.path.join(base, '.env')
+        if not os.path.exists(env_path):
+            return ''
+        with open(env_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                if '=' not in line or line.strip().startswith('#'):
+                    continue
+                k, v = line.split('=', 1)
+                if k.strip() == key_name:
+                    return v.strip().strip('"').strip("'")
+    except Exception as e:
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Failed to read .env fallback for {key_name}: {e}")
+    return ''
+
+# Read NewsAPI key
+NEWSAPI_KEY = _read_env_key_from_dotenv('NEWSAPI_KEY')
+if not NEWSAPI_KEY:
+    logger.warning('NEWSAPI_KEY not configured; news features may be limited')
+
+def fetch_latest_news(q=None, country='us', pageSize=10):
+    """Fetch news using NewsAPI; use 'everything' for queries and 'top-headlines' otherwise."""
+    if not NEWSAPI_KEY:
+        return []
+    try:
+        if q:
+            params = {
+                'apiKey': NEWSAPI_KEY,
+                'q': q,
+                'pageSize': min(pageSize, 20),
+                'sortBy': 'publishedAt',
+                'language': 'en'
+            }
+            resp = requests.get('https://newsapi.org/v2/everything', params=params, timeout=10)
+        else:
+            params = {
+                'apiKey': NEWSAPI_KEY,
+                'country': country,
+                'pageSize': min(pageSize, 20)
+            }
+            resp = requests.get('https://newsapi.org/v2/top-headlines', params=params, timeout=8)
+        data = resp.json()
+        if data.get('status') != 'ok':
+            logger.warning(f"NewsAPI returned non-ok status: {data.get('message')}")
+            return []
+        articles = []
+        for a in data.get('articles', []):
+            articles.append({
+                'title': a.get('title'),
+                'source': (a.get('source') or {}).get('name'),
+                'url': a.get('url'),
+                'publishedAt': a.get('publishedAt'),
+                'description': a.get('description')
+            })
+        logger.info(f"Fetched {len(articles)} articles for query='{q}'")
+        return articles
+    except Exception as e:
+        logger.error(f"Failed to fetch news: {e}")
+        return []
 
 # Setup logging - use WARNING level to reduce logging overhead
 logging.basicConfig(level=logging.WARNING)  # Changed from INFO to WARNING for faster performance
@@ -318,6 +386,59 @@ Be conversational and helpful, like ChatGPT."""
         
         # Add current user message
         messages.append({"role": "user", "content": user_message})
+
+            # News detection (broader): detect queries asking for latest news/updates/headlines
+        try:
+            is_news_query = False
+
+            news_keywords_re = re.compile(r"\b(news|headline|headlines|latest|recent|today|breaking|updates|update|in the news|what(?:'s| is) new|any updates)\b", re.IGNORECASE)
+            if news_keywords_re.search(user_message):
+                is_news_query = True
+
+            # Detect present-tense 'who is the current X' or 'who is president' style questions
+            if re.search(r"\bwho\s+is\b", user_message, re.IGNORECASE) and re.search(r"\b(current|today|now|president|prime minister|leader|king|queen|chancellor|pm|president of)\b", user_message, re.IGNORECASE):
+                is_news_query = True
+
+            # Also consider phrasing like 'tell me about X' or 'give me the latest on X' as news queries
+            if re.search(r"\b(?:tell me|give me|show me|what(?:'s| is| are)|any news)\b.*\babout\b", user_message, re.IGNORECASE):
+                is_news_query = True
+
+            topic = None
+            # Try to extract topic after 'about' or after news keywords or 'who is' patterns
+            m = re.search(r"news(?:\s+(?:about|on|for)\s+)(.+)$", user_message, re.IGNORECASE)
+            if not m:
+                m = re.search(r"who\s+is\s+(?:the\s+)?(current\s+)?(.+)$", user_message, re.IGNORECASE)
+            if not m:
+                m = re.search(r"(?:about|on|regarding|re)\s+([A-Za-z0-9\-&,()'\"\s]+)", user_message, re.IGNORECASE)
+            if not m:
+                m = re.search(r"(?:latest|headlines|news)\s+(?:about|on|for)?\s*(.+)", user_message, re.IGNORECASE)
+
+            if m:
+                # choose the last capture group that is non-empty
+                groups = [g for g in m.groups() if g]
+                if groups:
+                    topic = groups[-1].strip().strip('?.!')
+
+            news_snippet = None
+            if is_news_query and NEWSAPI_KEY:
+                try:
+                    articles = fetch_latest_news(q=topic, country='us', pageSize=10)
+                    if articles:
+                        lines = []
+                        for a in articles:
+                            title = a.get('title') or ''
+                            src = a.get('source') or ''
+                            desc = a.get('description') or ''
+                            url = a.get('url') or ''
+                            lines.append(f"- {title} ({src})\n  {desc}\n  {url}")
+                        news_snippet = "\n\nNewsAPI - Recent articles (most recent first):\n" + "\n".join(lines)
+                        # Insert as a system message right after the system prompt so the model can use it
+                        messages.insert(1, {"role": "system", "content": news_snippet})
+                        logger.info(f"[CHAT-{request_id}] Included {len(articles)} news articles in prompt (topic='{topic}')")
+                except Exception as e:
+                    logger.warning(f"[CHAT-{request_id}] News fetch failed: {e}")
+        except Exception as e:
+            logger.debug(f"News detection error: {e}")
         
         total_context = len(messages)
         logger.info(f"[CHAT] Total messages in context: {total_context}")

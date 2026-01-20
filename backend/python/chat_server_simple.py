@@ -15,7 +15,6 @@ import logging
 from dotenv import load_dotenv
 from datetime import datetime
 
-load_dotenv()
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -52,6 +51,132 @@ openai.api_key = OPENAI_API_KEY
 USE_OPENAI = OPENAI_API_KEY and OPENAI_API_KEY != 'your_openai_api_key_here'
 
 BACKEND_URL = "http://72.62.162.44:8000"
+
+load_dotenv()
+
+# Robust env loader: handle cases where .env has spaces around '=' or nonstandard formatting
+def _read_env_key_from_dotenv(key_name):
+    # First try os.environ
+    val = os.getenv(key_name)
+    if val:
+        return val.strip()
+
+    # Fallback: manually parse .env in repo root
+    try:
+        # Try repo root relative to this file (two levels up)
+        base = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+        env_path = os.path.join(base, '.env')
+        if not os.path.exists(env_path):
+            return None
+        with open(env_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                if '=' not in line or line.strip().startswith('#'):
+                    continue
+                k, v = line.split('=', 1)
+                if k.strip() == key_name:
+                    return v.strip().strip('\"').strip("\'")
+    except Exception as e:
+        logger.warning(f"Failed to read .env fallback for {key_name}: {e}")
+    return None
+
+# NewsAPI configuration
+NEWSAPI_KEY = _read_env_key_from_dotenv('NEWSAPI_KEY')
+USE_NEWSAPI = bool(NEWSAPI_KEY)
+if not NEWSAPI_KEY:
+    logger.warning('NEWSAPI_KEY is not configured; news features will be disabled')
+
+def fetch_latest_news(q=None, country='us', pageSize=5):
+    """Fetch top headlines from NewsAPI and return a list of simplified articles."""
+    if not NEWSAPI_KEY:
+        return []
+    try:
+        # Try multiple strategies to get the most relevant and recent articles.
+        articles = []
+
+        # 1) If topic provided, prefer `everything` with qInTitle for specificity
+        if q:
+            params = {
+                'apiKey': NEWSAPI_KEY,
+                'qInTitle': q,
+                'pageSize': min(pageSize, 20),
+                'sortBy': 'publishedAt'
+            }
+            resp = requests.get('https://newsapi.org/v2/everything', params=params, timeout=10)
+            data = resp.json()
+            if data.get('status') == 'ok' and data.get('articles'):
+                for a in data.get('articles', []):
+                    articles.append({
+                        'title': a.get('title'),
+                        'source': (a.get('source') or {}).get('name'),
+                        'url': a.get('url'),
+                        'publishedAt': a.get('publishedAt'),
+                        'description': a.get('description')
+                    })
+
+        # 2) If still empty and q provided, try `everything` without qInTitle (broader)
+        if q and not articles:
+            params = {
+                'apiKey': NEWSAPI_KEY,
+                'q': q,
+                'pageSize': min(pageSize * 2, 50),
+                'sortBy': 'publishedAt',
+                'language': 'en'
+            }
+            resp = requests.get('https://newsapi.org/v2/everything', params=params, timeout=10)
+            data = resp.json()
+            if data.get('status') == 'ok' and data.get('articles'):
+                for a in data.get('articles', []):
+                    articles.append({
+                        'title': a.get('title'),
+                        'source': (a.get('source') or {}).get('name'),
+                        'url': a.get('url'),
+                        'publishedAt': a.get('publishedAt'),
+                        'description': a.get('description')
+                    })
+
+        # 3) If no topic provided or still empty, try top-headlines (country) first
+        if not q and not articles:
+            params = {
+                'apiKey': NEWSAPI_KEY,
+                'country': country,
+                'pageSize': min(pageSize, 20)
+            }
+            resp = requests.get('https://newsapi.org/v2/top-headlines', params=params, timeout=8)
+            data = resp.json()
+            if data.get('status') == 'ok' and data.get('articles'):
+                for a in data.get('articles', []):
+                    articles.append({
+                        'title': a.get('title'),
+                        'source': (a.get('source') or {}).get('name'),
+                        'url': a.get('url'),
+                        'publishedAt': a.get('publishedAt'),
+                        'description': a.get('description')
+                    })
+
+        # 4) Final fallback: if still empty and we had a topic, try top-headlines without country
+        if q and not articles:
+            params = {
+                'apiKey': NEWSAPI_KEY,
+                'q': q,
+                'pageSize': min(pageSize, 20)
+            }
+            resp = requests.get('https://newsapi.org/v2/top-headlines', params=params, timeout=8)
+            data = resp.json()
+            if data.get('status') == 'ok' and data.get('articles'):
+                for a in data.get('articles', []):
+                    articles.append({
+                        'title': a.get('title'),
+                        'source': (a.get('source') or {}).get('name'),
+                        'url': a.get('url'),
+                        'publishedAt': a.get('publishedAt'),
+                        'description': a.get('description')
+                    })
+
+        logger.info(f"Fetched {len(articles)} news articles for query='{q}' country='{country}' via NewsAPI")
+        return articles
+    except Exception as e:
+        logger.error(f"Failed to fetch news: {e}")
+        return []
 
 # User credentials (mock)
 USER_CREDENTIALS = {
@@ -347,6 +472,27 @@ def get_user_credentials():
     })
 
 
+@app.route('/news', methods=['GET'])
+def news_endpoint():
+    """Simple endpoint to return NewsAPI articles for a query. Useful for testing and verification.
+
+    Query params:
+    - q: optional search topic (string)
+    - pageSize: optional number of articles (int)
+    """
+    q = request.args.get('q')
+    try:
+        pageSize = int(request.args.get('pageSize', 5))
+    except Exception:
+        pageSize = 5
+
+    if not NEWSAPI_KEY:
+        return jsonify({'success': False, 'error': 'NEWSAPI_KEY not configured', 'articles': []}), 400
+
+    articles = fetch_latest_news(q=q, pageSize=pageSize)
+    return jsonify({'success': True, 'count': len(articles), 'articles': articles})
+
+
 @app.route('/chat', methods=['POST'])
 def chat():
     """Handle chat messages with OpenAI + fallback"""
@@ -416,6 +562,51 @@ You can discuss any topic freely - science, math, programming, history, creative
            
             # Add current user message
             messages.append({"role": "user", "content": user_message})
+
+            # If this looks like a news/current-events query, fetch latest news and include as context
+            try:
+                is_news_query = False
+                # Broader news/current detection: look for explicit news keywords OR present-tense 'who is the current' style questions
+                if re.search(r"\b(news|headline|headlines|latest|recent|today|breaking|current events|updates|what(?:'s| is) happening|any updates)\b", user_message, re.IGNORECASE):
+                    is_news_query = True
+
+                # Detect present-tense 'who is the current X' or 'who is the president' questions
+                if re.search(r"\bwho\s+is\b", user_message, re.IGNORECASE) and re.search(r"\b(current|today|now|president|prime minister|leader|king|queen|chancellor|pm|president of)\b", user_message, re.IGNORECASE):
+                    is_news_query = True
+
+                # Try to extract a topic for more relevant search (e.g., 'news about X' or 'who is the current X')
+                topic = None
+                m = re.search(r"news(?:\s+(?:about|on|for)\s+)(.+)$", user_message, re.IGNORECASE)
+                if not m:
+                    m = re.search(r"who\s+is\s+(?:the\s+)?(current\s+)?(.+)$", user_message, re.IGNORECASE)
+                if m:
+                    topic = (m.group(1) if m.lastindex >= 1 and m.group(1) else m.group(2) if m.lastindex >= 2 else None)
+                    if topic:
+                        topic = topic.strip().strip('?.!')
+
+                news_articles = []
+                if is_news_query and USE_NEWSAPI:
+                    try:
+                        news_articles = fetch_latest_news(q=topic, country='us', pageSize=5)
+                    except Exception:
+                        news_articles = []
+
+                if news_articles:
+                    # Build a compact news summary to include in the system context for the model
+                    news_lines = []
+                    for a in news_articles:
+                        title = a.get('title') or ''
+                        src = a.get('source') or ''
+                        desc = a.get('description') or ''
+                        url = a.get('url') or ''
+                        news_lines.append(f"- {title} ({src})\n  {desc}\n  {url}")
+
+                    news_snippet = "\n\nNewsAPI - Latest articles:\n" + "\n".join(news_lines)
+                else:
+                    news_snippet = None
+            except Exception as e:
+                logger.warning(f"News integration failed: {e}")
+                news_snippet = None
             
             total_context = len(messages)
             logger.info(f"[CHAT] Total messages in context: {total_context} (1 system + {total_context-1} conversation messages)")
@@ -426,10 +617,18 @@ You can discuss any topic freely - science, math, programming, history, creative
             
             # Call OpenAI with function calling - use direct call with very short timeout
             # Only system + current user message to prevent timeout
-            minimal_messages = [
-                messages[0],  # System message
-                {"role": "user", "content": user_message}  # Current user message only
-            ]
+            # Insert news snippet into messages if available (place after system message)
+            if news_snippet:
+                minimal_messages = [
+                    messages[0],  # System message
+                    {"role": "system", "content": news_snippet},
+                    {"role": "user", "content": user_message}
+                ]
+            else:
+                minimal_messages = [
+                    messages[0],  # System message
+                    {"role": "user", "content": user_message}  # Current user message only
+                ]
             
             logger.info(f"[CHAT] Calling OpenAI API with minimal context: {len(minimal_messages)} messages")
             
@@ -570,10 +769,13 @@ You can discuss any topic freely - science, math, programming, history, creative
                     final_message = f"I completed the action ({function_name}), but the response generation timed out. Please check if it worked."
                 else:
                     final_message = f"I completed the action ({function_name}), but had trouble generating a response. Please check if it worked."
-                else:
+
+            # Ensure we have a final_message; fallback to original assistant message if necessary
+            if 'final_message' not in locals() or not final_message:
+                try:
                     final_message = message.content
-            else:
-                final_message = message.content
+                except Exception:
+                    final_message = "No response generated"
             
             # Validate final_message
             if not final_message or not isinstance(final_message, str):

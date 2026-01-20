@@ -22,6 +22,7 @@
             document.body.appendChild(particle);
         }
     </script>
+    
 
     <div class="container">
         <div class="tab-bar">
@@ -991,8 +992,8 @@
         };
         const API_BASE = getApiBase();
         
-        // Chat server URL - uses same origin (works for both local and domain)
-        const CHAT_SERVER_URL = window.location.origin;
+        // Chat server URL - when developing locally point to the Flask chat server on port 5000
+        const CHAT_SERVER_URL = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://localhost:5000' : window.location.origin;
         
         // Node.js servers URLs - for localhost use direct ports, for domain use origin with paths
         const getNodeServerUrl = (port, servicePath) => {
