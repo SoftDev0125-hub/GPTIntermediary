@@ -538,6 +538,24 @@ body::before {
     color: #64748b;
 }
 
+/* Make textarea look like the original single-line input */
+.input-wrapper textarea {
+    flex: 1;
+    background: transparent;
+    border: none;
+    color: #e2e8f0;
+    font-size: 15px;
+    outline: none;
+    font-family: 'Inter', sans-serif;
+    line-height: 1.4;
+    padding: 0; /* match input look */
+    min-height: 1.4em;
+}
+
+.input-wrapper textarea::placeholder {
+    color: #64748b;
+}
+
 /* Voice Recognition Button */
 .voice-recognition-btn {
     display: flex;

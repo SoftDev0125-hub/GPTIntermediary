@@ -88,12 +88,13 @@
 
             <div class="input-container">
                 <div class="input-wrapper">
-                    <input 
-                        type="text" 
-                        id="messageInput" 
+                    <textarea
+                        id="messageInput"
+                        rows="1"
                         placeholder="Type your message or command..."
                         autocomplete="off"
-                    />
+                        style="resize: none; overflow: hidden;"
+                    ></textarea>
                     <button id="voiceRecognitionButton" class="voice-recognition-btn" title="Voice Recognition">
                         <svg id="voiceIcon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
@@ -1446,6 +1447,7 @@
 
             addMessage(message, 'user');
             messageInput.value = '';
+            try { if (typeof updateTextareaSize === 'function') updateTextareaSize(); } catch (e) {}
             sendButton.disabled = true;
 
             typingIndicator.classList.add('active');
@@ -1561,32 +1563,78 @@
                     console.error('[CHAT] Connection error:', error);
                     addMessage(`CONNECTION ERROR: ${error.message}. Make sure the chat server is running on port 5000.`, 'error');
                 }
-            } finally {
+                } finally {
                 sendButton.disabled = false;
                 messageInput.focus();
+                try { if (typeof updateTextareaSize === 'function') updateTextareaSize(); } catch (e) {}
             }
         }
 
         sendButton.addEventListener('click', () => sendMessage(false));
-        messageInput.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') sendMessage(false);
+
+        // Auto-resize textarea and handle Enter vs Shift+Enter / Ctrl+Enter
+        const initialRows = 1;
+        const maxRows = initialRows * 8; // allow more than 7x original size
+
+        function updateTextareaSize() {
+            const lines = messageInput.value.split('\n').length;
+            const rows = Math.min(Math.max(lines, initialRows), maxRows);
+            messageInput.rows = rows;
+            if (lines > maxRows) {
+                messageInput.style.overflowY = 'auto';
+            } else {
+                messageInput.style.overflowY = 'hidden';
+            }
+        }
+
+        // Resize on input (typing or programmatic changes)
+        messageInput.addEventListener('input', () => {
+            updateTextareaSize();
         });
+
+        // Enter => send, Shift+Enter or Ctrl+Enter => newline
+        messageInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey) {
+                e.preventDefault();
+                sendMessage(false);
+                // reset size after sending
+                setTimeout(() => {
+                    messageInput.value = '';
+                    updateTextareaSize();
+                }, 0);
+            }
+        });
+
+        // Make sure voice recognition appends trigger resize as well
 
         // Voice Recognition Feature
         const voiceRecognitionButton = document.getElementById('voiceRecognitionButton');
         const voiceIcon = document.getElementById('voiceIcon');
         let recognition = null;
-        let isListening = false;
+        let isListening = false; // UI state: whether mic shows as listening
+        let listeningActive = false; // Logical state: mic toggled ON
+        let silenceTimer = null; // timer for detecting silence
+        let currentTranscript = ''; // accumulated transcript while mic is ON
+
+        // Helper: send current input if non-empty
+        function sendCurrentInputIfAny() {
+            const text = messageInput.value.trim();
+            if (text) {
+                // Send and request TTS
+                sendMessage(true);
+            }
+        }
 
         // Check if Web Speech API is available
         if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
             recognition = new SpeechRecognition();
             
-            recognition.continuous = false; // Stop after user stops speaking
+            recognition.continuous = true; // Keep listening until user toggles mic off
             recognition.interimResults = false; // Only return final results
             recognition.lang = 'en-US'; // Set language (can be made configurable)
 
+            // When recognition starts
             recognition.onstart = () => {
                 console.log('[VOICE] Voice recognition started');
                 isListening = true;
@@ -1594,15 +1642,43 @@
                 voiceRecognitionButton.title = 'Listening... Click to stop';
             };
 
+            // Final results from speech recognition
             recognition.onresult = (event) => {
-                const transcript = event.results[0][0].transcript;
-                console.log('[VOICE] Recognized text:', transcript);
-                
-                // Set the recognized text in the input field
-                messageInput.value = transcript.trim();
-                
-                // Automatically send the message and request client-side speech playback
-                sendMessage(true);
+                try {
+                    const transcript = Array.from(event.results)
+                        .slice(event.resultIndex)
+                        .map(r => r[0].transcript)
+                        .join(' ')
+                        .trim();
+
+                    if (!transcript) return;
+                    console.log('[VOICE] Recognized text:', transcript);
+
+                    // Append recognized text to accumulated transcript
+                    if (currentTranscript) currentTranscript += ' ' + transcript;
+                    else currentTranscript = transcript;
+
+                    // Append to input field but keep it editable for the user
+                    // If user has typed, we append after their content
+                    if (messageInput.value && !messageInput.value.endsWith(' ')) messageInput.value += ' ';
+                    messageInput.value += transcript;
+                    try { if (typeof updateTextareaSize === 'function') updateTextareaSize(); } catch (e) {}
+
+                    // Reset silence timer: if no further speech for 5s, treat input as complete
+                    if (silenceTimer) clearTimeout(silenceTimer);
+                    silenceTimer = setTimeout(() => {
+                        silenceTimer = null;
+                        // Send the current input as a question
+                        if (messageInput.value.trim()) {
+                            console.log('[VOICE] Silence detected (5s) — sending current input');
+                            sendMessage(true);
+                            // Clear accumulated transcript so next phrase starts fresh
+                            currentTranscript = '';
+                        }
+                    }, 5000);
+                } catch (e) {
+                    console.error('[VOICE] onresult error', e);
+                }
             };
 
             recognition.onerror = (event) => {
@@ -1628,29 +1704,56 @@
                 addMessage(errorMessage, 'error');
             };
 
+            // When recognition naturally ends (e.g. browser internal), if mic is still toggled ON restart it
             recognition.onend = () => {
                 console.log('[VOICE] Voice recognition ended');
                 isListening = false;
                 voiceRecognitionButton.classList.remove('listening');
                 voiceRecognitionButton.title = 'Voice Recognition';
-            };
 
-            // Handle button click
-            voiceRecognitionButton.addEventListener('click', () => {
-                if (isListening) {
-                    // Stop recognition
-                    recognition.stop();
-                    console.log('[VOICE] Stopping voice recognition');
-                } else {
-                    // Start recognition
+                // If user left mic ON, restart listening so we continue capturing multi-sentence input
+                if (listeningActive) {
                     try {
                         recognition.start();
-                        console.log('[VOICE] Starting voice recognition');
+                        console.log('[VOICE] Restarting voice recognition (mic still ON)');
+                    } catch (err) {
+                        console.warn('[VOICE] Could not restart recognition:', err);
+                    }
+                }
+            };
+
+            // Handle button click: toggle listeningActive
+            voiceRecognitionButton.addEventListener('click', () => {
+                if (listeningActive) {
+                    // Turn mic OFF
+                    listeningActive = false;
+                    try {
+                        recognition.stop();
+                    } catch (e) {}
+                    console.log('[VOICE] Microphone toggled OFF');
+
+                    // If there's a pending silence timer, clear it
+                    if (silenceTimer) {
+                        clearTimeout(silenceTimer);
+                        silenceTimer = null;
+                    }
+
+                    // If there's any text in the input, send it before fully stopping
+                    if (messageInput.value.trim()) {
+                        console.log('[VOICE] Sending pending input on mic OFF');
+                        sendMessage(true);
+                        currentTranscript = '';
+                    }
+                } else {
+                    // Turn mic ON
+                    listeningActive = true;
+                    try {
+                        recognition.start();
+                        console.log('[VOICE] Microphone toggled ON');
                     } catch (error) {
                         console.error('[VOICE] Error starting recognition:', error);
-                        if (error.message.includes('already started')) {
-                            // Recognition already running, just stop it
-                            recognition.stop();
+                        if (error.message && error.message.includes('already started')) {
+                            try { recognition.stop(); } catch (e) {}
                         } else {
                             addMessage('Error starting voice recognition. Please try again.', 'error');
                         }
@@ -1661,8 +1764,6 @@
             // Web Speech API not supported
             console.warn('[VOICE] Web Speech API not supported in this browser');
             voiceRecognitionButton.style.display = 'none';
-            // Or show a message
-            // addMessage('Voice recognition is not supported in your browser.', 'error');
         }
 
         const unreadButton = document.getElementById('unreadButton');
