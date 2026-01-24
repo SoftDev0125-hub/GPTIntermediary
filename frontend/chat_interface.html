@@ -80,6 +80,74 @@
                 </div>
             </div>
 
+            <!-- Contacts sidebar (to the right of chat input) -->
+            <div class="contacts-sidebar" id="contactsSidebar" style="position: absolute; right: 24px; top: 120px; width: 280px; background: #fff; border-radius: 8px; box-shadow: 0 6px 18px rgba(15,23,42,0.08); padding: 12px;">
+                <h3 style="margin: 0 0 8px 0; font-size: 14px;">Quick Contacts</h3>
+                <div style="display: flex; gap: 8px; flex-direction: column;">
+                    <input id="contactNameInput" placeholder="Name (e.g. Alice)" style="padding:8px; border:1px solid #e6e9ef; border-radius:6px;" />
+                    <input id="contactEmailInput" placeholder="Email (e.g. alice@example.com)" style="padding:8px; border:1px solid #e6e9ef; border-radius:6px;" />
+                    <div style="display:flex; gap:8px;">
+                        <button id="saveContactBtn" class="btn" style="flex:1;">Save</button>
+                        <button id="clearContactBtn" class="btn btn-secondary" style="flex:1;">Clear</button>
+                    </div>
+                    <div id="contactStatus" style="font-size:12px; color:#334155; min-height:18px;"></div>
+                </div>
+                <!-- Small hide button placed inside panel -->
+                <div style="display:flex; justify-content:flex-end; margin-top:8px;">
+                    <button id="contactsHideBtn" class="btn btn-secondary" style="padding:6px 10px; font-size:12px;">Hide</button>
+                </div>
+            </div>
+
+            <!-- Show tab that appears when the contacts panel is collapsed -->
+            <button id="contactsShowBtn" style="position: fixed; right: 8px; top: 120px; display: none; z-index:60; padding:8px 10px; border-radius:6px; background:#fff; border:1px solid rgba(15,23,42,0.06); box-shadow:0 6px 18px rgba(15,23,42,0.06);">Contact</button>
+
+            <script>
+                // Contacts hide/show controls (simple)
+                (function(){
+                    const sidebar = document.getElementById('contactsSidebar');
+                    const hideBtn = document.getElementById('contactsHideBtn');
+                    const showBtn = document.getElementById('contactsShowBtn');
+                    const STORAGE_KEY = 'contactsCollapsed';
+                    if (!sidebar || !hideBtn || !showBtn) return;
+
+                    function setCollapsed(collapsed, skipSave){
+                        console.log('[CONTACTS] setCollapsed ->', collapsed);
+                        // Explicitly toggle collapsed class and the visibility of both buttons
+                        if (collapsed){
+                            sidebar.classList.add('collapsed');
+                            // fallback: also remove from layout in case transform/overflow doesn't fully hide it
+                            try{ sidebar.style.display = 'none'; } catch(e){}
+                            hideBtn.style.display = 'none';
+                            showBtn.style.display = 'inline-block';
+                        } else {
+                            sidebar.classList.remove('collapsed');
+                            try{ sidebar.style.display = ''; } catch(e){}
+                            hideBtn.style.display = 'inline-block';
+                            showBtn.style.display = 'none';
+                        }
+                        if (!skipSave) localStorage.setItem(STORAGE_KEY, collapsed ? '1' : '0');
+                    }
+
+                    // initialize from storage
+                    try{
+                        const saved = localStorage.getItem(STORAGE_KEY);
+                        setCollapsed(saved === '1', true);
+                    }catch(e){}
+
+                    hideBtn.addEventListener('click', ()=> {
+                        console.log('[CONTACTS] hideBtn clicked');
+                        // Ensure external tab label
+                        try{ showBtn.textContent = 'Contact'; } catch(e){}
+                        setCollapsed(true);
+                    });
+                    showBtn.addEventListener('click', ()=> {
+                        console.log('[CONTACTS] showBtn clicked');
+                        setCollapsed(false);
+                        try{ hideBtn.textContent = 'Hide'; } catch(e){}
+                    });
+                })();
+            </script>
+
             <div class="typing-indicator" id="typingIndicator">
                 <span></span>
                 <span></span>
@@ -182,6 +250,8 @@
                 </div>
             </div>
         </div>
+
+    
 
         <!-- Excel Tab -->
         <div id="excel" class="tab-content">
@@ -982,12 +1052,18 @@
         const getApiBase = () => {
             const origin = window.location.origin;
             const hostname = window.location.hostname;
-            
+            const protocol = window.location.protocol;
+
+            // If page loaded from file:// protocol (local file), use localhost backend
+            if (protocol === 'file:') {
+                return 'http://localhost:8000';
+            }
+
             // If on localhost, use direct port connection to backend
             if (hostname === 'localhost' || hostname === '127.0.0.1') {
                 return 'http://localhost:8000';
             }
-            
+
             // For domain/VPS: use origin (Nginx will proxy /api to port 8000)
             return origin;
         };
@@ -1126,6 +1202,50 @@
         const messageInput = document.getElementById('messageInput');
         const sendButton = document.getElementById('sendButton');
         const typingIndicator = document.getElementById('typingIndicator');
+
+        // Contacts UI elements
+        const contactNameInput = document.getElementById('contactNameInput');
+        const contactEmailInput = document.getElementById('contactEmailInput');
+        const saveContactBtn = document.getElementById('saveContactBtn');
+        const clearContactBtn = document.getElementById('clearContactBtn');
+        const contactStatus = document.getElementById('contactStatus');
+
+        if (saveContactBtn) {
+            saveContactBtn.addEventListener('click', async () => {
+                const name = (contactNameInput.value || '').trim();
+                const email = (contactEmailInput.value || '').trim();
+                contactStatus.textContent = '';
+                if (!name || !email) {
+                    contactStatus.textContent = 'Please provide both name and email.';
+                    return;
+                }
+                try {
+                    const resp = await fetch(`${API_BASE}/api/contacts`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ name, email })
+                    });
+                    const j = await resp.json();
+                    if (resp.ok && j.success) {
+                        contactStatus.textContent = 'Contact saved.';
+                        setTimeout(() => contactStatus.textContent = '', 3000);
+                    } else {
+                        contactStatus.textContent = j.error || j.message || 'Failed to save contact.';
+                    }
+                } catch (err) {
+                    contactStatus.textContent = 'Error saving contact.';
+                    console.error('Save contact error', err);
+                }
+            });
+        }
+
+        if (clearContactBtn) {
+            clearContactBtn.addEventListener('click', () => {
+                contactNameInput.value = '';
+                contactEmailInput.value = '';
+                contactStatus.textContent = '';
+            });
+        }
 
         // Store conversation history for context
         let conversationHistory = [];
@@ -1469,11 +1589,15 @@
                 const authToken = localStorage.getItem('auth_token');
                 if (authToken) {
                     try {
-                        const tokenParts = authToken.split('.');
-                        if (tokenParts.length === 3) {
-                            const payload = JSON.parse(atob(tokenParts[1]));
-                            if (payload.user_id) {
-                                userIdInt = parseInt(payload.user_id, 10);
+                        // Decode base64url payload safely
+                        const parts = authToken.split('.');
+                        if (parts.length === 3) {
+                            let payload = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+                            while (payload.length % 4) payload += '=';
+                            const json = atob(payload);
+                            const obj = JSON.parse(json);
+                            if (obj && obj.user_id) {
+                                userIdInt = parseInt(obj.user_id, 10);
                                 localStorage.setItem('user_id', userIdInt.toString());
                                 console.log('[CHAT] Extracted user_id from token:', userIdInt);
                             }
@@ -9906,22 +10030,30 @@
         window.addEventListener('DOMContentLoaded', () => {
             const userId = localStorage.getItem('user_id');
             const authToken = localStorage.getItem('auth_token');
-            
-            if (!userId && authToken) {
-                // Try to extract user_id from token
+
+            // Helper: decode base64url and parse JWT payload robustly
+            function getUserIdFromToken(token) {
                 try {
-                    // JWT tokens have 3 parts separated by dots
-                    const tokenParts = authToken.split('.');
-                    if (tokenParts.length === 3) {
-                        // Decode the payload (second part)
-                        const payload = JSON.parse(atob(tokenParts[1]));
-                        if (payload.user_id) {
-                            localStorage.setItem('user_id', payload.user_id.toString());
-                            console.log('[AUTH] Extracted user_id from token:', payload.user_id);
-                        }
-                    }
+                    if (!token) return null;
+                    const parts = token.split('.');
+                    if (parts.length !== 3) return null;
+                    // base64url -> base64
+                    let payload = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+                    while (payload.length % 4) payload += '=';
+                    const json = atob(payload);
+                    const obj = JSON.parse(json);
+                    return obj && obj.user_id ? obj.user_id : null;
                 } catch (e) {
-                    console.warn('[AUTH] Could not extract user_id from token:', e);
+                    console.warn('[AUTH] getUserIdFromToken failed:', e);
+                    return null;
+                }
+            }
+
+            if (!userId && authToken) {
+                const extracted = getUserIdFromToken(authToken);
+                if (extracted) {
+                    localStorage.setItem('user_id', extracted.toString());
+                    console.log('[AUTH] Extracted user_id from token:', extracted);
                 }
             }
             
@@ -10023,7 +10155,11 @@ Note: User tokens are for personal use. For bots, use Bot Token instead.`
         async function loadSettings() {
             try {
                 showMessage('Loading settings from .env file...', 'info');
-                const response = await fetch(`${API_BASE}/api/settings/env`);
+                // Include Authorization header if token available so backend can return per-user settings
+                const authToken = localStorage.getItem('auth_token');
+                const headers = {};
+                if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+                const response = await fetch(`${API_BASE}/api/settings/env`, { headers });
                 
                 if (!response.ok) {
                     throw new Error(`HTTP error! status: ${response.status}`);
