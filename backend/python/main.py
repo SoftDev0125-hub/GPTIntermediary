@@ -54,6 +54,41 @@ def _read_env_key_from_dotenv(key_name):
         logger.warning(f"Failed to read .env fallback for {key_name}: {e}")
     return ''
 
+
+def _write_env_key_to_dotenv(key_name, value):
+    """Write or update a key in the project's .env file (best-effort).
+    Returns True on success, False on failure."""
+    try:
+        base = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+        env_path = os.path.join(base, '.env')
+        lines = []
+        if os.path.exists(env_path):
+            with open(env_path, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+
+        key_found = False
+        new_lines = []
+        for line in lines:
+            if '=' not in line or line.strip().startswith('#'):
+                new_lines.append(line)
+                continue
+            k, v = line.split('=', 1)
+            if k.strip() == key_name:
+                new_lines.append(f"{key_name}={value}\n")
+                key_found = True
+            else:
+                new_lines.append(line)
+
+        if not key_found:
+            new_lines.append(f"{key_name}={value}\n")
+
+        with open(env_path, 'w', encoding='utf-8') as f:
+            f.writelines(new_lines)
+        return True
+    except Exception as e:
+        logger.warning(f"Failed to write {key_name} to .env: {e}")
+        return False
+
 # Read NewsAPI key from environment (set in .env or system env)
 NEWSAPI_KEY = _read_env_key_from_dotenv('NEWSAPI_KEY')
 if not NEWSAPI_KEY:
@@ -68,7 +103,7 @@ from services.excel_service import ExcelService
 # Database imports
 try:
     from database import get_db, init_db, engine
-    from db_models import User, UserServiceCredential, GmailInfo, TelegramSession, SlackInfo, APIKey
+    from db_models import User, UserServiceCredential, GmailInfo, TelegramSession, SlackInfo, APIKey, Contact
     from sqlalchemy.orm import Session
     from sqlalchemy.sql import func
     DATABASE_AVAILABLE = True
@@ -945,22 +980,192 @@ async def send_email(
                 logger.info("Using credentials from request body (backward compatibility)")
             else:
                 raise HTTPException(status_code=400, detail="No Gmail credentials provided. Please connect your Gmail account first.")
+
+        # Determine sender email (from user's saved config or from provided credentials)
+        sender_email = None
+        try:
+            if 'gmail_config' in locals() and gmail_config and gmail_config.get('user_email'):
+                sender_email = gmail_config.get('user_email')
+        except Exception:
+            sender_email = None
+
+        if (not sender_email) and request.user_credentials and getattr(request.user_credentials, 'email', None):
+            sender_email = request.user_credentials.email
         
-        logger.info(f"Sending email to {request.to}")
-        message_id = await email_service.send_email(
-            access_token=access_token,
-            refresh_token=refresh_token,
-            to=request.to,
-            subject=request.subject,
-            body=request.body,
-            html=request.html,
-            google_client_id=google_client_id,
-            google_client_secret=google_client_secret
-        )
+        # Resolve recipient(s)
+        targets = []
+        resolved_contacts = []
+
+        # First, try to parse an email address directly from `to` (handles "Name <email>" and raw emails)
+        from email.utils import parseaddr
+        parsed_name, parsed_email = parseaddr(request.to or '')
+        parsed_email = parsed_email.strip() if parsed_email else ''
+
+        # If parsed_email looks like a placeholder (example.com etc.) or obviously fake, ignore it
+        placeholder_domains = {"example.com", "example.org", "example.net"}
+        parsed_is_placeholder = False
+        if parsed_email and '@' in parsed_email:
+            try:
+                domain = parsed_email.split('@', 1)[1].lower()
+                if domain in placeholder_domains or domain.startswith('example.') or domain == 'example':
+                    parsed_is_placeholder = True
+                    logger.info(f"Ignoring placeholder recipient address from input: {parsed_email}")
+            except Exception:
+                parsed_is_placeholder = False
+
+        if parsed_email and '@' in parsed_email and not parsed_is_placeholder:
+            targets = [parsed_email]
+            resolved_contacts.append({"query": request.to, "matched": parsed_email, "match_type": "direct_parse"})
+        else:
+            # Attempt name-based lookup in `contacts` table (case-insensitive substring match)
+            # Try to extract a name from natural language like "send hi to Abel"
+            raw_to = (request.to or '').strip()
+            import re
+            m = re.search(r"\bto\s+(.+)$", raw_to, flags=re.IGNORECASE)
+            if m:
+                query_name = m.group(1).strip().strip('"\'\.,')
+            else:
+                query_name = raw_to
+            if not query_name:
+                raise HTTPException(status_code=400, detail="Recipient must be a valid email address or a contact name.")
+
+            if DATABASE_AVAILABLE:
+                # Debug: log inputs used for contact lookup
+                logger.info(f"Contact lookup inputs: raw_to='{raw_to}', query_name='{query_name}', sender_email='{sender_email}'")
+
+                # Ensure we know the authenticated Gmail address so we can exclude it from matches
+                try:
+                    if not sender_email and access_token:
+                        try:
+                            svc = email_service._get_service(access_token, refresh_token, google_client_id, google_client_secret)
+                            profile = svc.users().getProfile(userId='me').execute()
+                            profile_email = profile.get('emailAddress') if isinstance(profile, dict) else None
+                            if profile_email:
+                                sender_email = profile_email
+                                logger.info(f"Discovered authenticated Gmail profile email: {sender_email}")
+                        except Exception as e:
+                            logger.info(f"Could not fetch Gmail profile for sender discovery: {e}")
+                except Exception:
+                    pass
+                try:
+                    matches = db.query(Contact).filter(Contact.name.ilike(f"%{query_name}%")).all()
+                except Exception as e:
+                    logger.error(f"Failed to query contacts for '{query_name}' using ilike: {e}")
+                    matches = []
+
+                # If no ilike matches, perform a broader in-Python match to handle tokenized names,
+                # email local-part matches, and minor formatting differences.
+                if not matches:
+                    try:
+                        logger.info(f"No ilike matches for '{query_name}', performing broader Python-side matching")
+                        all_contacts = db.query(Contact).all()
+                        q = query_name.lower()
+                        broader = []
+                        for c in all_contacts:
+                            try:
+                                name = (c.name or '').lower()
+                                email = (c.email or '').lower()
+                                # match if query is substring of name or email
+                                if q in name or q in email:
+                                    broader.append(c)
+                                    continue
+                                # match by tokens (e.g., query 'abel' matches 'abel simbulan')
+                                tokens = [t.strip() for t in name.split() if t.strip()]
+                                for t in tokens:
+                                    if q == t or q in t or t in q:
+                                        broader.append(c)
+                                        break
+                                else:
+                                    # check local-part of email (before @)
+                                    if '@' in email:
+                                        local = email.split('@', 1)[0]
+                                        if q == local or q in local or local in q:
+                                            broader.append(c)
+                            except Exception:
+                                continue
+                        matches = broader
+                        logger.info(f"Broader matching found {len(matches)} results for '{query_name}'")
+                    except Exception as e3:
+                        logger.error(f"Broader contact matching failed for '{query_name}': {e3}")
+                        matches = []
+
+                # Debug: show number of matches and sample data
+                try:
+                    if matches is None:
+                        logger.info(f"Contact query returned None for '{query_name}'")
+                    else:
+                        logger.info(f"Contact query found {len(matches)} matches for '{query_name}'")
+                        sample = []
+                        for m in matches[:20]:
+                            sample.append({"id": getattr(m, 'id', None), "name": getattr(m, 'name', None), "email": getattr(m, 'email', None)})
+                        logger.info(f"Contact matches sample: {sample}")
+                except Exception as log_exc:
+                    logger.warning(f"Failed to log contact matches: {log_exc}")
+
+                if not matches:
+                    # No matches found after both attempts
+                    raise HTTPException(status_code=404, detail=f"No contacts found with name containing '{query_name}'")
+
+                # Collect unique emails from matching contacts, but exclude the sender's own email
+                seen = set()
+                sender_email_lower = None
+                try:
+                    if sender_email:
+                        sender_email_lower = sender_email.strip().lower()
+                except Exception:
+                    sender_email_lower = None
+
+                for c in matches:
+                    c_email = (c.email or '').strip()
+                    if not c_email:
+                        continue
+                    if sender_email_lower and c_email.lower() == sender_email_lower:
+                        logger.info(f"Excluding contact id={c.id} with email={c_email} because it matches the sender email")
+                        continue
+                    if c_email and c_email not in seen:
+                        targets.append(c_email)
+                        seen.add(c_email)
+                        resolved_contacts.append({"query": query_name, "matched": c_email, "contact_id": c.id, "match_type": "contacts_table"})
+
+                if not targets:
+                    # All matches (if any) were the sender's own email or no valid emails
+                    raise HTTPException(status_code=404, detail=f"No contacts found with name containing '{query_name}' (matches excluded sender or had no emails)")
+            else:
+                raise HTTPException(status_code=400, detail=f"Recipient must be a valid email address. Name-based lookup requires database access for '{request.to}'.")
+
+        send_results = []
+        for tgt in targets:
+            try:
+                # Normalize recipient address in main as an extra safety check
+                from email.utils import parseaddr
+                _name, _email = parseaddr(tgt or '')
+                _email = _email.strip() if _email else ''
+                if not _email or '@' not in _email:
+                    logger.error(f"Skipping invalid recipient address: {tgt}")
+                    send_results.append({"to": tgt, "error": "Invalid recipient address", "success": False})
+                    continue
+                tgt_normalized = _email
+                logger.info(f"Sending email to {tgt_normalized}")
+                msg_id = await email_service.send_email(
+                    access_token=access_token,
+                    refresh_token=refresh_token,
+                    to=[tgt_normalized],
+                    subject=request.subject,
+                    body=request.body,
+                    html=request.html,
+                    google_client_id=google_client_id,
+                    google_client_secret=google_client_secret,
+                    from_email=sender_email
+                )
+                send_results.append({"to": tgt, "to_normalized": tgt_normalized, "message_id": msg_id, "success": True})
+            except Exception as e:
+                logger.error(f"Failed to send to {tgt}: {e}")
+                send_results.append({"to": tgt, "to_normalized": tgt_normalized if 'tgt_normalized' in locals() else None, "error": str(e), "success": False})
+
         return OperationResponse(
-            success=True,
-            message=f"Email sent successfully to {request.to}",
-            data={"message_id": message_id}
+            success=all([r.get('success') for r in send_results]),
+            message=f"Email send results",
+            data={"results": send_results}
         )
     except Exception as e:
         logger.error(f"Error sending email: {str(e)}")
@@ -1229,6 +1434,124 @@ async def mark_email_read(
         )
     except Exception as e:
         logger.error(f"Error marking email as read: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ----------------- Contacts API -----------------
+from models.schemas import ContactCreateRequest, ContactResolveRequest, ContactResponse
+from models.schemas import ContactListResponse
+
+
+@app.post("/api/contacts", response_model=OperationResponse)
+async def create_contact(
+    request: ContactCreateRequest,
+    user_id: Optional[int] = Depends(get_current_user_id_optional),
+    db: Session = Depends(get_db)
+):
+    """Create or update a contact (user-scoped if authenticated)."""
+    try:
+        # Normalize
+        name = request.name.strip()
+        email = request.email.strip()
+
+        # Try to find existing contact for this user/email
+        query = db.query(Contact).filter(Contact.email == email)
+        if user_id:
+            query = query.filter(Contact.user_id == user_id)
+        else:
+            query = query.filter(Contact.user_id == None)
+
+        existing = query.first()
+        if existing:
+            existing.name = name
+            db.add(existing)
+            db.commit()
+            return OperationResponse(success=True, message=f"Contact updated: {name}", data={"id": existing.id})
+
+        new_contact = Contact(user_id=user_id, name=name, email=email)
+        db.add(new_contact)
+        db.commit()
+        return OperationResponse(success=True, message=f"Contact saved: {name}", data={"id": new_contact.id})
+
+    except Exception as e:
+        logger.error(f"Error creating contact: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/contacts/resolve", response_model=ContactResponse)
+async def resolve_contact(
+    request: ContactResolveRequest,
+    user_id: Optional[int] = Depends(get_current_user_id_optional),
+    db: Session = Depends(get_db)
+):
+    """Resolve a name or email to a saved contact. Returns first match or empty."""
+    try:
+        q = (request.query or '').strip()
+        if not q:
+            return ContactResponse(success=False, message="Empty query")
+
+        # If it looks like an email, try exact match first
+        if '@' in q:
+            contact = db.query(Contact).filter(Contact.email.ilike(q))
+            if user_id:
+                contact = contact.filter(Contact.user_id == user_id)
+            else:
+                contact = contact.filter(Contact.user_id == None)
+            result = contact.first()
+            if result:
+                return ContactResponse(success=True, name=result.name, email=result.email)
+
+        # Otherwise try name fuzzy match (case-insensitive contains)
+        contact_q = db.query(Contact)
+        if user_id:
+            # Authenticated: prefer user-scoped contacts
+            contact_q = contact_q.filter(Contact.user_id == user_id)
+        else:
+            # Unauthenticated callers (chat UI without JWT / simple server)
+            # should be allowed to search across all contacts (global + user-scoped)
+            # so name lookups like "Abel" find matches even if they're stored
+            # under a specific user. Keep ordering by creation time for recent matches.
+            contact_q = contact_q
+
+        contact_q = contact_q.filter(Contact.name.ilike(f"%{q}%"))
+        result = contact_q.order_by(Contact.created_at.desc()).first()
+        if result:
+            return ContactResponse(success=True, name=result.name, email=result.email)
+
+        # No match
+        return ContactResponse(success=False, message="No contact found")
+    except Exception as e:
+        logger.error(f"Error resolving contact: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+
+@app.post("/api/contacts/search", response_model=ContactListResponse)
+async def search_contacts(
+    request: ContactResolveRequest,
+    user_id: Optional[int] = Depends(get_current_user_id_optional),
+    db: Session = Depends(get_db)
+):
+    """Return all contacts matching a name substring (case-insensitive)."""
+    try:
+        q = (request.query or '').strip()
+        if not q:
+            return ContactListResponse(success=False, count=0, contacts=[])
+
+        contact_q = db.query(Contact)
+        if user_id:
+            contact_q = contact_q.filter(Contact.user_id == user_id)
+        else:
+            contact_q = contact_q.filter(Contact.user_id == None)
+
+        results = contact_q.filter(Contact.name.ilike(f"%{q}%")).order_by(Contact.created_at.desc()).all()
+        contacts = []
+        for r in results:
+            contacts.append({"name": r.name, "email": r.email})
+
+        return ContactListResponse(success=True, count=len(contacts), contacts=contacts)
+    except Exception as e:
+        logger.error(f"Error searching contacts: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -2637,13 +2960,13 @@ async def get_env_variables(
     
     try:
         from config_helpers import (
-            get_gmail_config, get_openai_api_key, 
+            get_gmail_config, 
             get_telegram_config, get_slack_config
         )
-        
-        # Get values from database
+
+        # Get values: Gmail/Telegram/Slack from DB, OpenAI from .env
         gmail_config = get_gmail_config(db, user_id)
-        openai_key = get_openai_api_key(db, user_id)
+        openai_key = _read_env_key_from_dotenv('OPENAI_API_KEY') or os.getenv('OPENAI_API_KEY') or ''
         telegram_config = get_telegram_config(db, user_id)
         slack_config = get_slack_config(db, user_id)
         
@@ -2701,7 +3024,7 @@ async def update_env_variables(
     
     try:
         from config_helpers import (
-            update_gmail_config, update_openai_api_key,
+            update_gmail_config,
             update_telegram_config, update_slack_config
         )
         
@@ -2727,13 +3050,14 @@ async def update_env_variables(
             else:
                 errors.append("Failed to update Gmail config")
         
-        # Update OpenAI API key
+        # Update OpenAI API key: persist to .env instead of per-user DB record
         if request.openai_api_key is not None:
             api_key = request.openai_api_key.strip() if request.openai_api_key else ""
-            if update_openai_api_key(db, user_id, api_key):
+            written = _write_env_key_to_dotenv('OPENAI_API_KEY', api_key)
+            if written:
                 success_count += 1
             else:
-                errors.append("Failed to update OpenAI API key")
+                errors.append("Failed to write OPENAI_API_KEY to .env")
         
         # Update Telegram config
         telegram_updates = {}

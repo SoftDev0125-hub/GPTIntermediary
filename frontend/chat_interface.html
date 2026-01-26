@@ -10,6 +10,9 @@
     <!-- For Telegram .tgs animated stickers (gzipped Lottie JSON) -->
     <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/lottie-web@5.12.2/build/player/lottie.min.js"></script>
+    <!-- Markdown renderer + sanitizer for robust markdown (nested lists, code blocks, etc.) -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@2.4.0/dist/purify.min.js"></script>
 </head>
 <body>
     <script>
@@ -1283,236 +1286,15 @@
 
         function renderMarkdown(text) {
             if (!text) return '';
-            
-            // Split into lines for processing
-            const lines = text.split('\n');
-            let html = '';
-            let inCodeBlock = false;
-            let inList = false;
-            let listType = null; // 'ul' or 'ol'
-            let listItems = [];
-            
-            // Helper function to close current list
-            function closeList() {
-                if (inList && listItems.length > 0) {
-                    html += listType === 'ol' ? '<ol>' : '<ul>';
-                    html += listItems.map(item => {
-                        const itemStr = String(item);
-                        // Check if item has nested HTML structure
-                        if (itemStr.includes('<ul>')) {
-                            // Item has nested list - ensure it's properly closed
-                            const ulCount = (itemStr.match(/<ul>/g) || []).length;
-                            const ulCloseCount = (itemStr.match(/<\/ul>/g) || []).length;
-                            let finalItem = itemStr;
-                            // Close any open nested lists
-                            for (let i = 0; i < ulCount - ulCloseCount; i++) {
-                                finalItem += '</ul>';
-                            }
-                            // Wrap in <li> if not already wrapped
-                            if (!finalItem.trim().startsWith('<li>')) {
-                                return '<li>' + finalItem + '</li>';
-                            }
-                            return finalItem;
-                        } else {
-                            // Regular item, process and wrap
-                            return '<li>' + processInlineMarkdown(itemStr) + '</li>';
-                        }
-                    }).join('');
-                    html += listType === 'ol' ? '</ol>' : '</ul>';
-                    listItems = [];
-                }
-                inList = false;
-                listType = null;
+            try {
+                // Use marked to convert markdown -> HTML and DOMPurify to sanitize
+                const raw = (typeof marked !== 'undefined') ? marked.parse(text) : text
+                const clean = (typeof DOMPurify !== 'undefined') ? DOMPurify.sanitize(raw) : raw
+                return clean;
+            } catch (e) {
+                console.error('Markdown render error:', e);
+                return escapeHtml(text);
             }
-            
-            // Helper function to start a new list
-            function startList(type) {
-                if (inList && listType !== type) {
-                    closeList();
-                }
-                if (!inList) {
-                    inList = true;
-                    listType = type;
-                }
-            }
-            
-            for (let i = 0; i < lines.length; i++) {
-                const line = lines[i];
-                const trimmed = line.trim();
-                
-                // Code blocks
-                if (trimmed.startsWith('```')) {
-                    if (inCodeBlock) {
-                        // Close code block
-                        html += '<pre><code>' + escapeHtml(listItems.join('\n')) + '</code></pre>';
-                        listItems = [];
-                        inCodeBlock = false;
-                    } else {
-                        // Close any open list first
-                        closeList();
-                        inCodeBlock = true;
-                        listItems = [];
-                    }
-                    continue;
-                }
-                
-                if (inCodeBlock) {
-                    listItems.push(line);
-                    continue;
-                }
-                
-                // Headers
-                if (trimmed.startsWith('### ')) {
-                    closeList();
-                    html += '<h3>' + processInlineMarkdown(trimmed.substring(4)) + '</h3>';
-                    continue;
-                }
-                if (trimmed.startsWith('## ')) {
-                    closeList();
-                    html += '<h2>' + processInlineMarkdown(trimmed.substring(3)) + '</h2>';
-                    continue;
-                }
-                if (trimmed.startsWith('# ')) {
-                    closeList();
-                    html += '<h1>' + processInlineMarkdown(trimmed.substring(2)) + '</h1>';
-                    continue;
-                }
-                
-                // Numbered lists (1. item, 2. item, etc.)
-                const numberedMatch = trimmed.match(/^(\d+)\.\s+(.+)$/);
-                if (numberedMatch) {
-                    // If we're already in an ordered list, close any open nested lists in the last item
-                    if (inList && listType === 'ol' && listItems.length > 0) {
-                        const lastIndex = listItems.length - 1;
-                        const lastItem = String(listItems[lastIndex]);
-                        // Check if there's an open <ul> tag that needs closing
-                        const ulCount = (lastItem.match(/<ul>/g) || []).length;
-                        const ulCloseCount = (lastItem.match(/<\/ul>/g) || []).length;
-                        if (ulCount > ulCloseCount) {
-                            // Close the open nested list
-                            listItems[lastIndex] = lastItem + '</ul>';
-                        }
-                    }
-                    
-                    // If we're already in an ordered list, just add the item
-                    // Otherwise, start a new ordered list
-                    if (!inList || listType !== 'ol') {
-                        if (inList) {
-                            closeList();
-                        }
-                        inList = true;
-                        listType = 'ol';
-                        listItems = []; // Initialize list items array
-                    }
-                    listItems.push(numberedMatch[2]);
-                    continue;
-                }
-                
-                // Bullet lists (- item or * item)
-                const bulletMatch = trimmed.match(/^[-*]\s+(.+)$/);
-                if (bulletMatch) {
-                    // If we're in a numbered list, treat bullets as nested content (don't close the numbered list)
-                    // This allows bullet points within numbered list items without breaking the numbering
-                    if (inList && listType === 'ol') {
-                        // Append bullet content to the last numbered list item as nested content
-                        if (listItems.length > 0) {
-                            const lastIndex = listItems.length - 1;
-                            const lastItem = listItems[lastIndex];
-                            const itemStr = String(lastItem);
-                            
-                            // Check if we need to start a nested list or continue one
-                            if (!itemStr.includes('<ul>')) {
-                                // First bullet for this item, start nested list
-                                listItems[lastIndex] = itemStr + '<ul><li>' + processInlineMarkdown(bulletMatch[1]) + '</li>';
-                            } else {
-                                // Continue nested list - find the last </li> before </ul> and add after it
-                                // Or just append if structure is simple
-                                if (itemStr.endsWith('</ul>')) {
-                                    // Close the </ul>, add new <li>, then reopen </ul>
-                                    listItems[lastIndex] = itemStr.slice(0, -5) + '<li>' + processInlineMarkdown(bulletMatch[1]) + '</li></ul>';
-                                } else {
-                                    // Append to existing nested list
-                                    listItems[lastIndex] = itemStr + '<li>' + processInlineMarkdown(bulletMatch[1]) + '</li>';
-                                }
-                            }
-                        } else {
-                            // No items yet (shouldn't happen), add as regular content
-                            listItems.push('<ul><li>' + processInlineMarkdown(bulletMatch[1]) + '</li></ul>');
-                        }
-                        continue;
-                    }
-                    
-                    // If we're already in an unordered list, just add the item
-                    // Otherwise, start a new unordered list
-                    if (!inList || listType !== 'ul') {
-                        if (inList) {
-                            closeList();
-                        }
-                        inList = true;
-                        listType = 'ul';
-                        listItems = []; // Initialize list items array
-                    }
-                    listItems.push(bulletMatch[1]);
-                    continue;
-                }
-                
-                // Empty line handling - keep list open if next line is also a list item
-                if (trimmed === '') {
-                    if (inList) {
-                        // Check if ANY future non-empty line is a list item of the same type
-                        // This allows for multiple empty lines or other content between list items
-                        let foundSameTypeListItem = false;
-                        for (let j = i + 1; j < lines.length; j++) {
-                            const nextTrimmed = lines[j].trim();
-                            if (nextTrimmed === '') continue;
-                            
-                            // Check if it's a list item
-                            const nextNumbered = nextTrimmed.match(/^(\d+)\.\s+(.+)$/);
-                            const nextBullet = nextTrimmed.match(/^[-*]\s+(.+)$/);
-                            
-                            if (listType === 'ol' && nextNumbered) {
-                                // Found another numbered item, keep list open
-                                foundSameTypeListItem = true;
-                                break;
-                            } else if (listType === 'ul' && nextBullet) {
-                                // Found another bullet item, keep list open
-                                foundSameTypeListItem = true;
-                                break;
-                            } else if (nextTrimmed.startsWith('#') || nextTrimmed.startsWith('```')) {
-                                // Found a header or code block, definitely close the list
-                                break;
-                            }
-                            // If it's regular text, continue searching (might be paragraph between list items)
-                        }
-                        
-                        if (!foundSameTypeListItem) {
-                            // No more list items of the same type found, close the list
-                            closeList();
-                        }
-                        // If foundSameTypeListItem is true, skip the empty line (keep list open)
-                    } else {
-                        html += '<br>';
-                    }
-                    continue;
-                }
-                
-                // Regular paragraph - close list if open
-                // This ensures proper HTML structure (paragraphs shouldn't be inside <ol> tags)
-                if (inList) {
-                    closeList();
-                }
-                html += '<p>' + processInlineMarkdown(line) + '</p>';
-            }
-            
-            // Close any remaining list
-            closeList();
-            
-            // Close any remaining code block
-            if (inCodeBlock) {
-                html += '<pre><code>' + escapeHtml(listItems.join('\n')) + '</code></pre>';
-            }
-            
-            return html;
         }
         
         function processInlineMarkdown(text) {

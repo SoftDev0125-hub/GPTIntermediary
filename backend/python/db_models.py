@@ -269,6 +269,27 @@ class GmailInfo(Base):
         return f"<GmailInfo(id={self.id}, user_id={self.user_id}, email='{self.user_email}')>"
 
 
+class Contact(Base):
+    """Simple contacts table to store name -> email mappings for quick lookup from UI"""
+    __tablename__ = "contacts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
+    name = Column(String(255), nullable=False, index=True)
+    email = Column(String(255), nullable=False, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # Relationships
+    user = relationship("User", foreign_keys=[user_id])
+
+    __table_args__ = (
+        UniqueConstraint('user_id', 'email', name='uq_user_contact_email'),
+    )
+
+    def __repr__(self):
+        return f"<Contact(id={self.id}, name='{self.name}', email='{self.email}', user_id={self.user_id})>"
+
+
 class TelegramSession(Base):
     """Telegram API configuration and session info for users"""
     __tablename__ = "telegram_sessions"

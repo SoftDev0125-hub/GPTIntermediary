@@ -68,6 +68,35 @@ class OperationResponse(BaseModel):
     message_ts: Optional[str] = None
 
 
+class ContactCreateRequest(BaseModel):
+    """Request model for creating/updating a contact"""
+    name: str
+    email: EmailStr
+
+
+class ContactResolveRequest(BaseModel):
+    """Resolve a contact by name or email"""
+    query: str
+
+
+class ContactResponse(BaseModel):
+    success: bool
+    name: Optional[str] = None
+    email: Optional[EmailStr] = None
+    message: Optional[str] = None
+
+
+class ContactItem(BaseModel):
+    name: str
+    email: EmailStr
+
+
+class ContactListResponse(BaseModel):
+    success: bool
+    count: int = 0
+    contacts: List[ContactItem] = []
+
+
 # WhatsApp Models
 class WhatsAppMessage(BaseModel):
     """WhatsApp message model"""

@@ -93,13 +93,14 @@ class EmailService:
     async def send_email(
         self,
         access_token: str,
-        to: str,
+        to: List[str] | str,
         subject: str,
         body: str,
         html: Optional[str] = None,
         refresh_token: Optional[str] = None,
         google_client_id: Optional[str] = None,
-        google_client_secret: Optional[str] = None
+        google_client_secret: Optional[str] = None,
+        from_email: Optional[str] = None
     ) -> str:
         """
         Send an email via Gmail
@@ -125,17 +126,67 @@ class EmailService:
             service = self._get_service(access_token, refresh_token)
             
             # Create message
+            # Normalize recipients: accept single string or list
+            from email.utils import parseaddr
+            to_list: List[str] = []
+            if isinstance(to, str):
+                raw_recipients = [to]
+            else:
+                raw_recipients = to
+
+            for raw in raw_recipients:
+                _name, _email = parseaddr(raw or '')
+                _email = _email.strip() if _email else ''
+                if not _email or '@' not in _email:
+                    logger.error(f"Invalid recipient in list, skipping: {raw}")
+                    continue
+                to_list.append(_email)
+
+            if not to_list:
+                raise Exception(f"No valid recipient email addresses provided: {to}")
+
             if html:
                 message = MIMEMultipart('alternative')
                 message.attach(MIMEText(body, 'plain'))
                 message.attach(MIMEText(html, 'html'))
             else:
                 message = MIMEText(body)
-            
-            message['To'] = to
+
+            # Use the normalized email addresses in the To header
+            message['To'] = ', '.join(to_list)
+            # If provided, set the From header to the sender email (helps Gmail validate the message)
+            if from_email:
+                message['From'] = from_email
+            else:
+                # Try to determine authenticated user's email from Gmail profile
+                try:
+                    profile = service.users().getProfile(userId='me').execute()
+                    profile_email = profile.get('emailAddress') if isinstance(profile, dict) else None
+                    if profile_email:
+                        message['From'] = profile_email
+                        logger.info(f"Using authenticated Gmail profile email as From: {profile_email}")
+                    else:
+                        logger.warning("Could not determine sender email from Gmail profile; 'From' header left unset")
+                except Exception as e:
+                    logger.warning(f"Failed to fetch Gmail profile for From header: {e}")
             message['Subject'] = subject
-            
+            # Additional logging and safety check
+            from_addr = message.get('From')
+            to_header = message.get('To')
+            logger.info(f"Prepared message headers. From: {from_addr}, To header: {to_header}, recipients: {to_list}")
+
+            # Prevent accidental sends to self when recipient resolution failed
+            try:
+                normalized_from = from_addr.strip().lower() if from_addr else None
+                normalized_recipients = set([r.strip().lower() for r in to_list])
+                if normalized_from and normalized_recipients == {normalized_from}:
+                    raise Exception("Resolved recipient(s) equal the sender email; aborting to avoid sending to self. Check contact lookup results.")
+            except Exception as safety_err:
+                logger.error(f"Safety check failed: {safety_err}")
+                raise
+
             # Encode and send
+            logger.info(f"Sending message From: {from_addr} To: {to_header}")
             raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode('utf-8')
             send_message = {'raw': raw_message}
             
@@ -148,8 +199,12 @@ class EmailService:
             return result['id']
         
         except HttpError as error:
+            try:
+                raw_preview = message.as_string()[:500]
+            except Exception:
+                raw_preview = None
             logger.error(f"Gmail API error: {error}")
-            raise Exception(f"Failed to send email: {error}")
+            raise Exception(f"Failed to send email: {error}. RawPreview: {raw_preview}")
     
     async def get_unread_emails(
         self,

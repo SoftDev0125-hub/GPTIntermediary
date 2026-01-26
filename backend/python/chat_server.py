@@ -95,7 +95,7 @@ app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max request size
 
 # Configuration
-OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+OPENAI_API_KEY = _read_env_key_from_dotenv('OPENAI_API_KEY') or os.getenv('OPENAI_API_KEY') or ''
 BACKEND_URL = "http://localhost:8000"
 
 # Initialize OpenAI - use a single client instance for better performance
@@ -217,12 +217,15 @@ FUNCTIONS = [
 ]
 
 
-def call_backend_function(function_name, arguments):
+def call_backend_function(function_name, arguments, caller_credentials=None):
     """Call the backend API with function arguments"""
     
-    # Add user credentials to email functions
+    # Add user credentials to email functions. Prefer caller-provided credentials
     if function_name in ['send_email', 'get_unread_emails', 'reply_to_email']:
-        arguments['user_credentials'] = USER_CREDENTIALS
+        if caller_credentials and isinstance(caller_credentials, dict) and caller_credentials.get('access_token'):
+            arguments['user_credentials'] = caller_credentials
+        else:
+            arguments['user_credentials'] = USER_CREDENTIALS
     
     # Map function names to endpoints
     endpoint_map = {
@@ -352,6 +355,119 @@ def chat():
             'response': 'Please enter a message.',
             'error': True
         })
+
+    # Quick command: handle direct "Send <message> to <recipient>" by generating
+    # an AI-written subject/body and sending via backend /api/email/send
+    try:
+        m_cmd = re.match(r"^\s*send\s+(.+?)\s+to\s+(.+)$", user_message, re.IGNORECASE)
+        if m_cmd:
+            original_text = m_cmd.group(1).strip()
+            recipient = m_cmd.group(2).strip()
+
+            # Prepare a prompt for the OpenAI client to generate a friendly subject and body
+            try:
+                client = get_openai_client()
+                ai_system = {
+                    "role": "system",
+                    "content": (
+                        "You are a helpful assistant that composes short, friendly professional emails. "
+                        "Return a JSON object only (no extra text) with two keys: 'subject' and 'body'. "
+                        "Subject should be concise (under 78 characters). Body should include a short greeting, the message content, "
+                        "and a brief closing/signature. Preserve the user's intent described in the prompt."
+                    )
+                }
+                ai_user = {
+                    "role": "user",
+                    "content": (
+                        f"Compose an email based on this brief description: {original_text}\n\n"
+                        f"Recipient: {recipient}\n\n"
+                        "Return only valid JSON with 'subject' and 'body' fields."
+                    )
+                }
+
+                gen_resp = client.chat.completions.create(
+                    model="gpt-3.5-turbo",
+                    messages=[ai_system, ai_user],
+                    max_tokens=700,
+                    temperature=0.7,
+                    stream=False,
+                )
+
+                ai_msg = gen_resp.choices[0].message.content if gen_resp and hasattr(gen_resp.choices[0].message, 'content') else None
+                subject = None
+                body = None
+                if ai_msg:
+                    try:
+                        # Parse JSON output from the model
+                        parsed = json.loads(ai_msg)
+                        subject = parsed.get('subject')
+                        body = parsed.get('body')
+                    except Exception:
+                        # Fallback: try to extract simple Subject: and Body: blocks
+                        try:
+                            m_sub = re.search(r"\"subject\"\s*:\s*\"([\s\S]*?)\"", ai_msg)
+                            m_body = re.search(r"\"body\"\s*:\s*\"([\s\S]*?)\"", ai_msg)
+                            if m_sub:
+                                subject = m_sub.group(1)
+                            if m_body:
+                                body = m_body.group(1)
+                        except Exception:
+                            subject = None
+                            body = None
+
+                # Final fallbacks
+                if not subject:
+                    subject = (original_text[:60] + '...') if len(original_text) > 60 else (original_text or 'Message from assistant')
+                if not body:
+                    body = f"Hello,\n\n{original_text}\n\nBest regards,\nYour assistant"
+
+            except Exception as ai_err:
+                print(f"AI generation failed: {ai_err}")
+                # Use simple fallbacks if AI generation fails
+                subject = (original_text[:60] + '...') if len(original_text) > 60 else (original_text or 'Message from assistant')
+                body = f"Hello,\n\n{original_text}\n\nBest regards,\nYour assistant"
+
+            args = {
+                'to': recipient,
+                'subject': subject,
+                'body': body
+            }
+
+            # Use provided caller credentials if present
+            caller_creds = data.get('user_credentials') if isinstance(data, dict) else None
+            result = call_backend_function('send_email', args, caller_credentials=caller_creds)
+
+            # Build friendly feedback for the user
+            try:
+                if isinstance(result, dict):
+                    results_list = result.get('data', {}).get('results') if result.get('data') else result.get('results')
+                    if isinstance(results_list, list) and len(results_list) > 0:
+                        parts = []
+                        for r in results_list:
+                            to_addr = r.get('to_normalized') or r.get('to') or r.get('matched') or str(r.get('to'))
+                            if r.get('success'):
+                                parts.append(f"✅ Sent to {to_addr}")
+                            else:
+                                err = r.get('error') or r.get('detail') or r.get('message') or 'unknown error'
+                                parts.append(f"❌ Failed to send to {to_addr}: {err}")
+                        summary = '; '.join(parts)
+                        # Friendly assistant reply
+                        resp_text = f"I've composed a friendly email and attempted to send it. Subject: '{subject}'. {summary}"
+                    else:
+                        # Generic success/error handling
+                        if result.get('success'):
+                            resp_text = result.get('message') or f"Email sent (subject: '{subject}')."
+                        else:
+                            resp_text = result.get('message') or result.get('error') or json.dumps(result)
+                else:
+                    resp_text = str(result)
+            except Exception:
+                resp_text = str(result)
+
+            return jsonify({'response': resp_text, 'function_called': 'send_email'})
+    except Exception as e_cmd:
+        # Fall through to normal processing if direct command handling fails
+        print(f"Direct send command handling failed: {e_cmd}")
     
     try:
         # DISABLED: Database history retrieval to prevent timeout
@@ -437,6 +553,33 @@ Be conversational and helpful, like ChatGPT."""
                         logger.info(f"[CHAT-{request_id}] Included {len(articles)} news articles in prompt (topic='{topic}')")
                 except Exception as e:
                     logger.warning(f"[CHAT-{request_id}] News fetch failed: {e}")
+            # Fallback: if no explicit news query detected, attempt to infer a topic
+            # from capitalized proper-noun phrases (e.g., person/place/org) and fetch recent news.
+            if not news_snippet and not is_news_query and NEWSAPI_KEY:
+                try:
+                    # Find capitalized phrases (2+ words) or single notable capitalized words
+                    proper_nouns = re.findall(r"\b([A-Z][a-z]{2,}(?:\s+[A-Z][a-z]{2,}){0,3})\b", user_message)
+                    # If none, try single capitalized words that are not sentence-start
+                    if not proper_nouns:
+                        proper_nouns = re.findall(r"\b(?!I\b)([A-Z][a-z]{2,})\b", user_message)
+                    # Choose the longest candidate as topic
+                    if proper_nouns:
+                        candidates = sorted(set([p.strip() for p in proper_nouns]), key=lambda s: -len(s))
+                        inferred_topic = candidates[0]
+                        articles = fetch_latest_news(q=inferred_topic, country='us', pageSize=8)
+                        if articles:
+                            lines = []
+                            for a in articles:
+                                title = a.get('title') or ''
+                                src = a.get('source') or ''
+                                desc = a.get('description') or ''
+                                url = a.get('url') or ''
+                                lines.append(f"- {title} ({src})\n  {desc}\n  {url}")
+                            news_snippet = "\n\nNewsAPI - Recent articles (most recent first):\n" + "\n".join(lines)
+                            messages.insert(1, {"role": "system", "content": news_snippet})
+                            logger.info(f"[CHAT-{request_id}] Fallback included {len(articles)} news articles for inferred topic='{inferred_topic}'")
+                except Exception as e:
+                    logger.debug(f"[CHAT-{request_id}] News fallback failed: {e}")
         except Exception as e:
             logger.debug(f"News detection error: {e}")
         
@@ -530,7 +673,7 @@ Be conversational and helpful, like ChatGPT."""
             function_called = function_name
             
             # Execute the function
-            function_result = call_backend_function(function_name, function_args)
+            function_result = call_backend_function(function_name, function_args, caller_credentials=data.get('user_credentials'))
             
             # For app launches, return immediately without second OpenAI call for speed
             if function_name == 'launch_app':

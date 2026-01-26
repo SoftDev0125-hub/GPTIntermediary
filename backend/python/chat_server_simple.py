@@ -45,14 +45,16 @@ except ImportError as e:
     Base = None
     engine = None
 
-# OpenAI Configuration
-OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
-openai.api_key = OPENAI_API_KEY
-USE_OPENAI = OPENAI_API_KEY and OPENAI_API_KEY != 'your_openai_api_key_here'
-
-BACKEND_URL = "http://72.62.162.44:8000"
-
+# Load environment variables early so os.getenv() finds .env values
 load_dotenv()
+
+# OpenAI Configuration
+# Read from .env robustly (fallback parsing handles spacing/formatting)
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY') or _read_env_key_from_dotenv('OPENAI_API_KEY') or ''
+openai.api_key = OPENAI_API_KEY
+USE_OPENAI = bool(OPENAI_API_KEY) and OPENAI_API_KEY != 'your_openai_api_key_here'
+
+BACKEND_URL = os.getenv('BACKEND_URL') or "http://localhost:8000"
 
 # Robust env loader: handle cases where .env has spaces around '=' or nonstandard formatting
 def _read_env_key_from_dotenv(key_name):
@@ -399,28 +401,60 @@ def execute_action(action_data):
             }
         
         try:
-            email_data = {
-                "user_credentials": USER_CREDENTIALS,
-                "to": action_data.get('to'),
-                "subject": action_data.get('subject', 'Message'),
-                "body": action_data.get('body', action_data.get('subject', 'Message'))
-            }
-            response = requests.post(
-                f"{BACKEND_URL}/api/email/send",
-                json=email_data
-            )
-            result = response.json()
-            
-            if response.status_code == 200 and result.get('success'):
+            to_field = action_data.get('to')
+            # Name-based resolution disabled: require explicit email addresses
+            resolved_emails = []
+            if not to_field or '@' not in str(to_field):
                 return {
-                    'response': f"✅ Email sent to {action_data.get('to')}!",
-                    'function_called': 'send_email'
-                }
-            else:
-                return {
-                    'response': f"❌ {result.get('error', 'Failed to send email. OAuth required.')}",
+                    'response': '📧 Recipient must be an explicit email address (e.g. user@example.com). Name-based lookups are disabled.',
+                    'function_called': None,
                     'error': True
                 }
+
+            # If we resolved multiple emails, send to each and summarize
+            subject = action_data.get('subject', 'Message')
+            body = action_data.get('body', action_data.get('subject', 'Message'))
+
+            targets = resolved_emails if resolved_emails else ([to_field] if to_field else [])
+            if not targets:
+                return {
+                    'response': '📧 No recipient specified.',
+                    'function_called': None,
+                    'error': True
+                }
+
+            successes = []
+            failures = []
+            for tgt in targets:
+                try:
+                    email_data = {
+                        "user_credentials": USER_CREDENTIALS,
+                        "to": tgt,
+                        "subject": subject,
+                        "body": body
+                    }
+                    response = requests.post(f"{BACKEND_URL}/api/email/send", json=email_data, timeout=10)
+                    result = response.json() if response is not None else {}
+                    if response.status_code == 200 and result.get('success'):
+                        successes.append(tgt)
+                    else:
+                        failures.append({"to": tgt, "error": result.get('error', 'unknown')})
+                except Exception as send_err:
+                    failures.append({"to": tgt, "error": str(send_err)})
+
+            # Build summary message
+            parts = []
+            if successes:
+                parts.append(f"✅ Sent to: {', '.join(successes)}")
+            if failures:
+                fail_msgs = ", ".join([f"{f['to']} ({f['error']})" for f in failures])
+                parts.append(f"❌ Failed: {fail_msgs}")
+
+            summary = " | ".join(parts) if parts else "No actions performed."
+            return {
+                'response': summary,
+                'function_called': 'send_email'
+            }
         except Exception as e:
             return {
                 'response': f"❌ Error sending email: {str(e)}",
