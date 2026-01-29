@@ -231,7 +231,7 @@ FUNCTIONS = [
         "parameters": {
             "type": "object",
             "properties": {
-                "max_results": {
+                "limit": {
                     "type": "integer",
                     "description": "Maximum number of emails to retrieve (default 10)",
                     "default": 10
@@ -370,17 +370,60 @@ def execute_action(action_data):
             
             if response.status_code == 200 and result.get('success'):
                 emails = result.get('emails', [])
-                if emails:
-                    email_list = "\n".join([f"• From: {e['from']} - {e['subject']}" for e in emails[:5]])
-                    return {
-                        'response': f"📧 You have {len(emails)} unread emails:\n{email_list}",
-                        'function_called': 'get_emails'
-                    }
-                else:
+                total_unread = result.get('total_unread', len(emails))
+
+                # Analyze emails: top senders, urgency, short previews
+                if not emails:
                     return {
                         'response': "📧 No unread emails found.",
                         'function_called': 'get_emails'
                     }
+
+                from collections import Counter
+                import re
+                # Normalize sender name/email
+                senders = [((e.get('from_name') or e.get('from_email') or '').strip()) for e in emails]
+                sender_counts = Counter(senders)
+                top = sender_counts.most_common(3)
+
+                # Urgency detection
+                urgency_keywords = ['urgent', 'asap', 'immediately', 'action required', 'deadline', 'due', 'important']
+                flagged = []
+                previews = []
+                for e in emails[:10]:
+                    subj = (e.get('subject') or '').strip()
+                    body = (e.get('body') or '')
+                    # strip html
+                    snippet = re.sub(r'<[^>]+>', '', body or '')
+                    snippet = snippet.replace('\n', ' ').strip()
+                    preview = (snippet[:140] + '...') if len(snippet) > 140 else snippet
+                    previews.append({'from': e.get('from_name') or e.get('from_email'), 'subject': subj, 'preview': preview})
+
+                    low = (subj + ' ' + (snippet or '')).lower()
+                    if any(k in low for k in urgency_keywords):
+                        flagged.append({'from': e.get('from_name') or e.get('from_email'), 'subject': subj})
+
+                # Build concise summary
+                top_senders_str = ', '.join([f"{s[0]} ({s[1]})" for s in top if s[0]]) or 'Various'
+                flagged_str = ''
+                if flagged:
+                    flagged_list = '; '.join([f"{f['from']}: {f['subject']}" for f in flagged[:5]])
+                    flagged_str = f"\n⚠️ Urgent/Action-required: {len(flagged)} — {flagged_list}"
+
+                preview_lines = []
+                for p in previews[:5]:
+                    preview_lines.append(f"• {p['from']} - {p['subject']}\n  {p['preview']}")
+
+                summary = (
+                    f"📧 You have {len(emails)} unread emails (total unread: {total_unread}).\n"
+                    f"Top senders: {top_senders_str}.{flagged_str}\n\n"
+                    f"Recent messages:\n" + "\n".join(preview_lines)
+                )
+
+                return {
+                    'response': summary,
+                    'function_called': 'get_emails'
+                }
             else:
                 return {
                     'response': f"❌ {result.get('error', 'Failed to fetch emails. OAuth required.')}",
@@ -435,6 +478,19 @@ def execute_action(action_data):
                     }
                     response = requests.post(f"{BACKEND_URL}/api/email/send", json=email_data, timeout=10)
                     result = response.json() if response is not None else {}
+                    # Handle resolver candidate response (409)
+                    if response.status_code == 409:
+                        detail = result.get('detail') if isinstance(result, dict) else None
+                        try:
+                            cand_payload = json.loads(detail) if isinstance(detail, str) else detail
+                        except Exception:
+                            cand_payload = None
+                        return {
+                            'response': 'I found possible addresses for that name. Please confirm before sending.',
+                            'candidates': cand_payload.get('candidates') if isinstance(cand_payload, dict) else None,
+                            'function_called': None,
+                            'require_confirm': True
+                        }
                     if response.status_code == 200 and result.get('success'):
                         successes.append(tgt)
                     else:
@@ -726,7 +782,7 @@ You can discuss any topic freely - science, math, programming, history, creative
                 elif function_name == 'get_unread_emails':
                     email_data = {
                         "user_credentials": USER_CREDENTIALS,
-                        "max_results": function_args.get('max_results', 10)
+                        "limit": function_args.get('limit', 10)
                     }
                     backend_response = requests.post(
                         f"{BACKEND_URL}/api/email/unread",

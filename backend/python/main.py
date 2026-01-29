@@ -99,6 +99,7 @@ from services.app_launcher import AppLauncher
 from services.whatsapp_service import WhatsAppService
 from services.word_service import WordService
 from services.excel_service import ExcelService
+from services.contact_resolver import resolve_name_to_emails
 
 # Database imports
 try:
@@ -235,6 +236,7 @@ class GetUnreadEmailsRequest(BaseModel):
     """Request model for getting unread emails"""
     user_credentials: UserCredentials
     limit: int = 1000
+    query: Optional[str] = None
 
 
 class MarkEmailReadRequest(BaseModel):
@@ -1103,8 +1105,42 @@ async def send_email(
                     logger.warning(f"Failed to log contact matches: {log_exc}")
 
                 if not matches:
-                    # No matches found after both attempts
-                    raise HTTPException(status_code=404, detail=f"No contacts found with name containing '{query_name}'")
+                    # No matches found after database attempts - try external resolver
+                    try:
+                        logger.info(f"No local contact matches for '{query_name}', attempting external resolver")
+                        candidates = resolve_name_to_emails(query_name)
+                        logger.info(f"Resolver returned {len(candidates)} candidates for '{query_name}'")
+                        if not candidates:
+                            raise HTTPException(status_code=404, detail=f"No contacts found with name containing '{query_name}'")
+
+                        # If resolver returned candidates but caller did not confirm, ask for confirmation
+                        if not getattr(request, 'confirm', False):
+                            # Return 409 Conflict with candidate suggestions encoded in detail
+                            import json as _json
+                            raise HTTPException(status_code=409, detail=_json.dumps({
+                                'message': 'Address not found in contacts. Resolver found candidate addresses. Set request.confirm=true to proceed automatically.',
+                                'candidates': candidates
+                            }))
+
+                        # If confirmed, use resolver candidates as targets
+                        seen = set()
+                        for c in candidates:
+                            e = c.get('email')
+                            if e and e not in seen:
+                                targets.append(e)
+                                seen.add(e)
+                                resolved_contacts.append({
+                                    'query': query_name,
+                                    'matched': e,
+                                    'match_type': 'external_resolver',
+                                    'confidence': c.get('confidence', 0.5),
+                                    'sources': c.get('sources', [])
+                                })
+                    except HTTPException:
+                        raise
+                    except Exception as e_res:
+                        logger.error(f"External resolver failed for '{query_name}': {e_res}")
+                        raise HTTPException(status_code=500, detail=f"Contact resolution failed: {e_res}")
 
                 # Collect unique emails from matching contacts, but exclude the sender's own email
                 seen = set()
@@ -1161,6 +1197,39 @@ async def send_email(
             except Exception as e:
                 logger.error(f"Failed to send to {tgt}: {e}")
                 send_results.append({"to": tgt, "to_normalized": tgt_normalized if 'tgt_normalized' in locals() else None, "error": str(e), "success": False})
+
+        # Persist newly-resolved contacts into the contacts table for future lookups
+        try:
+            if DATABASE_AVAILABLE and resolved_contacts:
+                # resolved_contacts entries may include 'matched' and optional 'confidence'
+                for rc in resolved_contacts:
+                    email_addr = (rc.get('matched') or '').strip()
+                    name_guess = (rc.get('query') or '').strip()
+                    if not email_addr or '@' not in email_addr:
+                        continue
+                    # Only add contacts for successful sends
+                    sent_success = any(r.get('to_normalized') == email_addr and r.get('success') for r in send_results)
+                    if not sent_success:
+                        # Don't store contacts that we failed to send to
+                        continue
+                    try:
+                        existing = db.query(Contact).filter(Contact.email == email_addr).first()
+                        if existing:
+                            logger.info(f"Contact for {email_addr} already exists (id={existing.id})")
+                            continue
+                        # Create contact record (user_id left NULL for global contact)
+                        new_contact = Contact(name=name_guess or email_addr, email=email_addr, user_id=None)
+                        db.add(new_contact)
+                        db.commit()
+                        logger.info(f"Stored new contact: {email_addr} (name='{name_guess}')")
+                    except Exception as store_err:
+                        try:
+                            db.rollback()
+                        except Exception:
+                            pass
+                        logger.warning(f"Failed to store resolved contact {email_addr}: {store_err}")
+        except Exception as _store_exc:
+            logger.warning(f"Error while attempting to persist resolved contacts: {_store_exc}")
 
         return OperationResponse(
             success=all([r.get('success') for r in send_results]),
@@ -1280,14 +1349,50 @@ async def get_unread_emails(
             refresh_token=refresh_token,
             limit=actual_limit,
             google_client_id=google_client_id,
-            google_client_secret=google_client_secret
+            google_client_secret=google_client_secret,
+            query=request.query
         )
         logger.info(f"Successfully retrieved {len(emails)} emails")
+        # Generate lightweight one-sentence summaries for each email (local fallback)
+        try:
+            import re as _lr
+            def _local_summary(subject, body, sender, max_words=25):
+                src = ' '.join(filter(None, [subject or '', (body or '')[:600]]))
+                src = _lr.sub(r'[^\w\s\.,:;\-@\(\)\'"/]', ' ', src)
+                src = _lr.sub(r'\s+', ' ', src).strip()
+                if not src:
+                    return f"Short message from {sender}."
+                low = src.lower()
+                if any(k in low for k in ['invoice', 'payment', 'receipt', 'bill', 'charged']):
+                    return f"Payment/finance-related message concerning {subject or 'your account'}."
+                if any(k in low for k in ['schedule', 'meeting', 'call', 'reschedule']):
+                    return f"Request to schedule or update a meeting regarding {subject or 'the topic'}."
+                if any(k in low for k in ['unsubscribe', 'opt out', 'subscription']):
+                    return f"Subscription or marketing message (unsubscribe link likely present)."
+                words = src.split()[:max_words]
+                sentence = ' '.join(words).strip()
+                if not sentence.endswith('.'):
+                    sentence = sentence.rstrip('.,;:') + '.'
+                return sentence
+
+            summarized_emails = []
+            for e in emails:
+                sender = (e.get('from_name') or e.get('from_email') or 'Unknown')
+                subject = e.get('subject') or ''
+                body = e.get('body') or ''
+                summary = _local_summary(subject, body, sender)
+                # ensure we don't mutate original objects badly - copy dict
+                new_e = dict(e)
+                new_e['summary'] = summary
+                summarized_emails.append(new_e)
+        except Exception:
+            summarized_emails = emails
+
         return EmailListResponse(
             success=True,
-            count=len(emails),
+            count=len(summarized_emails),
             total_unread=total_unread,
-            emails=emails
+            emails=summarized_emails
         )
     except Exception as e:
         error_msg = str(e)

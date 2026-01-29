@@ -10,6 +10,7 @@ import re
 import os
 import requests
 import json
+import random
 import logging
 from dotenv import load_dotenv
  
@@ -41,7 +42,7 @@ def _read_env_key_from_dotenv(key_name):
 # Read NewsAPI key
 NEWSAPI_KEY = _read_env_key_from_dotenv('NEWSAPI_KEY')
 if not NEWSAPI_KEY:
-    logger.warning('NEWSAPI_KEY not configured; news features may be limited')
+    logging.warning('NEWSAPI_KEY not configured; news features may be limited')
 
 def fetch_latest_news(q=None, country='us', pageSize=10):
     """Fetch news using NewsAPI; use 'everything' for queries and 'top-headlines' otherwise."""
@@ -113,6 +114,72 @@ def get_openai_client():
             max_retries=0  # No retries - fail fast
         )
     return _openai_client
+
+
+def analyze_emails_with_ai(emails, request_id=None, max_items=5):
+    """Use OpenAI to analyze a small set of emails and produce a numbered summary.
+
+    emails: list of dicts with keys 'from', 'subject', 'preview' (or similar)
+    returns: string summary or None on failure
+    """
+    try:
+        if not OPENAI_API_KEY or OPENAI_API_KEY == 'your_openai_api_key_here':
+            return None
+
+        client = get_openai_client()
+
+        # Build a compact prompt with only necessary fields to save tokens
+        # Also sanitize previews to remove HTML-like fragments and excessive whitespace
+        parts = []
+        import re as _re
+        for i, e in enumerate(emails[:max_items], start=1):
+            sender = (e.get('from') or e.get('from_name') or e.get('from_email') or 'Unknown').strip()
+            subject = (e.get('subject') or '').replace('\n', ' ').strip()
+            preview = (e.get('preview') or e.get('body') or '')
+            # Remove HTML tags and long attribute-like fragments
+            preview = _re.sub(r'<[^>]+>', ' ', preview)
+            preview = _re.sub(r'\{[^}]{20,}\}', ' ', preview)
+            # Remove common CSS properties (color, margin, padding, width, background-color, font, display, table rules)
+            preview = _re.sub(r"\b(background-color|background|color|margin|padding|width|max-width|min-width|font|border|display|text-decoration|table|mso-[^:\s]+):[^;\n]+;?", ' ', preview, flags=_re.IGNORECASE)
+            # Remove CSS selectors like .link:hover or .classname:active
+            preview = _re.sub(r"\.[\w\-]+(?::[\w\-]+)?", ' ', preview)
+            preview = _re.sub(r'\s+', ' ', preview).strip()
+            # Truncate preview to conservative length
+            if len(preview) > 240:
+                preview = preview[:240].rsplit(' ', 1)[0] + '...'
+            parts.append(f"Email {i} -- From: {sender} -- Subject: {subject} -- Preview: {preview}")
+
+        user_content = (
+            "You are a concise assistant that analyzes email previews and returns a strictly formatted plain-text summary.\n"
+            "Output requirements (strict):\n"
+            "1) The first line MUST be: 'A total of N emails have arrived.' where N is the number of emails analyzed.\n"
+            "2) Follow with a numbered list starting at 1. Each item MUST follow this exact pattern (one line):\n"
+            "   <index>. A new email has arrived from <sender> with the following content: <one-sentence summary>. Suggested actions: <action1>, <action2>.\n"
+            "3) The one-sentence summary should be a single clear sentence (no newlines), 20-30 words maximum, capturing the main intent.\n"
+            "4) Suggested actions should be 1-2 short verbs (Reply, Archive, Mark as important, Schedule, Ignore, Read later).\n"
+            "5) Do NOT include any extra commentary, explanations, code, or metadata. Do NOT use bullets other than the numbered list.\n"
+            "6) Remove any HTML, CSS, or long technical fragments from the preview when summarizing.\n\n"
+            "Here are the emails to analyze:\n\n" + "\n".join(parts)
+        )
+
+        messages = [
+            {"role": "system", "content": "You are a concise email assistant."},
+            {"role": "user", "content": user_content}
+        ]
+
+        resp = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=messages,
+            max_tokens=600,
+            temperature=0.2,
+            stream=False
+        )
+
+        if resp and hasattr(resp, 'choices') and resp.choices:
+            return resp.choices[0].message.content
+    except Exception as e:
+        logger.warning(f"[CHAT-{request_id}] Email AI analysis failed: {e}")
+    return None
 
 # User credentials (mock - in production, this would come from user authentication)
 # For now, we'll simulate that ChatGPT has the user's OAuth tokens
@@ -243,11 +310,27 @@ def call_backend_function(function_name, arguments, caller_credentials=None):
         url = f"{BACKEND_URL}{endpoint}"
         print(f"Calling backend: {url}")
         print(f"Arguments: {json.dumps(arguments, indent=2)}")
-        
-        response = requests.post(url, json=arguments, timeout=5)  # Reduced to 5 seconds
-        result = response.json()
-        
-        print(f"Backend response: {json.dumps(result, indent=2)}")
+        # Use longer timeout for email operations which may take longer
+        timeout_sec = 5
+        if function_name in ('get_unread_emails', 'reply_to_email', 'send_email'):
+            timeout_sec = 25
+        import time as _time
+        t0 = _time.time()
+        response = requests.post(url, json=arguments, timeout=timeout_sec)
+        duration = _time.time() - t0
+        print(f"Backend call duration: {duration:.2f}s")
+        try:
+            result = response.json()
+        except Exception:
+            result = {'raw_text': response.text}
+
+        # Attach HTTP status for caller to react (e.g., 409 candidates)
+        if isinstance(result, dict):
+            result['_http_status'] = response.status_code
+        else:
+            result = {'data': result, '_http_status': response.status_code}
+
+        print(f"Backend response (status={response.status_code}): {json.dumps(result, indent=2)}")
         return result
     
     except Exception as e:
@@ -439,6 +522,23 @@ def chat():
 
             # Build friendly feedback for the user
             try:
+                # Handle resolver candidate response (409) from backend
+                if isinstance(result, dict) and result.get('_http_status') == 409:
+                    # FastAPI encodes detail as a string; try to extract JSON candidates
+                    detail = result.get('detail') or result.get('message') or result.get('data')
+                    try:
+                        cand_payload = json.loads(detail) if isinstance(detail, str) else detail
+                    except Exception:
+                        cand_payload = {'message': 'Resolver returned candidates', 'candidates': []}
+                    candidates = cand_payload.get('candidates') if isinstance(cand_payload, dict) else None
+                    # Return candidate list and instruction to confirm
+                    return jsonify({
+                        'response': "I couldn't find that email in your contacts. I found possible addresses. Please confirm before I send.",
+                        'candidates': candidates,
+                        'instruction': "If one of these is correct, resend the request with request.confirm=true",
+                        'function_called': None
+                    })
+
                 if isinstance(result, dict):
                     results_list = result.get('data', {}).get('results') if result.get('data') else result.get('results')
                     if isinstance(results_list, list) and len(results_list) > 0:
@@ -469,6 +569,206 @@ def chat():
         # Fall through to normal processing if direct command handling fails
         print(f"Direct send command handling failed: {e_cmd}")
     
+    # Fast-path: if user asks about new emails, query Gmail primary inbox directly and return analyzed summary
+    try:
+        # Detect queries asking about new emails or emails from a specific sender
+        if re.search(r"\b(any\s+new\s+emails|new\s+emails|check.*email|check.*emails)\b", user_message, re.IGNORECASE) or re.search(r"\b(emails?|mail|messages?)\b.*\bfrom\b", user_message, re.IGNORECASE):
+            caller_creds = data.get('user_credentials') if isinstance(data, dict) else None
+            # Try to detect a specific sender in the user's question ("from Alice" / "from alice@example.com")
+            sender_match = None
+            try:
+                m = re.search(r"\bfrom\s+([\"']?)([^\"'\?]+?)\1(?=\s|$|\?)", user_message, re.IGNORECASE)
+                if not m:
+                    m = re.search(r"(?:emails?|mail|messages?)\s+(?:from)\s+([^\?]+)", user_message, re.IGNORECASE)
+                if m:
+                    sender_match = m.groups()[-1].strip()
+            except Exception:
+                sender_match = None
+
+            # Build Gmail query; restrict to Primary inbox unread by default
+            base_query = 'in:inbox category:primary is:unread'
+            if sender_match:
+                # If sender appears to be an email address, use it directly; otherwise quote the name
+                sender_term = sender_match
+                if '@' in sender_term:
+                    sender_part = f'from:{sender_term}'
+                else:
+                    # Quote name for Gmail search
+                    safe_name = sender_term.replace('"', '').strip()
+                    sender_part = f'from:"{safe_name}"'
+                query = f"{base_query} {sender_part}"
+            else:
+                query = base_query
+
+            # Request messages to populate the chat "Recent messages" section
+            args = {'limit': 50, 'query': query}
+            result = call_backend_function('get_unread_emails', args, caller_credentials=caller_creds)
+
+            # Handle backend errors
+            if not isinstance(result, dict):
+                return jsonify({'response': 'Could not contact email backend.', 'error': True}), 500
+
+            if result.get('_http_status') == 401 or result.get('error') == 'auth_error':
+                return jsonify({'response': 'Email access requires authentication. Please connect your Gmail account.', 'error': 'auth_error'}), 401
+
+            if result.get('_http_status') == 429 or result.get('error') == 'insufficient_quota':
+                return jsonify({'response': 'Email service is currently rate limited. Please try again later.', 'error': 'rate_limit'}), 429
+
+            if not result.get('success'):
+                # Return backend message if present
+                err = result.get('message') or result.get('error') or str(result)
+                return jsonify({'response': f'Failed to fetch emails: {err}', 'error': True}), 500
+
+            emails = result.get('emails', [])
+            total_unread = result.get('total_unread', len(emails))
+
+            # Analyze emails: top senders, urgency, previews
+            from collections import Counter
+            import html
+            urgency_keywords = ['urgent', 'asap', 'immediately', 'action required', 'deadline', 'due', 'important']
+
+            if not emails:
+                return jsonify({'response': f"📧 No new emails in Primary tab. (total unread: {total_unread})", 'function_called': 'get_unread_emails'})
+
+            senders = [((e.get('from_name') or e.get('from_email') or '').strip()) for e in emails]
+            sender_counts = Counter(senders)
+            top = sender_counts.most_common(3)
+
+            flagged = []
+            previews = []
+            import re as _re
+            # Show up to MAX_UNREAD_EMAILS (default 50) in the "recent messages" section
+            try:
+                preview_limit = min(len(emails), int(os.getenv('MAX_UNREAD_EMAILS', '50')))
+            except Exception:
+                preview_limit = min(len(emails), 50)
+
+            for e in emails[:preview_limit]:
+                subj = (e.get('subject') or '').strip()
+                body = (e.get('body') or '')
+                snippet = _re.sub(r'<[^>]+>', '', body or '')
+                snippet = html.unescape(snippet)
+                snippet = snippet.replace('\n', ' ').strip()
+                preview = (snippet[:140] + '...') if len(snippet) > 140 else snippet
+                previews.append({'from': e.get('from_name') or e.get('from_email'), 'subject': subj, 'preview': preview})
+
+                low = (subj + ' ' + (snippet or '')).lower()
+                if any(k in low for k in urgency_keywords):
+                    flagged.append({'from': e.get('from_name') or e.get('from_email'), 'subject': subj})
+
+            top_senders_str = ', '.join([f"{s[0]} ({s[1]})" for s in top if s[0]]) or 'Various'
+            flagged_str = ''
+            if flagged:
+                flagged_list = '; '.join([f"{f['from']}: {f['subject']}" for f in flagged[:5]])
+                flagged_str = f"\n⚠️ Urgent/Action-required: {len(flagged)} — {flagged_list}"
+
+            preview_lines = []
+            # Respect preview_limit when showing recent message previews
+            for idx, p in enumerate(previews[:preview_limit], start=1):
+                sender = (p.get('from') or p.get('from_email') or 'Unknown')
+                # remove angle brackets and stray quotes
+                sender = _re.sub(r'[<>"\']', '', str(sender)).strip()
+                subject = (p.get('subject') or '(no subject)').replace('\n', ' ').strip()
+                preview_text = (p.get('preview') or '').replace('\n', ' ').strip()
+                preview_text = _re.sub(r'\s+', ' ', preview_text)
+                # truncate to a conservative single-line preview
+                if len(preview_text) > 120:
+                    preview_text = preview_text[:117].rsplit(' ', 1)[0] + '...'
+                # Use a compact, markdown-friendly numbered list
+                preview_lines.append(f"{idx}. **{subject}** — _{sender}_\n   {preview_text}")
+
+            # Prefer AI analysis when available; otherwise synthesize a summary locally
+            ai_enabled = bool(OPENAI_API_KEY and OPENAI_API_KEY != 'your_openai_api_key_here')
+            ai_result = None
+
+            # If sender-specific query, prepare compact email payloads (use full body when available)
+            try:
+                compact_for_ai = []
+                for e in emails[:10]:
+                    compact_for_ai.append({
+                        'from': e.get('from_name') or e.get('from_email'),
+                        'subject': e.get('subject'),
+                        'preview': (e.get('body') or e.get('preview') or '')[:480]
+                    })
+                if ai_enabled and compact_for_ai:
+                    ai_result = analyze_emails_with_ai(compact_for_ai, request_id=request_id, max_items=min(10, len(compact_for_ai)))
+            except Exception:
+                ai_result = None
+
+            # If AI produced a structured summary, return it verbatim (it includes total count per contract)
+            if ai_result and isinstance(ai_result, str) and ai_result.strip():
+                response_text = ai_result
+                # Also provide machine-readable emails (with truncated snippets)
+                emails_list = []
+                for e in emails:
+                    emails_list.append({
+                        'sender': e.get('from_name') or e.get('from_email'),
+                        'subject': e.get('subject'),
+                        'snippet': (e.get('body') or e.get('preview') or '')[:300],
+                        'received_at': e.get('date') or e.get('received') or None
+                    })
+                return jsonify({
+                    'response': response_text,
+                    'function_called': 'get_unread_emails',
+                    'total_unread': total_unread,
+                    'emails': emails_list,
+                    'ai_summary': ai_result
+                })
+
+            # Local fallback: generate concise one-sentence summaries per message
+            import html
+            import re as _rs
+            def _local_one_sentence(subject, body, sender, max_words=25):
+                text = (subject or '') + ' ' + (body or '')
+                text = _rs.sub(r'<[^>]+>', ' ', text)
+                text = html.unescape(text)
+                text = _rs.sub(r'\\s+', ' ', text).strip()
+                if not text:
+                    return f"A short message from {sender}."
+                low = text.lower()
+                if any(k in low for k in ['invoice', 'payment', 'receipt', 'bill', 'charged']):
+                    return f"Payment/finance-related message concerning {subject or 'your account'}."
+                if any(k in low for k in ['schedule', 'meeting', 'call', 'reschedule']):
+                    return f"Request to schedule or update a meeting regarding {subject or 'the topic'}."
+                words = text.split()[:max_words]
+                sentence = ' '.join(words).strip()
+                if not sentence.endswith('.'):
+                    sentence = sentence.rstrip('.,;:') + '.'
+                return sentence
+
+            emails_list = []
+            numbered_lines = []
+            for idx, e in enumerate(emails[:preview_limit], start=1):
+                sender = e.get('from_name') or e.get('from_email') or 'Unknown'
+                subject = e.get('subject') or ''
+                body = e.get('body') or e.get('preview') or ''
+                summary = _local_one_sentence(subject, body, sender)
+                # Machine-readable entry
+                emails_list.append({
+                    'sender': sender,
+                    'subject': subject,
+                    'snippet': (body or '')[:300],
+                    'summary': summary,
+                    'received_at': e.get('date') or e.get('received') or None
+                })
+                # Human-readable numbered lines (exact format requested)
+                numbered_lines.append(f"{idx}. {sender}:")
+                numbered_lines.append(summary)
+
+            header = f"You have received {total_unread} new emails."
+            body_text = "\n".join(numbered_lines) if numbered_lines else "No new messages found."
+            response_text = header + "\n\n" + body_text
+
+            return jsonify({
+                'response': response_text,
+                'function_called': 'get_unread_emails',
+                'total_unread': total_unread,
+                'emails': emails_list,
+                'ai_summary': None
+            })
+    except Exception as _e:
+        logger.exception(f"Fast-path email check failed: {_e}")
+        # Fall through to normal processing if fast-path fails
     try:
         # DISABLED: Database history retrieval to prevent timeout
         # The database query was causing timeouts, so we skip it entirely
@@ -591,22 +891,47 @@ Be conversational and helpful, like ChatGPT."""
         try:
             # Use shared OpenAI client for better performance (faster than creating new client each time)
             client = get_openai_client()
-            
-            # Enable function calling for app launching and email functions
-            # Use stream=False explicitly to ensure we get complete response immediately
-            # Increased max_tokens for comprehensive responses
-            response = client.chat.completions.create(
-                model="gpt-3.5-turbo",  # Fast model
-                messages=messages,  # Use full conversation history
-                functions=FUNCTIONS,  # Enable function calling for app launch, email, etc.
-                function_call="auto",  # Let the model decide when to call functions
-                max_tokens=4000,  # Increased for comprehensive responses (lists, detailed answers)
-                temperature=0.7,
-                stream=False,  # No streaming - get complete response immediately
-            )
-            
-            api_duration = time.time() - api_start_time
-            logger.info(f"[CHAT-{request_id}] API call completed in {api_duration:.2f} seconds")
+
+            # Retry with exponential backoff for transient errors (rate limits, timeouts)
+            max_retries = int(os.getenv('OPENAI_MAX_RETRIES', '4'))
+            base_delay = float(os.getenv('OPENAI_RETRY_BASE_DELAY', '1.0'))
+            last_exception = None
+            response = None
+            for attempt in range(max_retries):
+                try:
+                    response = client.chat.completions.create(
+                        model="gpt-3.5-turbo",  # Fast model
+                        messages=messages,  # Use full conversation history
+                        functions=FUNCTIONS,  # Enable function calling for app launch, email, etc.
+                        function_call="auto",  # Let the model decide when to call functions
+                        max_tokens=4000,  # Increased for comprehensive responses (lists, detailed answers)
+                        temperature=0.7,
+                        stream=False,  # No streaming - get complete response immediately
+                    )
+                    api_duration = time.time() - api_start_time
+                    logger.info(f"[CHAT-{request_id}] API call completed in {api_duration:.2f} seconds (attempt {attempt+1})")
+                    last_exception = None
+                    break
+                except Exception as api_error:
+                    last_exception = api_error
+                    err_str = str(api_error).lower()
+                    # If quota is insufficient, don't retry — fail fast with clear message
+                    if 'insufficient_quota' in err_str or ('quota' in err_str and 'exceed' in err_str):
+                        logger.error(f"[CHAT-{request_id}] OpenAI quota error (no retries): {err_str}", exc_info=True)
+                        # Raise a specific exception to be handled by outer except
+                        raise Exception(f"insufficient_quota: {err_str}")
+
+                    is_rate = 'rate limit' in err_str or '429' in err_str
+                    is_timeout = 'timeout' in err_str or 'timed out' in err_str or 'read timeout' in err_str
+                    # Decide whether to retry on this error
+                    if attempt < (max_retries - 1) and (is_rate or is_timeout or 'could not connect' in err_str or 'connection' in err_str):
+                        sleep_for = base_delay * (2 ** attempt) + random.uniform(0, 0.5)
+                        logger.warning(f"[CHAT-{request_id}] Transient OpenAI error (attempt {attempt+1}/{max_retries}): {err_str}. Retrying in {sleep_for:.1f}s")
+                        time.sleep(sleep_for)
+                        continue
+                    # No more retries, re-raise to be handled by outer except
+                    logger.error(f"[CHAT-{request_id}] OpenAI API error (no more retries): {err_str}", exc_info=True)
+                    raise
         except Exception as api_error:
             error_str = str(api_error).lower()
             logger.error(f"[CHAT-{request_id}] OpenAI API error: {error_str}", exc_info=True)
@@ -620,6 +945,12 @@ Be conversational and helpful, like ChatGPT."""
                     'function_called': None,
                     'error': 'timeout'
                 }), 500
+            elif 'insufficient_quota' in error_str or ('quota' in error_str and 'exceed' in error_str):
+                return jsonify({
+                    'response': "I apologize, but your OpenAI quota appears to be exhausted. Please check your OpenAI plan and billing details.",
+                    'function_called': None,
+                    'error': 'insufficient_quota'
+                }), 429
             elif 'rate limit' in error_str or '429' in error_str:
                 return jsonify({
                     'response': "I apologize, but I'm receiving too many requests. Please wait a moment and try again.",

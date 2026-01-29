@@ -52,6 +52,15 @@ def start_servers():
         # Start backend server (backend/python/main.py on port 8000)
         print("[*] Starting backend server (main.py on port 8000)...")
         try:
+            # Ensure port 8000 is free (kill any existing process using it)
+            print("[*] Checking if port 8000 is available...")
+            try:
+                if kill_process_by_port(8000):
+                    print("[*] Killed existing process on port 8000")
+                    time.sleep(1)
+            except Exception as e:
+                print(f"[!] Error while ensuring port 8000 is free: {e}")
+
             # Create log file for backend server output
             log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logs')
             os.makedirs(log_dir, exist_ok=True)
@@ -62,6 +71,8 @@ def start_servers():
                 stdout=backend_log,  # Write to log file
                 stderr=backend_log,  # Write errors to log file
                 cwd=backend_py_dir,
+                # Prevent child from inheriting debug/reloader environment variables
+                env={k: v for k, v in os.environ.items() if k not in ('DEBUG', 'FLASK_DEBUG', 'FLASK_ENV')},
                 creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
             )
             time.sleep(2)  # Reduced initial wait - verification loop will handle longer waits
@@ -164,13 +175,34 @@ def start_servers():
                 stdout=chat_log if chat_log else subprocess.DEVNULL,
                 stderr=chat_log if chat_log else subprocess.DEVNULL,
                 cwd=backend_py_dir,
+                # Ensure child process doesn't inherit debug/reloader env vars
+                env={k: v for k, v in os.environ.items() if k not in ('DEBUG', 'FLASK_DEBUG', 'FLASK_ENV')},
                 creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
             )
-            time.sleep(3)  # Wait for chat server to start
+            time.sleep(1)  # initial short wait
+
+            # If the process exited quickly, it may be the reloader parent; check port before failing
             if chat_process.poll() is not None:
-                print("[!] Chat server failed to start!")
-                exit_code = chat_process.returncode
-                print(f"[!] Exit code: {exit_code}")
+                # Wait up to a short timeout for the server to start and listen on port 5000
+                import socket
+                chat_port_ready = False
+                for retry in range(8):
+                    try:
+                        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                        sock.settimeout(1)
+                        result = sock.connect_ex(('localhost', 5000))
+                        sock.close()
+                        if result == 0:
+                            chat_port_ready = True
+                            break
+                    except Exception:
+                        pass
+                    time.sleep(0.5)
+
+                if not chat_port_ready:
+                    print("[!] Chat server failed to start!")
+                    exit_code = chat_process.returncode
+                    print(f"[!] Exit code: {exit_code}")
                 
                 # Try to read error from log file
                 if chat_log_path and os.path.exists(chat_log_path):

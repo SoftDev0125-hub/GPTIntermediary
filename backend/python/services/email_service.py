@@ -212,7 +212,8 @@ class EmailService:
         limit: int = 1000,
         refresh_token: Optional[str] = None,
         google_client_id: Optional[str] = None,
-        google_client_secret: Optional[str] = None
+        google_client_secret: Optional[str] = None,
+        query: Optional[str] = None
     ) -> tuple[List[EmailMessage], int]:
         """
         Retrieve unread emails
@@ -236,13 +237,32 @@ class EmailService:
                 logger.warning(f"Could not get unread count: {str(label_error)}")
                 total_unread = 0
 
-            # Query for unread messages (paged subset) with timeout handling
+            # Query for unread messages (paged) with timeout handling
+            # Use provided query (e.g., 'in:inbox category:primary is:unread') or default to unread
+            list_query = query or 'is:unread'
             try:
-                results = service.users().messages().list(
-                    userId='me',
-                    q='is:unread',
-                    maxResults=limit
-                ).execute()
+                message_ids = []
+                page_token = None
+                # Gmail API returns paged results; loop until we have enough or no more pages
+                while True:
+                    params = {
+                        'userId': 'me',
+                        'q': list_query,
+                        'maxResults': min(500, max(1, limit))
+                    }
+                    if page_token:
+                        params['pageToken'] = page_token
+
+                    results = service.users().messages().list(**params).execute()
+                    page_msgs = results.get('messages', []) or []
+                    for m in page_msgs:
+                        if len(message_ids) >= limit:
+                            break
+                        message_ids.append(m.get('id'))
+
+                    page_token = results.get('nextPageToken')
+                    if not page_token or len(message_ids) >= limit:
+                        break
             except Exception as list_error:
                 error_msg = str(list_error)
                 if 'timeout' in error_msg.lower() or '10060' in error_msg:
@@ -251,22 +271,37 @@ class EmailService:
                 else:
                     raise
 
-            messages = results.get('messages', [])
             email_list = []
-            
-            for msg in messages:
-                # Get full message details
-                message = service.users().messages().get(
-                    userId='me',
-                    id=msg['id'],
-                    format='full'
-                ).execute()
-                
+            # Fetch full message bodies for the collected ids (respect limit)
+            for mid in message_ids[:limit]:
+                try:
+                    message = service.users().messages().get(
+                        userId='me',
+                        id=mid,
+                        format='full'
+                    ).execute()
+                except Exception as msg_error:
+                    logger.warning(f"Failed to fetch message {mid}: {msg_error}")
+                    continue
+
                 email_data = self._parse_email(message)
                 email_list.append(email_data)
             
-            logger.info(f"Retrieved {len(email_list)} unread emails (total unread: {total_unread})")
-            return email_list, total_unread
+            # Attempt to sort emails by parsed date (newest first)
+            try:
+                from email.utils import parsedate_to_datetime
+                def _parse_dt(e):
+                    try:
+                        return parsedate_to_datetime(e.date)
+                    except Exception:
+                        return None
+
+                email_list_sorted = sorted(email_list, key=lambda e: _parse_dt(e) or datetime.min, reverse=True)
+            except Exception:
+                email_list_sorted = email_list
+
+            logger.info(f"Retrieved {len(email_list_sorted)} unread emails (total unread: {total_unread})")
+            return email_list_sorted, total_unread
         
         except HttpError as error:
             logger.error(f"Gmail API error: {error}")

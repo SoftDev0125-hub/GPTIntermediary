@@ -21,6 +21,7 @@ class SendEmailRequest(BaseModel):
     subject: str = Field(..., description="Email subject")
     body: str = Field(..., description="Email body (plain text)")
     html: Optional[str] = Field(None, description="HTML version of the email body")
+    confirm: Optional[bool] = Field(False, description="Set to true to allow sending to resolver-inferred addresses without interactive confirmation")
 
 
 class EmailReplyRequest(BaseModel):
@@ -46,6 +47,7 @@ class EmailMessage(BaseModel):
     subject: str
     body: str
     date: str
+    summary: Optional[str] = None
     is_unread: bool = True
     labels: List[str] = []
 

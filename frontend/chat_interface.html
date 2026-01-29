@@ -1722,6 +1722,7 @@
                 <div class="email-item" data-email-index="${startIdx + index}">
                     <div class="email-from">From: ${email.from_email || 'Unknown'}</div>
                     <div class="email-subject">${email.subject || '(No Subject)'}</div>
+                    <div class="email-summary">${email.summary ? email.summary : (email.body ? (email.body.substring(0,120) + (email.body.length>120? '...':'')) : '')}</div>
                     <div class="email-date">${email.date || new Date().toLocaleDateString()}</div>
                 </div>
             `).join('');
