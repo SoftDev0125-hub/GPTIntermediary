@@ -29,7 +29,7 @@ try:
     from db_models import ChatWithGPT, Base
     DATABASE_AVAILABLE = True
     logger.info("[OK] Database modules loaded successfully")
-    
+
     # Initialize database tables if they don't exist
     try:
         Base.metadata.create_all(bind=engine)
@@ -47,6 +47,31 @@ except ImportError as e:
 
 # Load environment variables early so os.getenv() finds .env values
 load_dotenv()
+
+# Robust env loader: handle cases where .env has spaces around '=' or nonstandard formatting
+def _read_env_key_from_dotenv(key_name):
+    # First try os.environ
+    val = os.getenv(key_name)
+    if val:
+        return val.strip()
+
+    # Fallback: manually parse .env in repo root
+    try:
+        # Try repo root relative to this file (two levels up)
+        base = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+        env_path = os.path.join(base, '.env')
+        if not os.path.exists(env_path):
+            return None
+        with open(env_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                if '=' not in line or line.strip().startswith('#'):
+                    continue
+                k, v = line.split('=', 1)
+                if k.strip() == key_name:
+                    return v.strip().strip('"').strip("'")
+    except Exception as e:
+        logger.warning(f"Failed to read .env fallback for {key_name}: {e}")
+    return None
 
 # OpenAI Configuration
 # Read from .env robustly (fallback parsing handles spacing/formatting)
@@ -302,6 +327,18 @@ def parse_command(message):
     # Check for generic email patterns
     if 'unread' in message_lower and 'email' in message_lower:
         return {'action': 'get_emails'}
+
+    # Reply patterns: accept polite prefixes like 'please reply to', 'reply to', 'reply', 'please reply'
+    reply_patterns = [
+        r"^(?:please\s+)?reply(?:\s+to)?\s+(.+)$",
+        r"^reply\s+(.+)$",
+        r"^please\s+reply\s+(.+)$"
+    ]
+    for rp in reply_patterns:
+        m = re.search(rp, message, re.IGNORECASE)
+        if m:
+            sender = m.group(1).strip()
+            return {'action': 'reply_email', 'sender': sender}
     
     if ('send email' in message_lower or 'email to' in message_lower) and '@' not in message_lower:
         return {'action': 'send_email', 'needs_oauth': True}
@@ -516,6 +553,70 @@ def execute_action(action_data):
                 'response': f"❌ Error sending email: {str(e)}",
                 'error': True
             }
+    
+    elif action == 'reply_email':
+        sender = action_data.get('sender')
+        if not sender:
+            return {'response': 'Please specify who to reply to (e.g. "Reply to Alice").', 'error': True}
+        try:
+            # Build a Primary inbox query for this sender
+            sender_part = sender
+            if '@' in sender_part:
+                q = f'in:inbox category:primary from:{sender_part}'
+            else:
+                safe = sender_part.replace('"', '').strip()
+                q = f'in:inbox category:primary from:"{safe}"'
+
+            # Request recent unread emails from this sender
+            response = requests.post(
+                f"{BACKEND_URL}/api/email/unread",
+                json={"user_credentials": USER_CREDENTIALS, "limit": 20, "query": q},
+                timeout=8
+            )
+            result = response.json()
+            if response.status_code != 200 or not result.get('success'):
+                return {'response': f"❌ Could not fetch messages from {sender}.", 'error': True}
+
+            emails = result.get('emails', [])
+            if not emails:
+                return {'response': f'No unread messages found from {sender} in Primary inbox.', 'function_called': 'get_emails'}
+
+            target = emails[0]
+            # Draft a short reply using OpenAI if available, otherwise use polite default
+            draft = None
+            if USE_OPENAI:
+                try:
+                    sys_msg = {"role": "system", "content": "You are a concise assistant that drafts short professional email replies."}
+                    user_msg = {"role": "user", "content": (
+                        f"Draft a short (2-4 sentence) polite reply to this email.\n\nFrom: {target.get('from_name') or target.get('from_email')}\nSubject: {target.get('subject')}\nPreview: {(target.get('body') or target.get('snippet') or '')[:600]}\n\nReturn only the reply body text." )}
+                    gen = openai.chat.completions.create(
+                        model="gpt-3.5-turbo",
+                        messages=[sys_msg, user_msg],
+                        max_tokens=300,
+                        temperature=0.3,
+                        timeout=6
+                    )
+                    draft = gen.choices[0].message.content if gen and hasattr(gen.choices[0].message, 'content') else None
+                except Exception:
+                    draft = None
+
+            if not draft:
+                draft = "Hello,\n\nThanks for your message. I'll follow up shortly.\n\nBest regards."
+
+            # Send reply using backend reply endpoint (use sender_email to find thread)
+            reply_payload = {
+                "user_credentials": USER_CREDENTIALS,
+                "sender_email": target.get('from_email') or target.get('from'),
+                "body": draft
+            }
+            send_resp = requests.post(f"{BACKEND_URL}/api/email/reply", json=reply_payload, timeout=8)
+            send_res = send_resp.json() if send_resp is not None else {}
+            if send_resp.status_code == 200 and send_res.get('success'):
+                return {'response': f"✅ Reply sent to {target.get('from_name') or target.get('from_email')}.", 'function_called': 'reply_to_email'}
+            else:
+                return {'response': f"❌ Failed to send reply: {send_res.get('error') or send_res.get('detail') or send_res}", 'error': True}
+        except Exception as e:
+            return {'response': f'Error replying to {sender}: {str(e)}', 'error': True}
     
     else:
         # Default chat response - provide helpful guidance
