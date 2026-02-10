@@ -33,14 +33,18 @@ class WhatsAppService:
     
     def __init__(self):
         """Initialize WhatsApp service"""
-        load_dotenv(override=True)
+        from pathlib import Path
+        _root = Path(__file__).resolve().parent.parent.parent.parent
+        load_dotenv(_root / '.env', override=True)
         self.playwright = None
         self.browser: Optional[Browser] = None
         self.context: Optional[BrowserContext] = None
         self.page: Optional[Page] = None
         self.is_connected = False
+        # Session path for Playwright storage (used only if this Python service is used).
+        # The app's primary WhatsApp integration uses the Node server and whatsapp_session_node at project root.
+        # This folder is created only when _save_session() runs, not on startup.
         self.session_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'whatsapp_session')
-        os.makedirs(self.session_path, exist_ok=True)
         self._initializing = False  # Flag to prevent multiple simultaneous initializations
         
         # Check if session exists - this is critical for auto-reconnection

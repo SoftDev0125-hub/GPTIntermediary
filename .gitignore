@@ -61,6 +61,9 @@ whatsapp_session_node/
 slack_session_node/
 .wwebjs_cache/
 
+# Token store (sensitive)
+backend/.token_store.json
+
 # Local databases
 backend/django_app/db.sqlite3
 backend/django_app/db.sqlite3-journal

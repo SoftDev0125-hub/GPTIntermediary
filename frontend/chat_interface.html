@@ -729,7 +729,9 @@
                 <div class="whatsapp-sidebar">
                     <div class="whatsapp-sidebar-header">
                         <h2>Chats</h2>
-                        <button id="whatsappShowButton" class="whatsapp-refresh-btn">Refresh</button>
+                        <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                            <button id="whatsappShowButton" class="whatsapp-refresh-btn">Refresh</button>
+                        </div>
                     </div>
                     <div class="whatsapp-sidebar-content" id="whatsappChatsList">
                         <div class="whatsapp-sidebar-empty">Click "Refresh" to load chats</div>
@@ -764,8 +766,10 @@
                             <div class="whatsapp-empty-icon">💬</div>
                             <h3>Welcome to WhatsApp</h3>
                             <p>Click "Refresh" in the sidebar to load your chats</p>
-                            <p style="color: #8696a0; font-size: 14px; margin-top: 10px;">You are connected to WhatsApp. You can send and receive messages.</p>
+                            <p style="color: #8696a0; font-size: 14px; margin-top: 10px;" id="whatsappEmptyStateSubtext">You are connected to WhatsApp. You can send and receive messages.</p>
                         </div>
+                        <!-- Message list (populated when a chat is selected; QR and empty state stay in DOM) -->
+                        <div id="whatsappMessagesList" class="whatsapp-messages-list" style="display: none; flex: 1; flex-direction: column; overflow: auto; padding: 12px;"></div>
                     </div>
                     <div class="whatsapp-input-container" id="whatsappInputContainer" style="display: none;">
                         <div class="whatsapp-input-wrapper">
@@ -990,6 +994,48 @@
                         </div>
                     </div>
 
+                    <div class="settings-divider"></div>
+
+                    <!-- Email Finder (Bing + People API) - Paid services -->
+                    <div class="settings-section">
+                        <h2 class="settings-section-title">🔍 Email Finder (Paid APIs)</h2>
+                        <p class="field-description" style="margin-bottom: 12px;">Used to find a person's email by name when not in your contacts. At least one key is required. These are paid services.</p>
+                        <div class="settings-field-group">
+                            <div class="settings-field">
+                                <label for="bing_search_api_key">
+                                    Bing Search API Key
+                                    <button type="button" class="help-button" onclick="showHelp('bing_search_api_key')">?</button>
+                                </label>
+                                <div class="input-with-edit">
+                                    <input type="text" id="bing_search_api_key" name="bing_search_api_key" placeholder="Azure subscription key" readonly>
+                                    <button type="button" class="edit-button" onclick="toggleEdit('bing_search_api_key')" title="Edit">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                                            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                                        </svg>
+                                    </button>
+                                </div>
+                                <small class="field-description">Bing Web Search API (Azure). Finds emails via web search.</small>
+                            </div>
+                            <div class="settings-field">
+                                <label for="people_api_key">
+                                    People API Key
+                                    <button type="button" class="help-button" onclick="showHelp('people_api_key')">?</button>
+                                </label>
+                                <div class="input-with-edit">
+                                    <input type="text" id="people_api_key" name="people_api_key" placeholder="e.g. Hunter.io API key" readonly>
+                                    <button type="button" class="edit-button" onclick="toggleEdit('people_api_key')" title="Edit">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                                            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                                        </svg>
+                                    </button>
+                                </div>
+                                <small class="field-description">e.g. Hunter.io Email Finder for professional emails.</small>
+                            </div>
+                        </div>
+                    </div>
+
                     <div class="settings-actions">
                         <button type="button" class="settings-reload-button" onclick="loadSettings()">🔄 Reload from .env</button>
                         <button type="submit" class="settings-save-button">💾 Save to .env</button>
@@ -1075,15 +1121,18 @@
         // Chat server URL - when developing locally point to the Flask chat server on port 5000
         const CHAT_SERVER_URL = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://localhost:5000' : window.location.origin;
         
-        // Node.js servers URLs - for localhost use direct ports, for domain use origin with paths
+        // Node.js servers URLs - for localhost/file use direct ports, for domain use origin with paths
         const getNodeServerUrl = (port, servicePath) => {
+            const protocol = window.location.protocol;
             const hostname = window.location.hostname;
+            // file:// or empty hostname (e.g. opening HTML from disk): use localhost
+            if (protocol === 'file:' || !hostname) {
+                return `http://localhost:${port}`;
+            }
             if (hostname === 'localhost' || hostname === '127.0.0.1') {
-                // Localhost: direct connection to Node.js server
                 return `http://localhost:${port}`;
             }
             // Domain: use Nginx proxy path (e.g., /whatsapp, /telegram, /slack)
-            // Nginx proxies /whatsapp to localhost:3000, /telegram to localhost:3001, etc.
             return `${window.location.origin}${servicePath}`;
         };
         const TELEGRAM_API_URL = getNodeServerUrl(3001, '/telegram');
@@ -3626,6 +3675,7 @@
         const whatsappQrImageWrapper = document.getElementById('whatsappQrImageWrapper');
         const whatsappQrRefreshBtn = document.getElementById('whatsappQrRefreshBtn');
         const whatsappEmptyState = document.getElementById('whatsappEmptyState');
+        const whatsappMessagesList = document.getElementById('whatsappMessagesList');
 
         let allWhatsAppMessages = [];
         let whatsappMessagesByChat = {};
@@ -3634,11 +3684,21 @@
         let whatsappAuthCheckInterval = null;
         let whatsappQrRefreshInterval = null;
         let whatsappIsAuthenticated = false;
+        let whatsappIsReady = false;
+        let whatsappHasLoadedChats = false;
+        let whatsappIsLoadingChats = false;
+        let whatsappJustScannedQR = false; // Track if QR was just scanned (vs. existing session on launch)
         let whatsappSocket = null;
         let currentChatMessages = []; // Store messages for currently open chat
 
-        async function checkWhatsAppStatus() {
-            if (whatsappIsAuthenticated) {
+        /**
+         * @param {Object} options
+         * @param {boolean} [options.showQRIfNoSession=true] - If false, do not display QR when no session (e.g. on tab switch; QR only after user clicks Refresh).
+         */
+        async function checkWhatsAppStatus(options = {}) {
+            const showQRIfNoSession = options.showQRIfNoSession !== false;
+            // Return true only when WhatsApp is fully ready (contacts/messages endpoints work)
+            if (whatsappIsAuthenticated && whatsappIsReady) {
                 return true;
             }
             try {
@@ -3657,10 +3717,11 @@
                 const data = await response.json();
                 console.log('[*] WhatsApp status response:', data);
 
-                // Check if connected (authenticated)
-                if (data.success && data.is_connected) {
-                    console.log('[*] WhatsApp authenticated! Hiding QR code and showing connected state.');
+                // Fully ready: authenticated + client ready (contacts/messages endpoints work)
+                if (data.success && data.is_ready) {
+                    console.log('[*] WhatsApp ready! Hiding QR code.');
                     whatsappIsAuthenticated = true;
+                    whatsappIsReady = true;
                     
                     // Stop all intervals
                     if (whatsappAuthCheckInterval) {
@@ -3680,21 +3741,83 @@
                     // Show empty state (ready for chats)
                     if (whatsappEmptyState) {
                         whatsappEmptyState.style.display = 'flex';
+                        // Update message to show connection success
+                        const emptyStateTitle = whatsappEmptyState.querySelector('h3');
+                        const emptyStateDesc = whatsappEmptyState.querySelector('p');
+                        const emptyStateSubtext = document.getElementById('whatsappEmptyStateSubtext');
+                        if (emptyStateTitle) {
+                            emptyStateTitle.textContent = whatsappJustScannedQR ? 'Connected successfully!' : 'Connected to WhatsApp';
+                        }
+                        if (emptyStateDesc) {
+                            emptyStateDesc.textContent = whatsappJustScannedQR 
+                                ? 'Your WhatsApp account is connected. Chat history is loading...' 
+                                : 'Click "Refresh" in the sidebar to load your chats';
+                        }
+                        if (emptyStateSubtext) {
+                            emptyStateSubtext.textContent = whatsappJustScannedQR 
+                                ? 'Loading your chat history...' 
+                                : 'You are connected to WhatsApp. Click "Refresh" to load your chats.';
+                        }
                     }
                     
-                    // Update status
+                    // Update status with success message
                     if (whatsappCurrentChat) {
                         whatsappCurrentChat.textContent = 'WhatsApp';
                     }
                     if (whatsappStatus) {
-                        whatsappStatus.textContent = 'Connected';
+                        whatsappStatus.textContent = 'Connected successfully';
                     }
                     if (whatsappCount) {
                         whatsappCount.textContent = 'Ready';
                     }
                     
                     console.log('[*] WhatsApp UI updated to connected state');
+
+                    // Auto-load chats when we become ready and haven't loaded yet (QR scan or restored session)
+                    if (!whatsappHasLoadedChats && !whatsappIsLoadingChats) {
+                        whatsappIsLoadingChats = true;
+                        try {
+                            await loadWhatsAppMessages();
+                            whatsappHasLoadedChats = true;
+                        } finally {
+                            whatsappIsLoadingChats = false;
+                        }
+                    }
                     return true;
+                }
+
+                // Authenticated but not ready yet: QR was scanned, but whatsapp-web.js still initializing.
+                // Do NOT call /contacts yet (it requires isReady=true on backend).
+                if (data.success && data.is_authenticated && !data.is_ready) {
+                    whatsappIsAuthenticated = true;
+                    whatsappIsReady = false;
+                    whatsappJustScannedQR = true; // Mark that QR was scanned (so we auto-load chats when ready)
+
+                    if (whatsappQrContainer) whatsappQrContainer.style.display = 'flex';
+                    if (whatsappQrImageWrapper) whatsappQrImageWrapper.style.display = 'none';
+                    if (whatsappEmptyState) whatsappEmptyState.style.display = 'none';
+                    if (whatsappQrTitle) whatsappQrTitle.textContent = 'Finishing connection...';
+                    if (whatsappQrDescription) whatsappQrDescription.textContent = 'WhatsApp verified. Preparing chats...';
+                    if (whatsappQrStatus) {
+                        whatsappQrStatus.textContent = data.message || 'Connected (initializing...)';
+                        whatsappQrStatus.style.color = '#3390ec';
+                    }
+                    // Keep polling until ready
+                    if (!whatsappAuthCheckInterval) {
+                        whatsappAuthCheckInterval = setInterval(async () => {
+                            if (whatsappIsReady) {
+                                clearInterval(whatsappAuthCheckInterval);
+                                whatsappAuthCheckInterval = null;
+                                return;
+                            }
+                            const isReadyNow = await checkWhatsAppStatus();
+                            if (isReadyNow) {
+                                clearInterval(whatsappAuthCheckInterval);
+                                whatsappAuthCheckInterval = null;
+                            }
+                        }, 2000);
+                    }
+                    return false;
                 }
                 
                 // Check if session exists but not connected yet (restoring)
@@ -3725,7 +3848,7 @@
                     // Start polling for authentication
                     if (!whatsappAuthCheckInterval) {
                         whatsappAuthCheckInterval = setInterval(async () => {
-                            if (whatsappIsAuthenticated) {
+                            if (whatsappIsReady) {
                                 clearInterval(whatsappAuthCheckInterval);
                                 whatsappAuthCheckInterval = null;
                                 return;
@@ -3740,44 +3863,49 @@
                     return false;
                 }
                 
-                // No session - show QR code for first-time authentication
+                // No session - show QR code only if showQRIfNoSession (e.g. user clicked Refresh). On tab switch we do not show QR.
                 if (!data.has_session) {
-                    console.log('[*] WhatsApp is not authenticated and no session exists - showing QR code');
-                    
-                    // Show QR code container
-                    if (whatsappQrContainer) {
-                        whatsappQrContainer.style.display = 'flex';
-                    }
-                    if (whatsappEmptyState) {
-                        whatsappEmptyState.style.display = 'none';
-                    }
-                    
-                    // Load QR code
-                    await loadWhatsAppQRCode();
-                    
-                    // Start monitoring for authentication
-                    if (!whatsappAuthCheckInterval) {
-                        whatsappAuthCheckInterval = setInterval(async () => {
-                            if (whatsappIsAuthenticated) {
-                                clearInterval(whatsappAuthCheckInterval);
-                                whatsappAuthCheckInterval = null;
-                                if (whatsappQrRefreshInterval) {
-                                    clearInterval(whatsappQrRefreshInterval);
-                                    whatsappQrRefreshInterval = null;
+                    if (showQRIfNoSession) {
+                        console.log('[*] WhatsApp is not authenticated and no session exists - showing QR code (Refresh clicked)');
+                        whatsappJustScannedQR = true;
+                        if (whatsappQrContainer) whatsappQrContainer.style.display = 'flex';
+                        if (whatsappEmptyState) whatsappEmptyState.style.display = 'none';
+                        await loadWhatsAppQRCode();
+                        if (!whatsappAuthCheckInterval) {
+                            whatsappAuthCheckInterval = setInterval(async () => {
+                                if (whatsappIsReady) {
+                                    clearInterval(whatsappAuthCheckInterval);
+                                    whatsappAuthCheckInterval = null;
+                                    if (whatsappQrRefreshInterval) {
+                                        clearInterval(whatsappQrRefreshInterval);
+                                        whatsappQrRefreshInterval = null;
+                                    }
+                                    return;
                                 }
-                                return;
-                            }
-                            const isAuth = await checkWhatsAppStatus();
-                            if (isAuth) {
-                                clearInterval(whatsappAuthCheckInterval);
-                                whatsappAuthCheckInterval = null;
-                                if (whatsappQrRefreshInterval) {
-                                    clearInterval(whatsappQrRefreshInterval);
-                                    whatsappQrRefreshInterval = null;
+                                const isAuth = await checkWhatsAppStatus();
+                                if (isAuth) {
+                                    clearInterval(whatsappAuthCheckInterval);
+                                    whatsappAuthCheckInterval = null;
+                                    if (whatsappQrRefreshInterval) {
+                                        clearInterval(whatsappQrRefreshInterval);
+                                        whatsappQrRefreshInterval = null;
+                                    }
                                 }
-                            }
-                        }, 3000); // Check every 3 seconds
+                            }, 3000);
+                        }
+                    } else {
+                        // Tab switch: no session, but don't show QR - just show empty state and prompt to click Refresh
+                        console.log('[*] No session - QR will show when user clicks Refresh');
+                        if (whatsappQrContainer) whatsappQrContainer.style.display = 'none';
+                        if (whatsappEmptyState) {
+                            whatsappEmptyState.style.display = 'flex';
+                            const t = whatsappEmptyState.querySelector('h3');
+                            const p = whatsappEmptyState.querySelector('p');
+                            if (t) t.textContent = 'WhatsApp';
+                            if (p) p.textContent = 'Click "Refresh" in the sidebar to load your chats or to sign in with QR code.';
+                        }
                     }
+                    return false;
                 } else {
                     // Session exists but not connected yet - wait longer for restoration
                     console.log('[*] Session exists but not connected yet - hiding QR code and waiting for restoration');
@@ -3812,12 +3940,14 @@
                 const url = forceRefresh 
                     ? `${WHATSAPP_API_URL}/api/whatsapp/qr-code?force_refresh=true`
                     : `${WHATSAPP_API_URL}/api/whatsapp/qr-code`;
-                const response = await fetch(url, {
+                const fetchOpts = {
                     method: 'GET',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    }
-                });
+                    headers: { 'Content-Type': 'application/json' }
+                };
+                if (forceRefresh) {
+                    fetchOpts.signal = AbortSignal.timeout(60000);
+                }
+                const response = await fetch(url, fetchOpts);
 
                 if (!response.ok) {
                     throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -3850,6 +3980,7 @@
 
                 if (data.success && data.qr_code) {
                     if (whatsappQrImage) {
+                        whatsappQrImage.src = ''; // clear stale/cached so new QR is shown
                         whatsappQrImage.src = data.qr_code;
                     }
                     if (whatsappQrContainer) {
@@ -3906,19 +4037,30 @@
                                 console.error('[*] Error checking status before refresh:', err);
                             }
                             
-                            // Force refresh QR code only if still not authenticated and no session
-                            console.log('[*] Refreshing QR code (not authenticated yet, no session)...');
-                            await loadWhatsAppQRCode(true);
+                            // Get updated QR image (same client emits new QR periodically; do NOT use force_refresh or we destroy session and QR disappears)
+                            console.log('[*] Fetching updated QR code (QR codes expire ~20s)...');
+                            await loadWhatsAppQRCode(false);
                         }, 20000); // Refresh every 20 seconds
                     }
                 } else if (data.is_authenticated) {
-                    // Already authenticated
+                    // Already authenticated (from QR endpoint - this shouldn't happen normally, but handle it)
                     whatsappIsAuthenticated = true;
+                    whatsappIsReady = true;
+                    whatsappJustScannedQR = true; // Assume QR was scanned if we get here
                     if (whatsappQrContainer) {
                         whatsappQrContainer.style.display = 'none';
                     }
                     if (whatsappEmptyState) {
                         whatsappEmptyState.style.display = 'flex';
+                    }
+                    if (!whatsappHasLoadedChats && !whatsappIsLoadingChats) {
+                        whatsappIsLoadingChats = true;
+                        try {
+                            await loadWhatsAppMessages();
+                            whatsappHasLoadedChats = true;
+                        } finally {
+                            whatsappIsLoadingChats = false;
+                        }
                     }
                 } else {
                     if (whatsappQrStatus) {
@@ -3942,7 +4084,6 @@
             whatsappShowButton.textContent = 'Loading...';
             allWhatsAppMessages = [];
             whatsappMessagesByChat = {};
-            currentWhatsAppChatId = null;
 
             try {
                 const isAuth = await checkWhatsAppStatus();
@@ -3963,7 +4104,12 @@
                 });
 
                 if (!contactsResponse.ok) {
-                    throw new Error(`HTTP ${contactsResponse.status}: ${contactsResponse.statusText}`);
+                    const errBody = await contactsResponse.json().catch(() => ({}));
+                    const msg = errBody.error || contactsResponse.statusText;
+                    if (contactsResponse.status === 400 && (msg.includes('authenticate') || msg.includes('connected'))) {
+                        throw new Error('WhatsApp is still connecting. Please wait a few seconds and click Refresh again.');
+                    }
+                    throw new Error(msg || `HTTP ${contactsResponse.status}`);
                 }
 
                 const contactsData = await contactsResponse.json();
@@ -4016,6 +4162,15 @@
                         });
                     }
 
+                    // Auto-open the first chat (so history is visible immediately after connecting)
+                    if (!currentWhatsAppChatId && contactsData.contacts[0] && contactsData.contacts[0].contact_id) {
+                        try {
+                            await selectWhatsAppContact(contactsData.contacts[0].contact_id, contactsData.contacts[0].name);
+                        } catch (e) {
+                            // ignore auto-open errors; user can click manually
+                        }
+                    }
+
                     // Lazy-load WhatsApp avatars (cached by backend)
                     (async function loadWhatsAppAvatars(maxToLoad = 30) {
                         try {
@@ -4049,7 +4204,11 @@
                     })(40);
                 } else {
                     if (whatsappChatsList) {
-                        whatsappChatsList.innerHTML = '<div class="whatsapp-sidebar-empty">No chats found</div>';
+                        const emptyMsg = (contactsData.success && contactsData.warning)
+                            ? contactsData.warning
+                            : 'No chats found';
+                        const escaped = emptyMsg.replace(/</g, '&lt;').replace(/\n/g, '<br>');
+                        whatsappChatsList.innerHTML = '<div class="whatsapp-sidebar-empty">' + escaped + '<br><br>Then click <strong>Refresh</strong> above.</div>';
                     }
                 }
             } catch (error) {
@@ -4126,8 +4285,17 @@
 
             whatsappSocket.on('whatsapp_status', (data) => {
                 console.log('[*] WhatsApp status update:', data);
-                if (data.is_connected && data.is_authenticated) {
-                    whatsappIsAuthenticated = true;
+                if (data) {
+                    if (data.is_authenticated !== undefined) {
+                        whatsappIsAuthenticated = data.is_authenticated;
+                    }
+                    if (data.is_ready !== undefined) {
+                        whatsappIsReady = data.is_ready;
+                    }
+                    // When ready (from real event or backend fallback), trigger status check to update UI and load chats
+                    if (data.is_ready && !whatsappHasLoadedChats) {
+                        checkWhatsAppStatus();
+                    }
                 }
             });
 
@@ -4222,7 +4390,8 @@
          * Append a single message to the messages display (INSTANT)
          */
         function appendWhatsAppMessage(message) {
-            if (!whatsappMessagesContainer) return;
+            const listEl = whatsappMessagesList || whatsappMessagesContainer;
+            if (!listEl) return;
 
             const msgDate = new Date(message.timestamp * 1000);
             const timeStr = formatWhatsAppTime(message.timestamp);
@@ -4231,7 +4400,7 @@
 
             // Check if we need a date divider (check last visible message)
             let needsDateDivider = false;
-            const lastMessageElement = whatsappMessagesContainer.querySelector('.whatsapp-message-wrapper:last-child');
+            const lastMessageElement = listEl.querySelector('.whatsapp-message-wrapper:last-child');
             if (lastMessageElement) {
                 const lastTimeAttr = lastMessageElement.getAttribute('data-timestamp');
                 if (lastTimeAttr) {
@@ -4323,12 +4492,12 @@
                 </div>
             `;
 
-            // Append to container INSTANTLY using insertAdjacentHTML (fastest method)
-            whatsappMessagesContainer.insertAdjacentHTML('beforeend', html);
+            // Append to list INSTANTLY using insertAdjacentHTML (fastest method)
+            listEl.insertAdjacentHTML('beforeend', html);
             
             // Scroll to bottom smoothly
             requestAnimationFrame(() => {
-                whatsappMessagesContainer.scrollTop = whatsappMessagesContainer.scrollHeight;
+                listEl.scrollTop = listEl.scrollHeight;
             });
         }
 
@@ -4336,7 +4505,8 @@
          * Update an existing message display (for media updates, edits, etc.)
          */
         function updateMessageDisplay(messageId, messageData) {
-            const messageElement = whatsappMessagesContainer?.querySelector(`[data-message-id="${messageId}"]`);
+            const listEl = whatsappMessagesList || whatsappMessagesContainer;
+            const messageElement = listEl?.querySelector(`[data-message-id="${messageId}"]`);
             if (!messageElement) return;
 
             const bubble = messageElement.querySelector('.whatsapp-message-bubble');
@@ -4484,7 +4654,8 @@
                     }
 
                     // Remove message from display
-                    const messageElement = whatsappMessagesContainer?.querySelector(`[data-message-id="${messageId}"]`);
+                    const listEl = whatsappMessagesList || whatsappMessagesContainer;
+                    const messageElement = listEl?.querySelector(`[data-message-id="${messageId}"]`);
                     if (messageElement) {
                         messageElement.remove();
                     }
@@ -4576,7 +4747,12 @@
                 });
 
                 if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    const errBody = await response.json().catch(() => ({}));
+                    const msg = errBody.error || response.statusText;
+                    if (response.status === 400 && (msg.includes('authenticate') || msg.includes('connected'))) {
+                        throw new Error('WhatsApp is still connecting. Wait a moment and try again.');
+                    }
+                    throw new Error(msg || `HTTP ${response.status}`);
                 }
 
                 const data = await response.json();
@@ -4601,12 +4777,17 @@
                 }
             } catch (error) {
                 console.error('[!] Error loading WhatsApp messages:', error);
-                if (whatsappMessagesContainer) {
-                    whatsappMessagesContainer.innerHTML = `
+                const listEl = whatsappMessagesList || whatsappMessagesContainer;
+                if (listEl) {
+                    if (whatsappEmptyState) whatsappEmptyState.style.display = 'none';
+                    if (whatsappQrContainer) whatsappQrContainer.style.display = 'none';
+                    if (whatsappMessagesList) whatsappMessagesList.style.display = 'flex';
+                    listEl.innerHTML = `
                         <div class="whatsapp-empty-state">
                             <div class="whatsapp-empty-icon">⚠️</div>
                             <h3>Error Loading Messages</h3>
-                            <p>${error.message}</p>
+                            <p>${escapeHtml(error.message)}</p>
+                            <button type="button" class="whatsapp-refresh-btn" style="margin-top: 12px;" onclick="document.getElementById('whatsappShowButton')?.click()">Refresh chats</button>
                         </div>
                     `;
                 }
@@ -4620,10 +4801,16 @@
          * Display WhatsApp messages in the messages container
          */
         function displayWhatsAppMessages(messages, contactName) {
-            if (!whatsappMessagesContainer) return;
+            const listEl = whatsappMessagesList || whatsappMessagesContainer;
+            if (!listEl) return;
+            if (whatsappEmptyState) whatsappEmptyState.style.display = 'none';
+            if (whatsappQrContainer) whatsappQrContainer.style.display = 'none';
+            if (whatsappMessagesList) {
+                whatsappMessagesList.style.display = 'flex';
+            }
             
             if (!messages || messages.length === 0) {
-                whatsappMessagesContainer.innerHTML = `
+                listEl.innerHTML = `
                     <div class="whatsapp-empty-state">
                         <div class="whatsapp-empty-icon">💬</div>
                         <h3>No messages</h3>
@@ -4738,8 +4925,8 @@
                 return html;
             }).join('');
 
-            whatsappMessagesContainer.innerHTML = messagesHTML;
-            whatsappMessagesContainer.scrollTop = whatsappMessagesContainer.scrollHeight;
+            listEl.innerHTML = messagesHTML;
+            listEl.scrollTop = listEl.scrollHeight;
         }
 
         /**
@@ -4825,7 +5012,8 @@
                 console.log('[*] Message sent:', data);
 
                 // Remove temporary message (real one will come via WebSocket)
-                const tempElement = whatsappMessagesContainer?.querySelector(`[data-message-id="${tempMessageId}"]`);
+                const listEl = whatsappMessagesList || whatsappMessagesContainer;
+                const tempElement = listEl?.querySelector(`[data-message-id="${tempMessageId}"]`);
                 if (tempElement) {
                     tempElement.remove();
                 }
@@ -4835,7 +5023,8 @@
                 console.error('[!] Error sending WhatsApp message:', error);
                 
                 // Remove optimistic message on error
-                const tempElement = whatsappMessagesContainer?.querySelector(`[data-message-id="${tempMessageId}"]`);
+                const listEl = whatsappMessagesList || whatsappMessagesContainer;
+                const tempElement = listEl?.querySelector(`[data-message-id="${tempMessageId}"]`);
                 if (tempElement) {
                     tempElement.remove();
                 }
@@ -4870,13 +5059,12 @@
             });
         }
 
-
-        // Manual QR code refresh button
+        // Manual QR code refresh button (only when already on QR screen - gets new QR without disconnecting)
         if (whatsappQrRefreshBtn) {
             whatsappQrRefreshBtn.addEventListener('click', async () => {
                 whatsappQrRefreshBtn.disabled = true;
                 whatsappQrRefreshBtn.textContent = 'Refreshing...';
-                await loadWhatsAppQRCode(true);
+                await loadWhatsAppQRCode(false);
                 whatsappQrRefreshBtn.disabled = false;
                 whatsappQrRefreshBtn.textContent = 'Refresh QR Code';
             });
@@ -4887,40 +5075,26 @@
         const handleTabSwitch = async (tabName) => {
             if (tabName === 'whatsapp') {
                 console.log('[*] WhatsApp tab activated - initializing WhatsApp service...');
-                
-                // Initialize WebSocket connection for real-time messages
                 initializeWhatsAppWebSocket();
-            } else if (tabName === 'telegram') {
-                console.log('[*] Telegram tab activated - initializing Telegram WebSocket...');
-                
-                // Initialize WebSocket connection for real-time messages
-                initializeTelegramWebSocket();
-                
-                // Initialize WhatsApp service first (lazy initialization)
                 try {
                     const initResponse = await fetch(`${WHATSAPP_API_URL}/api/whatsapp/initialize`, {
                         method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        }
+                        headers: { 'Content-Type': 'application/json' }
                     });
-                    
-                    if (!initResponse.ok) {
-                        throw new Error(`Initialization failed: HTTP ${initResponse.status}`);
+                    if (initResponse.ok) {
+                        // Do not show QR on tab switch; QR only after user clicks Refresh and no session exists
+                        await checkWhatsAppStatus({ showQRIfNoSession: false });
                     }
-                    
-                    const initData = await initResponse.json();
-                    console.log('[*] WhatsApp initialization response:', initData);
-                    
-                    // After initialization, check status and handle QR code display
-                    await checkWhatsAppStatus();
-                } catch (error) {
-                    console.error('[*] Error initializing WhatsApp:', error);
+                } catch (err) {
+                    console.error('[*] WhatsApp init/status check:', err);
                     if (whatsappQrStatus) {
-                        whatsappQrStatus.textContent = 'Error initializing WhatsApp. Please try again.';
+                        whatsappQrStatus.textContent = 'Cannot reach WhatsApp server. Start the app with python app.py.';
                         whatsappQrStatus.style.color = '#ff4444';
                     }
                 }
+            } else if (tabName === 'telegram') {
+                console.log('[*] Telegram tab activated - initializing Telegram WebSocket...');
+                initializeTelegramWebSocket();
             } else {
                 if (whatsappAuthCheckInterval) {
                     clearInterval(whatsappAuthCheckInterval);
@@ -4959,12 +5133,12 @@
             handleTabSwitch(activeTab.id);
         }
         
-        // Check WhatsApp status on page load if WhatsApp tab is active
+        // Check WhatsApp status on page load if WhatsApp tab is active (do not show QR; user must click Refresh)
         document.addEventListener('DOMContentLoaded', async () => {
             const activeTab = document.querySelector('.tab-content.active');
             if (activeTab && activeTab.id === 'whatsapp') {
-                console.log('[*] WhatsApp tab is active on page load - checking status...');
-                await checkWhatsAppStatus();
+                console.log('[*] WhatsApp tab is active on page load - checking status (QR only after Refresh)...');
+                await checkWhatsAppStatus({ showQRIfNoSession: false });
             }
         });
         
@@ -4972,9 +5146,9 @@
         if (document.readyState === 'complete' || document.readyState === 'interactive') {
             const activeTab = document.querySelector('.tab-content.active');
             if (activeTab && activeTab.id === 'whatsapp') {
-                console.log('[*] DOM already loaded - checking WhatsApp status...');
+                console.log('[*] DOM already loaded - checking WhatsApp status (QR only after Refresh)...');
                 setTimeout(async () => {
-                    await checkWhatsAppStatus();
+                    await checkWhatsAppStatus({ showQRIfNoSession: false });
                 }, 1000); // Wait 1 second for backend to initialize
             }
         }
@@ -9925,7 +10099,23 @@ Note: Keep this secure and never share it.`,
 6. Copy the "User OAuth Token" (starts with "xoxp-")
 7. Paste it here
 
-Note: User tokens are for personal use. For bots, use Bot Token instead.`
+Note: User tokens are for personal use. For bots, use Bot Token instead.`,
+            
+            bing_search_api_key: `Bing Search API Key (paid):
+1. Go to https://www.microsoft.com/en-us/bing/apis/bing-web-search-api
+2. Sign in with a Microsoft account
+3. Create a resource in Azure Portal (Bing Search v7)
+4. Copy your subscription key from "Keys and Endpoint"
+5. Add it to .env as BING_SEARCH_API_KEY or paste here
+
+Used to find a person's email by searching the web when they are not in your contacts.`,
+            
+            people_api_key: `People / Email Finder API Key (paid):
+Example: Hunter.io (https://hunter.io/api)
+1. Sign up at Hunter.io and get an API key
+2. Add it to .env as PEOPLE_API_KEY or paste here
+
+Used with company/domain to find professional email addresses. Works best when you know the person's company domain.`
         };
 
         // Show help modal
@@ -9964,6 +10154,8 @@ Note: User tokens are for personal use. For bots, use Bot Token instead.`
                     document.getElementById('telegram_api_hash').value = vars.TELEGRAM_API_HASH ?? '';
                     document.getElementById('telegram_phone_number').value = vars.TELEGRAM_PHONE_NUMBER ?? '';
                     document.getElementById('slack_user_token').value = vars.SLACK_USER_TOKEN ?? '';
+                    document.getElementById('bing_search_api_key').value = vars.BING_SEARCH_API_KEY ?? '';
+                    document.getElementById('people_api_key').value = vars.PEOPLE_API_KEY ?? '';
                     
                     // Log actual values for debugging
                     console.log('Loaded values:', {
@@ -10014,15 +10206,18 @@ Note: User tokens are for personal use. For bots, use Bot Token instead.`
                 telegram_api_id: document.getElementById('telegram_api_id').value.trim(),
                 telegram_api_hash: document.getElementById('telegram_api_hash').value.trim(),
                 telegram_phone_number: document.getElementById('telegram_phone_number').value.trim(),
-                slack_user_token: document.getElementById('slack_user_token').value.trim()
+                slack_user_token: document.getElementById('slack_user_token').value.trim(),
+                bing_search_api_key: document.getElementById('bing_search_api_key').value.trim(),
+                people_api_key: document.getElementById('people_api_key').value.trim()
             };
             
             try {
+                const authToken = localStorage.getItem('auth_token');
+                const headers = { 'Content-Type': 'application/json' };
+                if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
                 const response = await fetch(`${API_BASE}/api/settings/env`, {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
+                    headers,
                     body: JSON.stringify(formData)
                 });
                 

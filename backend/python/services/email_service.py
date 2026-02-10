@@ -18,10 +18,12 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
+from pathlib import Path
 from models.schemas import EmailMessage
 
-# Load environment variables
-load_dotenv()
+# Load project root .env only (GPTIntermediary/.env)
+_load_env_root = Path(__file__).resolve().parent.parent.parent.parent
+load_dotenv(_load_env_root / '.env')
 
 logger = logging.getLogger(__name__)
 
@@ -49,17 +51,19 @@ class EmailService:
         """Cleanup resources"""
         logger.info("Email service cleanup completed")
     
-    def _get_service(self, access_token: str, refresh_token: Optional[str] = None, 
+    def _get_service(self, access_token: str, refresh_token: Optional[str] = None,
                      google_client_id: Optional[str] = None, google_client_secret: Optional[str] = None):
-        """Create Gmail service from user's access token"""
+        """Create Gmail service from user's access token. Refreshes token when possible."""
         try:
-            # Use provided client_id/secret, or fallback to .env for backward compatibility
-            client_id = google_client_id or os.getenv('GOOGLE_CLIENT_ID')
-            client_secret = google_client_secret or os.getenv('GOOGLE_CLIENT_SECRET')
-            
+            access_token = (access_token or '').strip() or None
+            refresh_token = (refresh_token or '').strip() or None
+
+            client_id = (google_client_id or os.getenv('GOOGLE_CLIENT_ID') or '').strip() or None
+            client_secret = (google_client_secret or os.getenv('GOOGLE_CLIENT_SECRET') or '').strip() or None
+
             if not client_id or not client_secret:
-                raise Exception("Google Client ID and Client Secret are required. Please configure them in Settings.")
-            
+                raise Exception("Google Client ID and Client Secret are required. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in .env or Settings.")
+
             creds = Credentials(
                 token=access_token,
                 refresh_token=refresh_token,
@@ -68,23 +72,36 @@ class EmailService:
                 client_secret=client_secret,
                 scopes=SCOPES
             )
-            
-            # Refresh if expired
-            if creds.expired and creds.refresh_token:
+
+            # Always refresh when we have a refresh_token so we use a valid access token.
+            if refresh_token:
                 try:
                     creds.refresh(Request())
-                    logger.info("Token refreshed successfully")
+                    logger.info("Gmail token refreshed successfully")
+                    # Persist new access token to project root .env so next request can use it
+                    try:
+                        env_path = _load_env_root / '.env'
+                        if env_path.exists():
+                            with open(env_path, 'r', encoding='utf-8') as f:
+                                lines = f.readlines()
+                            with open(env_path, 'w', encoding='utf-8') as f:
+                                for line in lines:
+                                    if line.strip().startswith('USER_ACCESS_TOKEN='):
+                                        f.write(f'USER_ACCESS_TOKEN={creds.token}\n')
+                                    else:
+                                        f.write(line)
+                            logger.debug("Updated USER_ACCESS_TOKEN in .env")
+                    except Exception as env_err:
+                        logger.debug(f"Could not update .env with new token: {env_err}")
                 except Exception as refresh_error:
                     error_str = str(refresh_error)
-                    logger.error(f"Failed to refresh token: {error_str}")
-                    
-                    # Check for specific invalid_grant error
+                    logger.error(f"Failed to refresh Gmail token: {error_str}")
                     if 'invalid_grant' in error_str.lower() or 'expired' in error_str.lower() or 'revoked' in error_str.lower():
-                        raise Exception("Gmail access token has expired or been revoked. Please re-authenticate by running: python get_gmail_token.py")
-                    else:
-                        raise Exception(f"Token refresh failed: {error_str}. Please re-authenticate with: python get_gmail_token.py")
-            
-            # Build service with cache_discovery=False to avoid timeout issues
+                        raise Exception(
+                            "Gmail token has expired or been revoked. Re-authenticate: run from project backend/python: python get_gmail_token.py"
+                        )
+                    raise Exception(f"Token refresh failed: {error_str}. Re-run: python get_gmail_token.py")
+
             return build('gmail', 'v1', credentials=creds, cache_discovery=False)
         except Exception as e:
             logger.error(f"Failed to create Gmail service: {str(e)}")
@@ -122,8 +139,12 @@ class EmailService:
                 logger.info(f"   Body: {body}")
                 return f"demo-{int(__import__('time').time())}"
             
-            # Get service with user credentials
-            service = self._get_service(access_token, refresh_token)
+            # Get service with user credentials (client id/secret required for token refresh)
+            service = self._get_service(
+                access_token, refresh_token,
+                google_client_id=google_client_id,
+                google_client_secret=google_client_secret,
+            )
             
             # Create message
             # Normalize recipients: accept single string or list

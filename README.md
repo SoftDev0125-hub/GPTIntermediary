@@ -414,6 +414,7 @@ GPTIntermediary/
 - **QR Code not appearing**: Check if Node.js server is running on port 3000
 - **Session not persisting**: Check `whatsapp_session_node` directory permissions
 - **Messages not loading**: Verify WhatsApp Web is authenticated
+- **Chat list empty / "getChats" error**: The app uses `whatsapp-web.js` from GitHub main (fix for WhatsApp Web changes). Run `npm install`, restart the WhatsApp server, then click **Refresh** in the WhatsApp sidebar. If it still fails, log out and scan the QR code again.
 
 ### Telegram Connection Issues
 - **Authentication failed**: Check `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` in `.env`

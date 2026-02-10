@@ -3,15 +3,15 @@
  * Handles Telegram authentication and operations using GramJS (telegram package)
  */
 
-// Load environment variables from .env file
-require('dotenv').config();
+// Load environment variables from project root .env (GPTIntermediary/.env)
+const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '..', '..', '.env') });
 
 const express = require('express');
 const { TelegramClient } = require('telegram');
 const { StringSession } = require('telegram/sessions');
 const { Api } = require('telegram/tl');
 const { NewMessage, Raw } = require('telegram/events');
-const path = require('path');
 const fs = require('fs');
 const cors = require('cors');
 const http = require('http');

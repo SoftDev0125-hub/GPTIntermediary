@@ -21,10 +21,12 @@ import uuid
 import asyncio
 from datetime import datetime
 import requests
+from pathlib import Path
 from dotenv import load_dotenv
 
-# Load .env file (if present) so NEWSAPI_KEY and other settings are available
-load_dotenv()
+# Load project root .env only (GPTIntermediary/.env)
+_load_env_root = Path(__file__).resolve().parent.parent.parent
+load_dotenv(_load_env_root / '.env')
 
 # Early logging so helper functions can safely log before full app init
 logging.basicConfig(
@@ -55,12 +57,18 @@ def _read_env_key_from_dotenv(key_name):
     return ''
 
 
+def _get_env_file_path():
+    """Return (absolute_path, exists) for the project .env file."""
+    base = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+    env_path = os.path.join(base, '.env')
+    return env_path, os.path.exists(env_path)
+
+
 def _write_env_key_to_dotenv(key_name, value):
     """Write or update a key in the project's .env file (best-effort).
     Returns True on success, False on failure."""
     try:
-        base = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-        env_path = os.path.join(base, '.env')
+        env_path, _ = _get_env_file_path()
         lines = []
         if os.path.exists(env_path):
             with open(env_path, 'r', encoding='utf-8') as f:
@@ -99,7 +107,7 @@ from services.app_launcher import AppLauncher
 from services.whatsapp_service import WhatsAppService
 from services.word_service import WordService
 from services.excel_service import ExcelService
-from services.contact_resolver import resolve_name_to_emails
+from services.contact_resolver import resolve_name_to_emails, email_finder_keys_status
 
 # Database imports
 try:
@@ -975,13 +983,21 @@ async def send_email(
                 logger.info(f"Using per-user Gmail credentials for user {user_id}")
         
         # Fallback to credentials from request body (backward compatibility)
+        if not access_token and request.user_credentials and request.user_credentials.access_token:
+            access_token = request.user_credentials.access_token
+            refresh_token = request.user_credentials.refresh_token
+            logger.info("Using credentials from request body (backward compatibility)")
         if not access_token:
-            if request.user_credentials and request.user_credentials.access_token:
-                access_token = request.user_credentials.access_token
-                refresh_token = request.user_credentials.refresh_token
-                logger.info("Using credentials from request body (backward compatibility)")
-            else:
-                raise HTTPException(status_code=400, detail="No Gmail credentials provided. Please connect your Gmail account first.")
+            access_token = (os.getenv('USER_ACCESS_TOKEN') or '').strip()
+            refresh_token = (os.getenv('USER_REFRESH_TOKEN') or '').strip()
+            if access_token and refresh_token:
+                logger.info("Using Gmail credentials from .env (USER_ACCESS_TOKEN, USER_REFRESH_TOKEN)")
+                if not google_client_id:
+                    google_client_id = (os.getenv('GOOGLE_CLIENT_ID') or '').strip() or None
+                if not google_client_secret:
+                    google_client_secret = (os.getenv('GOOGLE_CLIENT_SECRET') or '').strip() or None
+        if not access_token:
+            raise HTTPException(status_code=400, detail="No Gmail credentials provided. Please connect your Gmail account first or set USER_ACCESS_TOKEN and USER_REFRESH_TOKEN in .env")
 
         # Determine sender email (from user's saved config or from provided credentials)
         sender_email = None
@@ -1331,13 +1347,21 @@ async def get_unread_emails(
                 logger.info(f"Using per-user Gmail credentials for user {user_id}")
         
         # Fallback to credentials from request body (backward compatibility)
+        if not access_token and request.user_credentials and request.user_credentials.access_token:
+            access_token = request.user_credentials.access_token
+            refresh_token = request.user_credentials.refresh_token
+            logger.info("Using credentials from request body (backward compatibility)")
         if not access_token:
-            if request.user_credentials and request.user_credentials.access_token:
-                access_token = request.user_credentials.access_token
-                refresh_token = request.user_credentials.refresh_token
-                logger.info("Using credentials from request body (backward compatibility)")
-            else:
-                raise HTTPException(status_code=400, detail="No Gmail credentials provided. Please connect your Gmail account first.")
+            access_token = (os.getenv('USER_ACCESS_TOKEN') or '').strip()
+            refresh_token = (os.getenv('USER_REFRESH_TOKEN') or '').strip()
+            if access_token and refresh_token:
+                logger.info("Using Gmail credentials from .env (USER_ACCESS_TOKEN, USER_REFRESH_TOKEN)")
+                if not google_client_id:
+                    google_client_id = (os.getenv('GOOGLE_CLIENT_ID') or '').strip() or None
+                if not google_client_secret:
+                    google_client_secret = (os.getenv('GOOGLE_CLIENT_SECRET') or '').strip() or None
+        if not access_token:
+            raise HTTPException(status_code=400, detail="No Gmail credentials provided. Please connect your Gmail account first or set USER_ACCESS_TOKEN and USER_REFRESH_TOKEN in .env")
         
         # Cap limit to prevent slow loading
         actual_limit = min(request.limit, 50)  # Max 50 emails for performance
@@ -1448,13 +1472,21 @@ async def reply_to_email(
                 logger.info(f"Using per-user Gmail credentials for user {user_id}")
         
         # Fallback to credentials from request body (backward compatibility)
+        if not access_token and request.user_credentials and request.user_credentials.access_token:
+            access_token = request.user_credentials.access_token
+            refresh_token = request.user_credentials.refresh_token
+            logger.info("Using credentials from request body (backward compatibility)")
         if not access_token:
-            if request.user_credentials and request.user_credentials.access_token:
-                access_token = request.user_credentials.access_token
-                refresh_token = request.user_credentials.refresh_token
-                logger.info("Using credentials from request body (backward compatibility)")
-            else:
-                raise HTTPException(status_code=400, detail="No Gmail credentials provided. Please connect your Gmail account first.")
+            access_token = (os.getenv('USER_ACCESS_TOKEN') or '').strip()
+            refresh_token = (os.getenv('USER_REFRESH_TOKEN') or '').strip()
+            if access_token and refresh_token:
+                logger.info("Using Gmail credentials from .env (USER_ACCESS_TOKEN, USER_REFRESH_TOKEN)")
+                if not google_client_id:
+                    google_client_id = (os.getenv('GOOGLE_CLIENT_ID') or '').strip() or None
+                if not google_client_secret:
+                    google_client_secret = (os.getenv('GOOGLE_CLIENT_SECRET') or '').strip() or None
+        if not access_token:
+            raise HTTPException(status_code=400, detail="No Gmail credentials provided. Please connect your Gmail account first or set USER_ACCESS_TOKEN and USER_REFRESH_TOKEN in .env")
         
         logger.info(f"Replying to email from {request.sender_email or request.message_id}")
         message_id = await email_service.reply_to_email(
@@ -1516,13 +1548,21 @@ async def mark_email_read(
                 logger.info(f"Using per-user Gmail credentials for user {user_id}")
         
         # Fallback to credentials from request body (backward compatibility)
+        if not access_token and request.user_credentials and request.user_credentials.access_token:
+            access_token = request.user_credentials.access_token
+            refresh_token = request.user_credentials.refresh_token
+            logger.info("Using credentials from request body (backward compatibility)")
         if not access_token:
-            if request.user_credentials and request.user_credentials.access_token:
-                access_token = request.user_credentials.access_token
-                refresh_token = request.user_credentials.refresh_token
-                logger.info("Using credentials from request body (backward compatibility)")
-            else:
-                raise HTTPException(status_code=400, detail="No Gmail credentials provided. Please connect your Gmail account first.")
+            access_token = (os.getenv('USER_ACCESS_TOKEN') or '').strip()
+            refresh_token = (os.getenv('USER_REFRESH_TOKEN') or '').strip()
+            if access_token and refresh_token:
+                logger.info("Using Gmail credentials from .env (USER_ACCESS_TOKEN, USER_REFRESH_TOKEN)")
+                if not google_client_id:
+                    google_client_id = (os.getenv('GOOGLE_CLIENT_ID') or '').strip() or None
+                if not google_client_secret:
+                    google_client_secret = (os.getenv('GOOGLE_CLIENT_SECRET') or '').strip() or None
+        if not access_token:
+            raise HTTPException(status_code=400, detail="No Gmail credentials provided. Please connect your Gmail account first or set USER_ACCESS_TOKEN and USER_REFRESH_TOKEN in .env")
         
         logger.info(f"Marking email {request.message_id} as read")
         await email_service.mark_email_as_read(
@@ -3044,167 +3084,266 @@ class EnvVariablesRequest(BaseModel):
     user_access_token: Optional[str] = None
     user_refresh_token: Optional[str] = None
     user_email: Optional[str] = None
+    bing_search_api_key: Optional[str] = None
+    people_api_key: Optional[str] = None
+
+
+# Keys shown in the Settings tab; all read from and written to .env only
+SETTINGS_ENV_KEYS = [
+    "OPENAI_API_KEY", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET",
+    "USER_EMAIL", "USER_ACCESS_TOKEN", "USER_REFRESH_TOKEN",
+    "TELEGRAM_API_ID", "TELEGRAM_API_HASH", "TELEGRAM_PHONE_NUMBER",
+    "SLACK_USER_TOKEN", "BING_SEARCH_API_KEY", "PEOPLE_API_KEY",
+]
 
 
 @app.get("/api/settings/env")
 async def get_env_variables(
     user_id: int = Depends(get_current_user_id) if AUTH_AVAILABLE and security else None,
-    db: Session = Depends(get_db)
 ):
     """
-    Get current environment variables from database for the authenticated user
-    
-    Returns:
-        Dictionary of environment variable values
+    Get current environment variables from the .env file only (not the database).
+    Used by the Settings tab to display and edit .env values.
     """
-    if not DATABASE_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Database not available")
-    
-    if not user_id:
+    if not user_id and AUTH_AVAILABLE and security:
         raise HTTPException(status_code=401, detail="Authentication required")
-    
-    try:
-        from config_helpers import (
-            get_gmail_config, 
-            get_telegram_config, get_slack_config
-        )
 
-        # Get values: Gmail/Telegram/Slack from DB, OpenAI from .env
-        gmail_config = get_gmail_config(db, user_id)
-        openai_key = _read_env_key_from_dotenv('OPENAI_API_KEY') or os.getenv('OPENAI_API_KEY') or ''
-        telegram_config = get_telegram_config(db, user_id)
-        slack_config = get_slack_config(db, user_id)
-        
-        # Build response dictionary
-        final_vars = {
-            "TELEGRAM_API_ID": telegram_config.get('telegram_api_id') if telegram_config else "",
-            "TELEGRAM_API_HASH": telegram_config.get('telegram_api_hash') if telegram_config else "",
-            "TELEGRAM_PHONE_NUMBER": telegram_config.get('telegram_phone_number') if telegram_config else "",
-            "SLACK_USER_TOKEN": slack_config.get('slack_user_token') if slack_config else "",
-            "GOOGLE_CLIENT_ID": gmail_config.get('google_client_id') if gmail_config else "",
-            "GOOGLE_CLIENT_SECRET": gmail_config.get('google_client_secret') if gmail_config else "",
-            "OPENAI_API_KEY": openai_key if openai_key else "",
-            "USER_ACCESS_TOKEN": gmail_config.get('user_access_token') if gmail_config else "",
-            "USER_REFRESH_TOKEN": gmail_config.get('user_refresh_token') if gmail_config else "",
-            "USER_EMAIL": gmail_config.get('user_email') if gmail_config else ""
-        }
-        
-        logger.info(f"Retrieved settings for user {user_id}")
-        
+    try:
+        env_path, env_exists = _get_env_file_path()
+        # Read every key from .env file only (no database)
+        final_vars = {}
+        for key in SETTINGS_ENV_KEYS:
+            val = _read_env_key_from_dotenv(key)
+            final_vars[key] = (val or "").strip()
+
         return {
             "success": True,
-            "variables": final_vars
+            "variables": final_vars,
+            "env_file_path": env_path,
+            "env_file_exists": env_exists,
         }
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error reading settings from database: {str(e)}")
+        logger.error(f"Error reading settings from .env: {str(e)}")
         import traceback
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Failed to read settings: {str(e)}")
+
+
+# Map request field names (snake_case) to .env key names (UPPER_SNAKE)
+_REQUEST_TO_ENV_KEY = {
+    "openai_api_key": "OPENAI_API_KEY",
+    "google_client_id": "GOOGLE_CLIENT_ID",
+    "google_client_secret": "GOOGLE_CLIENT_SECRET",
+    "user_email": "USER_EMAIL",
+    "user_access_token": "USER_ACCESS_TOKEN",
+    "user_refresh_token": "USER_REFRESH_TOKEN",
+    "telegram_api_id": "TELEGRAM_API_ID",
+    "telegram_api_hash": "TELEGRAM_API_HASH",
+    "telegram_phone_number": "TELEGRAM_PHONE_NUMBER",
+    "slack_user_token": "SLACK_USER_TOKEN",
+    "bing_search_api_key": "BING_SEARCH_API_KEY",
+    "people_api_key": "PEOPLE_API_KEY",
+}
 
 
 @app.post("/api/settings/env")
 async def update_env_variables(
     request: EnvVariablesRequest,
     user_id: int = Depends(get_current_user_id) if AUTH_AVAILABLE and security else None,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db) if DATABASE_AVAILABLE else None,
 ):
     """
-    Update environment variables in database for the authenticated user
-    
-    Args:
-        request: Environment variable values to update
-        user_id: User ID from JWT token
-        db: Database session
-    
-    Returns:
-        Success status
+    Update environment variables in the .env file. All values from the Settings tab
+    are written to the project .env file. Optionally syncs Gmail/Telegram/Slack to DB
+    for backward compatibility with code that reads from the database.
     """
-    if not DATABASE_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Database not available")
-    
-    if not user_id:
+    if not user_id and AUTH_AVAILABLE and security:
         raise HTTPException(status_code=401, detail="Authentication required")
-    
+
     try:
         from config_helpers import (
             update_gmail_config,
-            update_telegram_config, update_slack_config
+            update_telegram_config,
+            update_slack_config,
         )
-        
+
+        # Build flat dict from request (only non-None fields)
+        req_dict = request.model_dump(exclude_none=True)
         success_count = 0
         errors = []
-        
-        # Update Gmail config
-        gmail_updates = {}
-        if request.google_client_id is not None:
-            gmail_updates['google_client_id'] = request.google_client_id.strip() if request.google_client_id else None
-        if request.google_client_secret is not None:
-            gmail_updates['google_client_secret'] = request.google_client_secret.strip() if request.google_client_secret else None
-        if request.user_access_token is not None:
-            gmail_updates['user_access_token'] = request.user_access_token.strip() if request.user_access_token else None
-        if request.user_refresh_token is not None:
-            gmail_updates['user_refresh_token'] = request.user_refresh_token.strip() if request.user_refresh_token else None
-        if request.user_email is not None:
-            gmail_updates['user_email'] = request.user_email.strip() if request.user_email else None
-        
-        if gmail_updates:
-            if update_gmail_config(db, user_id, **gmail_updates):
+
+        # 1) Write every provided key to .env file
+        for req_key, env_key in _REQUEST_TO_ENV_KEY.items():
+            if req_key not in req_dict:
+                continue
+            raw = req_dict[req_key]
+            value = (raw.strip() if raw else "")
+            if _write_env_key_to_dotenv(env_key, value):
                 success_count += 1
             else:
-                errors.append("Failed to update Gmail config")
-        
-        # Update OpenAI API key: persist to .env instead of per-user DB record
-        if request.openai_api_key is not None:
-            api_key = request.openai_api_key.strip() if request.openai_api_key else ""
-            written = _write_env_key_to_dotenv('OPENAI_API_KEY', api_key)
-            if written:
-                success_count += 1
-            else:
-                errors.append("Failed to write OPENAI_API_KEY to .env")
-        
-        # Update Telegram config
-        telegram_updates = {}
-        if request.telegram_api_id is not None:
-            telegram_updates['telegram_api_id'] = request.telegram_api_id.strip() if request.telegram_api_id else None
-        if request.telegram_api_hash is not None:
-            telegram_updates['telegram_api_hash'] = request.telegram_api_hash.strip() if request.telegram_api_hash else None
-        if request.telegram_phone_number is not None:
-            telegram_updates['telegram_phone_number'] = request.telegram_phone_number.strip() if request.telegram_phone_number else None
-        
-        if telegram_updates:
-            if update_telegram_config(db, user_id, **telegram_updates):
-                success_count += 1
-            else:
-                errors.append("Failed to update Telegram config")
-        
-        # Update Slack config
-        if request.slack_user_token is not None:
-            slack_token = request.slack_user_token.strip() if request.slack_user_token else ""
-            if update_slack_config(db, user_id, slack_token):
-                success_count += 1
-            else:
-                errors.append("Failed to update Slack config")
-        
+                errors.append(f"Failed to write {env_key} to .env")
+
+        # 2) Optionally sync to DB for Gmail/Telegram/Slack so existing code paths still work
+        if DATABASE_AVAILABLE and db is not None and user_id is not None:
+            gmail_updates = {}
+            if "google_client_id" in req_dict:
+                gmail_updates["google_client_id"] = (req_dict["google_client_id"] or "").strip() or None
+            if "google_client_secret" in req_dict:
+                gmail_updates["google_client_secret"] = (req_dict["google_client_secret"] or "").strip() or None
+            if "user_access_token" in req_dict:
+                gmail_updates["user_access_token"] = (req_dict["user_access_token"] or "").strip() or None
+            if "user_refresh_token" in req_dict:
+                gmail_updates["user_refresh_token"] = (req_dict["user_refresh_token"] or "").strip() or None
+            if "user_email" in req_dict:
+                gmail_updates["user_email"] = (req_dict["user_email"] or "").strip() or None
+            if gmail_updates and not update_gmail_config(db, user_id, **gmail_updates):
+                errors.append("Failed to sync Gmail config to database")
+
+            telegram_updates = {}
+            if "telegram_api_id" in req_dict:
+                telegram_updates["telegram_api_id"] = (req_dict["telegram_api_id"] or "").strip() or None
+            if "telegram_api_hash" in req_dict:
+                telegram_updates["telegram_api_hash"] = (req_dict["telegram_api_hash"] or "").strip() or None
+            if "telegram_phone_number" in req_dict:
+                telegram_updates["telegram_phone_number"] = (req_dict["telegram_phone_number"] or "").strip() or None
+            if telegram_updates and not update_telegram_config(db, user_id, **telegram_updates):
+                errors.append("Failed to sync Telegram config to database")
+
+            if "slack_user_token" in req_dict:
+                slack_token = (req_dict["slack_user_token"] or "").strip()
+                if not update_slack_config(db, user_id, slack_token):
+                    errors.append("Failed to sync Slack config to database")
+
         if errors:
-            logger.warning(f"Some updates failed for user {user_id}: {errors}")
-        
-        logger.info(f"Updated settings for user {user_id}")
-        
+            logger.warning(f"Some settings updates failed: {errors}")
+
         return {
             "success": True,
-            "message": "Settings updated successfully",
+            "message": "Settings saved to .env file.",
             "updated_sections": success_count,
-            "errors": errors if errors else None
+            "errors": errors if errors else None,
         }
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error updating settings in database: {str(e)}")
+        logger.error(f"Error updating settings: {str(e)}")
         import traceback
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Failed to update settings: {str(e)}")
+
+
+# ==================== FIND EMAIL BY NAME (CONTACTS + BING/PEOPLE API) ====================
+
+class FindEmailRequest(BaseModel):
+    """Request body for find-email endpoint"""
+    name: str
+
+
+@app.post("/api/contacts/find-email")
+async def find_email_by_name(
+    request: FindEmailRequest,
+    user_id: Optional[int] = Depends(get_current_user_id_optional) if AUTH_AVAILABLE else None,
+    db: Session = Depends(get_db) if DATABASE_AVAILABLE else None,
+):
+    """
+    Find a person's email address by name. Checks the contacts database first;
+    if not found, uses Bing Search API and/or People API (when keys are in .env).
+    Saves newly found emails to the contacts table.
+    """
+    name = (request.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Please provide a name to look up.")
+
+    # 1) Check database for existing contact
+    if DATABASE_AVAILABLE and db is not None:
+        try:
+            matches = db.query(Contact).filter(Contact.name.ilike(f"%{name}%")).all()
+            if matches:
+                c = matches[0]
+                return {
+                    "success": True,
+                    "email": c.email,
+                    "name": c.name,
+                    "source": "database",
+                    "message": f"Found in contacts: {c.email}",
+                }
+            # Broader match (tokenized name)
+            all_contacts = db.query(Contact).all()
+            q = name.lower()
+            for c in all_contacts:
+                n = (c.name or "").lower()
+                if q in n or q in (c.email or "").lower():
+                    return {
+                        "success": True,
+                        "email": c.email,
+                        "name": c.name,
+                        "source": "database",
+                        "message": f"Found in contacts: {c.email}",
+                    }
+        except Exception as e:
+            logger.warning(f"Contact lookup failed: {e}")
+
+    # 2) No DB match – check if API keys are configured
+    status = email_finder_keys_status()
+    if not status.get("any_configured"):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Email finder APIs are not configured. These are paid services. "
+                "To find email addresses by name when they are not in your contacts, add at least one of these keys to the .env file or the Settings tab:\n\n"
+                "• BING_SEARCH_API_KEY – Bing Web Search API (Azure). Get a key at https://www.microsoft.com/en-us/bing/apis/bing-web-search-api\n"
+                "• PEOPLE_API_KEY – e.g. Hunter.io Email Finder. Get a key at https://hunter.io/api\n\n"
+                "After adding a key, restart the app and try again."
+            ),
+        )
+
+    # 3) Call resolver
+    try:
+        candidates = resolve_name_to_emails(name, max_results=5)
+    except Exception as e:
+        logger.error(f"Resolver error for '{name}': {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Could not search for this person's email. Please try again later. Error: {str(e)}",
+        )
+
+    if not candidates:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"No email address could be found for \"{name}\". "
+                "Possible reasons: the person's email is not publicly available, search results did not contain a valid address, "
+                "or the name is too generic. Try adding more context (e.g. company name) or add the contact manually in Settings."
+            ),
+        )
+
+    best = candidates[0]
+    email = (best.get("email") or "").strip()
+    if not email or "@" not in email:
+        raise HTTPException(status_code=404, detail=f"No valid email found for \"{name}\".")
+
+    # 4) Save to contacts for future lookups
+    if DATABASE_AVAILABLE and db is not None:
+        try:
+            existing = db.query(Contact).filter(Contact.email.ilike(email)).first()
+            if not existing:
+                new_contact = Contact(name=name, email=email, user_id=user_id)
+                db.add(new_contact)
+                db.commit()
+                logger.info(f"Saved new contact: {name} -> {email}")
+        except Exception as e:
+            logger.warning(f"Could not save contact: {e}")
+            db.rollback()
+
+    return {
+        "success": True,
+        "email": email,
+        "name": name,
+        "source": "api",
+        "message": f"Found via search and saved to contacts: {email}",
+    }
 
 
 @app.post("/api/settings/gmail-token")

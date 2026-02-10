@@ -12,10 +12,12 @@ import requests
 import json
 import random
 import logging
+from pathlib import Path
 from dotenv import load_dotenv
- 
 
-load_dotenv()
+# Load project root .env only (GPTIntermediary/.env)
+_load_env_root = Path(__file__).resolve().parent.parent.parent
+load_dotenv(_load_env_root / '.env')
 
 # Robust env loader (fallback) to handle .env formatting variations
 def _read_env_key_from_dotenv(key_name):

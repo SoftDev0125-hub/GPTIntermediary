@@ -7,9 +7,12 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from typing import Optional
 import logging
+from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv()
+# Load project root .env only (GPTIntermediary/.env)
+_load_env_root = Path(__file__).resolve().parent.parent.parent
+load_dotenv(_load_env_root / '.env')
 logger = logging.getLogger(__name__)
 
 

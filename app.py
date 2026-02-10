@@ -5,6 +5,15 @@ import signal
 import atexit
 import subprocess
 import threading
+from pathlib import Path
+
+# Load project root .env so spawned processes inherit env vars
+try:
+    from dotenv import load_dotenv
+    _app_root = Path(__file__).resolve().parent
+    load_dotenv(_app_root / '.env')
+except Exception:
+    pass
 
 # Try to import psutil for better process management
 try:
@@ -310,18 +319,20 @@ def start_servers():
                         cwd=os.path.dirname(os.path.abspath(__file__)),
                         creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
                     )
-                    time.sleep(3)  # Wait for WhatsApp server to start
-                    if whatsapp_node_process.poll() is not None:
-                        print("[!] WhatsApp Node.js server failed to start!")
-                        try:
-                            log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logs')
-                            print(f"[!] Check logs/whatsapp_server.log for details: {os.path.join(log_dir, 'whatsapp_server.log')}")
-                        except Exception:
-                            pass
-                        whatsapp_node_process = None
-                    else:
-                        # Verify server is actually listening
-                        import socket
+                    # Wait for WhatsApp server to bind to port (Node + whatsapp-web.js require can be slow)
+                    import socket
+                    whatsapp_ready = False
+                    for attempt in range(12):  # up to 12 seconds
+                        time.sleep(1)
+                        if whatsapp_node_process.poll() is not None:
+                            print("[!] WhatsApp Node.js server process exited!")
+                            try:
+                                log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logs')
+                                print(f"[!] Check logs/whatsapp_server.log for details: {os.path.join(log_dir, 'whatsapp_server.log')}")
+                            except Exception:
+                                pass
+                            whatsapp_node_process = None
+                            break
                         try:
                             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                             sock.settimeout(1)
@@ -329,10 +340,14 @@ def start_servers():
                             sock.close()
                             if result == 0:
                                 print("[OK] WhatsApp Node.js server started on http://localhost:3000")
-                            else:
-                                print("[!] WhatsApp server process started but not listening on port 3000")
-                        except Exception as e:
-                            print(f"[!] Could not verify WhatsApp server: {e}")
+                                whatsapp_ready = True
+                                break
+                        except Exception:
+                            pass
+                        if (attempt + 1) % 3 == 0:
+                            print(f"[*] Waiting for WhatsApp server to listen on port 3000... ({attempt + 1}s)")
+                    if not whatsapp_ready and whatsapp_node_process is not None and whatsapp_node_process.poll() is None:
+                        print("[!] WhatsApp server process started but not listening on port 3000 yet (may still be loading). Check logs/whatsapp_server.log")
             except Exception as e:
                 print(f"[!] Error starting WhatsApp Node.js server: {e}")
                 whatsapp_node_process = None

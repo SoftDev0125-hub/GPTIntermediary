@@ -3,12 +3,13 @@
  * Handles Slack authentication and operations using Slack Web API (slack-sdk)
  */
 
-require('dotenv').config();
+// Load project root .env (GPTIntermediary/.env)
+const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '..', '..', '.env') });
 
 const express = require('express');
 const { WebClient } = require('@slack/web-api');
 const { SocketModeClient } = require('@slack/socket-mode');
-const path = require('path');
 const fs = require('fs');
 const cors = require('cors');
 const http = require('http');

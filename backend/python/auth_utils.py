@@ -6,10 +6,12 @@ from datetime import datetime, timedelta
 from typing import Optional
 import bcrypt
 from jose import JWTError, jwt
+from pathlib import Path
 from dotenv import load_dotenv
 
-# Load environment variables
-load_dotenv()
+# Load project root .env only (GPTIntermediary/.env)
+_load_env_root = Path(__file__).resolve().parent.parent.parent
+load_dotenv(_load_env_root / '.env')
 
 # JWT settings
 SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-this-in-production-please-use-a-secure-random-string")

@@ -18,7 +18,13 @@ EMAIL_RE = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
 
 CLEARBIT_KEY = os.getenv('CLEARBIT_KEY') or os.getenv('CLEARBIT_API_KEY')
 HUNTER_KEY = os.getenv('HUNTER_KEY') or os.getenv('HUNTER_API_KEY')
-BING_KEY = os.getenv('BING_SEARCH_KEY') or os.getenv('BING_API_KEY')
+# Primary key names for Settings / .env: BING_SEARCH_API_KEY, PEOPLE_API_KEY
+BING_KEY = (
+    os.getenv('BING_SEARCH_API_KEY')
+    or os.getenv('BING_SEARCH_KEY')
+    or os.getenv('BING_API_KEY')
+)
+PEOPLE_API_KEY = os.getenv('PEOPLE_API_KEY') or HUNTER_KEY
 
 
 def _uniq_emails(emails: List[str]) -> List[str]:
@@ -88,6 +94,39 @@ def resolve_with_bing(query: str, max_results: int = 5) -> List[Dict]:
         return []
 
 
+def resolve_with_people_api(name: str, company: Optional[str] = None, domain: Optional[str] = None) -> List[Dict]:
+    """Use People/Email Finder API (e.g. Hunter.io) when key is present. Needs first name, last name, optional domain."""
+    if not PEOPLE_API_KEY:
+        return []
+    try:
+        parts = name.strip().split(None, 1)
+        first_name = (parts[0] or '').strip()
+        last_name = (parts[1] or '').strip() if len(parts) > 1 else ''
+        if not first_name:
+            return []
+        # Hunter.io Email Finder: domain + first_name + last_name
+        if domain or company:
+            dom = (domain or '').strip() or (company or '').strip().lower().replace(' ', '')
+            if not dom or '.' not in dom:
+                return []
+            url = 'https://api.hunter.io/v2/email-finder'
+            params = {
+                'domain': dom,
+                'first_name': first_name,
+                'last_name': last_name,
+                'api_key': PEOPLE_API_KEY,
+            }
+            r = requests.get(url, params=params, timeout=8)
+            data = r.json() if r.ok else {}
+            if data.get('data', {}).get('email'):
+                e = data['data']['email']
+                return [{'email': e, 'source': 'hunter.io', 'confidence': 0.85}]
+        return []
+    except Exception as e:
+        logger.warning(f"People API resolver error: {e}")
+        return []
+
+
 def resolve_with_clearbit(name: str, company: Optional[str] = None) -> List[Dict]:
     """Attempt to use Clearbit (Prospector/Person) if key present. This is a lightweight attempt and may not be available.
     Implementation uses Clearbit's Person API when an email is known; otherwise this is a placeholder for integration.
@@ -122,8 +161,14 @@ def resolve_name_to_emails(query: str, company: Optional[str] = None, max_result
     except Exception:
         pass
 
-    # 2) Hunter (domain-based) - not implemented here unless HUNTER_KEY is set and domain known
-    # 3) Bing Web Search fallback
+    # 2) People API (Hunter.io etc.) when domain/company known
+    try:
+        people = resolve_with_people_api(q, company=company)
+        candidates.extend(people)
+    except Exception:
+        pass
+
+    # 3) Bing Web Search
     try:
         bing = resolve_with_bing(q, max_results=max_results)
         candidates.extend(bing)
@@ -152,6 +197,25 @@ def resolve_name_to_emails(query: str, company: Optional[str] = None, max_result
     return out_sorted
 
 
+def email_finder_keys_status() -> dict:
+    """Return status of API keys for email finder and user-facing instructions if missing."""
+    bing = bool(BING_KEY)
+    people = bool(PEOPLE_API_KEY)
+    configured = bing or people
+    instructions = (
+        "Email finder uses paid APIs. To enable:\n\n"
+        "1. **Bing Web Search API** (finds emails via web search):\n"
+        "   • Go to https://www.microsoft.com/en-us/bing/apis/bing-web-search-api\n"
+        "   • Create a resource in Azure Portal, get your subscription key.\n"
+        "   • Add BING_SEARCH_API_KEY=your_key to the .env file or Settings tab.\n\n"
+        "2. **People/Email Finder API** (e.g. Hunter.io for professional emails):\n"
+        "   • Go to https://hunter.io/api (or your provider)\n"
+        "   • Sign up and get an API key.\n"
+        "   • Add PEOPLE_API_KEY=your_key to the .env file or Settings tab.\n\n"
+        "At least one key is required to find email addresses by name when they are not in your contacts."
+    )
+    return {"bing_configured": bing, "people_configured": people, "any_configured": configured, "instructions": instructions}
+
+
 if __name__ == '__main__':
     print('Contact resolver module loaded')
-#*** End Patch

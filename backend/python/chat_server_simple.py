@@ -45,8 +45,10 @@ except ImportError as e:
     Base = None
     engine = None
 
-# Load environment variables early so os.getenv() finds .env values
-load_dotenv()
+# Load project root .env only (GPTIntermediary/.env)
+from pathlib import Path
+_load_env_root = Path(__file__).resolve().parent.parent.parent
+load_dotenv(_load_env_root / '.env')
 
 # Robust env loader: handle cases where .env has spaces around '=' or nonstandard formatting
 def _read_env_key_from_dotenv(key_name):
@@ -289,41 +291,60 @@ def parse_command(message):
     message_lower = message.lower()
     
     # CHECK EMAIL PATTERNS FIRST (before app launching)
-    # Email sending patterns - enhanced to handle various formats
+    # Email sending patterns - enhanced to handle various formats (email or name as recipient)
     send_patterns = [
-        # "send "message" to email@example.com"
-        r"send\s+['\"](.+?)['\"]\s+to\s+([\w\.-]+@[\w\.-]+)",
-        # "email "message" to email@example.com"
-        r"email\s+['\"](.+?)['\"]\s+to\s+([\w\.-]+@[\w\.-]+)",
+        # "send "message" to email@example.com" or "send "message" to John Doe"
+        (r"send\s+['\"](.+?)['\"]\s+to\s+(.+?)(?:\?|\.|$)", True),
+        # "email "message" to email@example.com" or name
+        (r"email\s+['\"](.+?)['\"]\s+to\s+(.+?)(?:\?|\.|$)", True),
         # "send email to email@example.com "message""
-        r"send\s+email\s+to\s+([\w\.-]+@[\w\.-]+).*?['\"](.+?)['\"]",
+        (r"send\s+email\s+to\s+([\w\.-]+@[\w\.-]+).*?['\"](.+?)['\"]", False),
         # "send to email@example.com: message" or "send to email "message""
-        r"send\s+to\s+([\w\.-]+@[\w\.-]+)[:\s]+['\"]?(.+?)['\"]?$",
+        (r"send\s+to\s+([\w\.-]+@[\w\.-]+)[:\s]+['\"]?(.+?)['\"]?$", False),
         # Simple: message to email (without send keyword)
-        r"['\"](.+?)['\"]\s+to\s+([\w\.-]+@[\w\.-]+)\s*$",
+        (r"['\"](.+?)['\"]\s+to\s+([\w\.-]+@[\w\.-]+)\s*$", False),
     ]
     
-    for pattern in send_patterns:
+    for item in send_patterns:
+        pattern, allow_name = item[0], item[1] if len(item) > 1 else False
         match = re.search(pattern, message, re.IGNORECASE)
         if match:
             groups = match.groups()
             if len(groups) >= 2:
-                # Extract message and email (order depends on pattern)
                 if '@' in groups[0]:
-                    email = groups[0]
+                    email_or_name = groups[0]
                     msg = groups[1] if len(groups) > 1 else "Message"
                 else:
                     msg = groups[0]
-                    email = groups[1]
-                logger.info(f"Email detected: to={email}, msg={msg}")
+                    email_or_name = groups[1].strip().strip('"\'.')
+                if not email_or_name:
+                    continue
+                # If pattern doesn't allow name, require @ in recipient
+                if not allow_name and '@' not in email_or_name:
+                    continue
+                logger.info(f"Email send detected: to={email_or_name}, msg={msg}")
                 return {
                     'action': 'send_email',
-                    'to': email,
+                    'to': email_or_name,
                     'subject': msg,
                     'body': msg,
                     'needs_oauth': False
                 }
     
+    # Find email of a person: "find the email address of X", "find email of X", "what is X's email"
+    find_email_patterns = [
+        r"find\s+(?:the\s+)?email\s+(?:address\s+)?(?:of\s+)?(.+?)(?:\?|\.|$)",
+        r"what\s+is\s+(.+?)'s\s+email",
+        r"get\s+(?:the\s+)?email\s+(?:of\s+)?(.+?)(?:\?|\.|$)",
+        r"look\s+up\s+(?:the\s+)?email\s+(?:for\s+)?(.+?)(?:\?|\.|$)",
+    ]
+    for pat in find_email_patterns:
+        m = re.search(pat, message, re.IGNORECASE)
+        if m:
+            name = m.group(1).strip().strip('"\'.')
+            if name and len(name) > 1:
+                return {'action': 'find_email', 'name': name}
+
     # Check for generic email patterns
     if 'unread' in message_lower and 'email' in message_lower:
         return {'action': 'get_emails'}
@@ -397,6 +418,45 @@ def execute_action(action_data):
                 'error': True
             }
     
+    elif action == 'find_email':
+        name = action_data.get('name', '').strip()
+        if not name:
+            return {'response': 'Please specify a name to look up (e.g. "find the email address of John Doe").', 'function_called': None}
+        try:
+            response = requests.post(
+                f"{BACKEND_URL}/api/contacts/find-email",
+                json={"name": name},
+                timeout=15
+            )
+            data = response.json() if response.ok else {}
+            if response.status_code == 200 and data.get('success'):
+                return {
+                    'response': f"📧 {data.get('message', '')} — **{data.get('name', name)}**: {data.get('email', '')}",
+                    'function_called': 'find_email'
+                }
+            if response.status_code == 400:
+                return {
+                    'response': "🔍 " + (data.get('detail', 'Email finder is not configured.') if isinstance(data.get('detail'), str) else str(data.get('detail', ''))),
+                    'function_called': None,
+                    'error': True
+                }
+            if response.status_code == 404:
+                return {
+                    'response': "🔍 " + (data.get('detail', f'No email found for "{name}".') if isinstance(data.get('detail'), str) else f'No email found for "{name}".'),
+                    'function_called': None
+                }
+            return {
+                'response': "🔍 " + (data.get('detail', 'Could not find email. Please try again.') if isinstance(data.get('detail'), str) else 'Could not find email.'),
+                'function_called': None,
+                'error': True
+            }
+        except Exception as e:
+            return {
+                'response': f"🔍 Error looking up email: {str(e)}. Is the backend running on {BACKEND_URL}?",
+                'function_called': None,
+                'error': True
+            }
+
     elif action == 'get_emails':
         try:
             response = requests.post(
@@ -473,29 +533,22 @@ def execute_action(action_data):
             }
     
     elif action == 'send_email':
-        # Skip OAuth requirement if parsed successfully with email
         if action_data.get('needs_oauth') and not action_data.get('to'):
             return {
-                'response': "📧 To send an email, please use format: send \"message\" to email@example.com",
+                'response': "📧 To send an email, use: send \"message\" to email@example.com or send \"message\" to Contact Name",
                 'function_called': None
             }
         
         try:
-            to_field = action_data.get('to')
-            # Name-based resolution disabled: require explicit email addresses
-            resolved_emails = []
-            if not to_field or '@' not in str(to_field):
-                return {
-                    'response': '📧 Recipient must be an explicit email address (e.g. user@example.com). Name-based lookups are disabled.',
-                    'function_called': None,
-                    'error': True
-                }
+            to_field = (action_data.get('to') or '').strip()
+            if not to_field:
+                return {'response': '📧 No recipient specified.', 'function_called': None, 'error': True}
 
-            # If we resolved multiple emails, send to each and summarize
             subject = action_data.get('subject', 'Message')
             body = action_data.get('body', action_data.get('subject', 'Message'))
 
-            targets = resolved_emails if resolved_emails else ([to_field] if to_field else [])
+            # Backend accepts either email or name; it will check DB then use Bing/People API if needed
+            targets = [to_field]
             if not targets:
                 return {
                     'response': '📧 No recipient specified.',

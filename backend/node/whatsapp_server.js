@@ -21,7 +21,8 @@ const io = new Server(server, {
     }
 });
 
-const PORT = process.env.WHATSAPP_PORT || process.env.PORT || 3000;
+// Use WHATSAPP_PORT only; do not use process.env.PORT (often 8000 for the Python backend)
+const PORT = process.env.WHATSAPP_PORT ? parseInt(process.env.WHATSAPP_PORT, 10) : 3000;
 
 // Middleware
 app.use(cors());
@@ -32,6 +33,14 @@ let client = null;
 let qrCodeData = null;
 let isAuthenticated = false;
 let isReady = false;
+// Time when we last became authenticated (used to avoid clearing client before LocalAuth writes session to disk)
+let lastAuthenticatedAt = 0;
+// Time when client became ready (used for warmup delay before getChats/getChatById)
+let readyAt = 0;
+// Timeout for fallback when 'ready' never fires (whatsapp-web.js known issue)
+let readyFallbackTimeout = null;
+// Warmup delay: wait this many ms after 'ready' before allowing getChats/getChatById (WhatsApp Web needs time to initialize)
+const CHATS_WARMUP_MS = 15000;
 // Cache messages so media can be fetched later even when whatsapp-web.js can't resolve by id (common for older messages)
 const messageCacheById = new Map(); // messageId -> Message
 
@@ -74,7 +83,11 @@ function cacheWhatsAppMessage(msg) {
 // Keep session data at the project root so moving this file doesn't break existing sessions.
 const PROJECT_ROOT = path.join(__dirname, '..', '..');
 const SESSION_DIR = path.join(PROJECT_ROOT, 'whatsapp_session_node');
+// LocalAuth with dataPath: SESSION_DIR stores Puppeteer profile in SESSION_DIR/session (not .wwebjs_auth)
+const SESSION_DATA_PATH = path.join(SESSION_DIR, 'session');
 const AVATAR_DIR = path.join(SESSION_DIR, 'avatars');
+// Flag file: written only after successful auth so we can tell "has stored login" from "session dir exists"
+const AUTH_FLAG_FILE = path.join(SESSION_DIR, '.authenticated');
 
 // Ensure session directory exists
 if (!fs.existsSync(SESSION_DIR)) {
@@ -82,6 +95,57 @@ if (!fs.existsSync(SESSION_DIR)) {
 }
 if (!fs.existsSync(AVATAR_DIR)) {
     fs.mkdirSync(AVATAR_DIR, { recursive: true });
+}
+
+/**
+ * True if we have persisted authentication (user has logged in before); false if QR is needed.
+ * Uses a flag file written on authenticated/ready; the session dir alone is not enough (it's created on first init).
+ */
+function hasAuthenticatedSession() {
+    return fs.existsSync(AUTH_FLAG_FILE);
+}
+
+/** Remove the auth flag (e.g. on auth_failure or LOGOUT) so we show QR next time. */
+function clearAuthFlag() {
+    try {
+        if (fs.existsSync(AUTH_FLAG_FILE)) {
+            fs.unlinkSync(AUTH_FLAG_FILE);
+        }
+    } catch (e) {
+        console.error('[WhatsApp] Could not clear auth flag:', e);
+    }
+}
+
+/**
+ * Check if session folder was deleted while we think we're connected, and reset if so
+ * Returns true if client state was reset, false otherwise
+ */
+async function checkAndResetIfSessionDeleted() {
+    const sessionDataDirExists = fs.existsSync(SESSION_DATA_PATH);
+    const authGraceMs = 20000;
+    const withinGracePeriod = lastAuthenticatedAt && (Date.now() - lastAuthenticatedAt < authGraceMs);
+    
+    if (isAuthenticated && isReady && client && !sessionDataDirExists && !withinGracePeriod) {
+        console.log('[WhatsApp] Session folder deleted while connected - resetting client state');
+        try {
+            await client.destroy();
+        } catch (err) {
+            console.error('[WhatsApp] Error destroying client:', err);
+        }
+        client = null;
+        isAuthenticated = false;
+        isReady = false;
+        lastAuthenticatedAt = 0;
+        readyAt = 0;
+        qrCodeData = null;
+        clearAuthFlag();
+        if (readyFallbackTimeout) {
+            clearTimeout(readyFallbackTimeout);
+            readyFallbackTimeout = null;
+        }
+        return true;
+    }
+    return false;
 }
 
 /**
@@ -95,17 +159,22 @@ function initializeWhatsApp() {
 
     console.log('[WhatsApp] Initializing WhatsApp client...');
 
-    // Check if session exists
-    const sessionPath = path.join(SESSION_DIR, '.wwebjs_auth');
-    const hasSession = fs.existsSync(sessionPath);
+    // Ensure session directory exists (e.g. after user deleted whatsapp_session_node)
+    if (!fs.existsSync(SESSION_DIR)) {
+        fs.mkdirSync(SESSION_DIR, { recursive: true });
+    }
+    if (!fs.existsSync(AVATAR_DIR)) {
+        fs.mkdirSync(AVATAR_DIR, { recursive: true });
+    }
 
-    if (hasSession) {
+    if (hasAuthenticatedSession()) {
         console.log('[WhatsApp] Existing session found - will auto-connect');
     } else {
         console.log('[WhatsApp] No session found - QR code authentication required');
     }
 
     // Create client with LocalAuth for session persistence
+    // webVersionCache: { type: 'none' } = use latest compatible WhatsApp Web (avoids "Cannot read 'default'" after scan)
     client = new Client({
         authStrategy: new LocalAuth({
             dataPath: SESSION_DIR
@@ -121,6 +190,9 @@ function initializeWhatsApp() {
                 '--no-zygote',
                 '--disable-gpu'
             ]
+        },
+        webVersionCache: {
+            type: 'none'
         }
     });
 
@@ -128,8 +200,19 @@ function initializeWhatsApp() {
     client.on('qr', async (qr) => {
         console.log('[WhatsApp] QR code received');
         try {
-            // Generate QR code as base64 data URL
-            qrCodeData = await qrcode.toDataURL(qr);
+            // Ensure payload is a single string (whatsapp-web.js may pass string or array in some versions)
+            const qrPayload = Array.isArray(qr) ? qr.join('') : String(qr || '');
+            if (!qrPayload) {
+                qrCodeData = null;
+                return;
+            }
+            // Generate QR as data URL with options for reliable scanning (size, margin, error correction)
+            qrCodeData = await qrcode.toDataURL(qrPayload, {
+                width: 320,
+                margin: 2,
+                errorCorrectionLevel: 'M',
+                type: 'image/png'
+            });
             console.log('[WhatsApp] QR code generated successfully');
         } catch (err) {
             console.error('[WhatsApp] Error generating QR code:', err);
@@ -139,15 +222,27 @@ function initializeWhatsApp() {
 
     // Ready event - fired when client is ready to use
     client.on('ready', () => {
+        if (readyFallbackTimeout) {
+            clearTimeout(readyFallbackTimeout);
+            readyFallbackTimeout = null;
+        }
         console.log('[WhatsApp] Client is ready!');
         isAuthenticated = true;
         isReady = true;
+        lastAuthenticatedAt = Date.now();
+        readyAt = Date.now();
         qrCodeData = null; // Clear QR code when authenticated
+        try {
+            fs.writeFileSync(AUTH_FLAG_FILE, String(Date.now()), 'utf8');
+        } catch (e) {
+            console.error('[WhatsApp] Could not write auth flag:', e);
+        }
         
         // Emit ready event to all connected clients
         io.emit('whatsapp_status', {
             is_connected: true,
             is_authenticated: true,
+            is_ready: true,
             message: 'Connected to WhatsApp'
         });
     });
@@ -303,13 +398,37 @@ function initializeWhatsApp() {
     client.on('authenticated', () => {
         console.log('[WhatsApp] Authentication successful!');
         isAuthenticated = true;
+        lastAuthenticatedAt = Date.now();
+        try {
+            fs.writeFileSync(AUTH_FLAG_FILE, String(Date.now()), 'utf8');
+        } catch (e) {
+            console.error('[WhatsApp] Could not write auth flag:', e);
+        }
         // Emit status update when authenticated (even if not ready yet)
         io.emit('whatsapp_status', {
-            is_connected: true,  // Authenticated means connected
+            // Authenticated does not guarantee chats API is ready yet; wait for `ready`
+            is_connected: false,
             is_authenticated: true,
+            is_ready: false,
             has_session: true,
             message: 'Connected to WhatsApp (initializing...)'
         });
+        // Fallback: whatsapp-web.js sometimes never fires 'ready'. After 3s, treat as ready so chats/messages work.
+        if (readyFallbackTimeout) clearTimeout(readyFallbackTimeout);
+        readyFallbackTimeout = setTimeout(() => {
+            readyFallbackTimeout = null;
+            if (client && isAuthenticated && !isReady) {
+                console.log('[WhatsApp] Using authenticated fallback (ready event did not fire)');
+                isReady = true;
+                readyAt = Date.now();
+                io.emit('whatsapp_status', {
+                    is_connected: true,
+                    is_authenticated: true,
+                    is_ready: true,
+                    message: 'Connected to WhatsApp'
+                });
+            }
+        }, 3000);
     });
 
     // Authentication failure event
@@ -317,7 +436,10 @@ function initializeWhatsApp() {
         console.error('[WhatsApp] Authentication failure:', msg);
         isAuthenticated = false;
         isReady = false;
+        lastAuthenticatedAt = 0;
+        readyAt = 0;
         qrCodeData = null;
+        clearAuthFlag();
     });
 
     // Disconnected event
@@ -325,7 +447,12 @@ function initializeWhatsApp() {
         console.log('[WhatsApp] Client disconnected:', reason);
         isAuthenticated = false;
         isReady = false;
+        lastAuthenticatedAt = 0;
+        readyAt = 0;
         qrCodeData = null;
+        if (reason === 'LOGOUT') {
+            clearAuthFlag();
+        }
         
         // If session was deleted, reinitialize
         if (reason === 'LOGOUT') {
@@ -341,24 +468,25 @@ function initializeWhatsApp() {
     });
 }
 
-// Initialize WhatsApp on server start
-initializeWhatsApp();
-
 /**
  * GET /api/whatsapp/qr-code
  * Get QR code for authentication
  * Only returns QR code if there is no existing session (unless force_refresh is true)
  */
 app.get('/api/whatsapp/qr-code', async (req, res) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate'); // QR codes expire; never use cached
     try {
         const forceRefresh = req.query.force_refresh === 'true';
         
-        // Check if session exists
-        const sessionPath = path.join(SESSION_DIR, '.wwebjs_auth');
-        const hasSession = fs.existsSync(sessionPath);
+        // Check if session folder was deleted and reset if needed (unless forcing refresh)
+        if (!forceRefresh) {
+            await checkAndResetIfSessionDeleted();
+        }
         
-        // If already authenticated, return success (no QR code needed)
-        if (isAuthenticated && isReady) {
+        const hasSession = hasAuthenticatedSession();
+
+        // If already authenticated and we have stored session, return (no QR needed)
+        if (isAuthenticated && isReady && hasSession && !forceRefresh) {
             return res.json({
                 success: true,
                 is_authenticated: true,
@@ -367,9 +495,8 @@ app.get('/api/whatsapp/qr-code', async (req, res) => {
             });
         }
 
-        // If session exists and we're not forcing refresh, don't show QR code
-        // The session is being restored, so we should wait for authentication
-        if (hasSession && !forceRefresh) {
+        // If we have stored auth, client is running, and we're not forcing refresh, don't show QR (client is restoring)
+        if (hasSession && client && !forceRefresh) {
             console.log('[WhatsApp] Session exists - not generating QR code. Wait for session restoration.');
             return res.json({
                 success: false,
@@ -379,38 +506,50 @@ app.get('/api/whatsapp/qr-code', async (req, res) => {
             });
         }
 
-        // If session exists but force refresh is requested, delete session first
-        if (hasSession && forceRefresh) {
-            console.log('[WhatsApp] Force refresh requested - removing existing session...');
+        // Force refresh: always destroy client and clear session, then show new QR
+        if (forceRefresh) {
+            console.log('[WhatsApp] Force refresh requested - clearing session for different account...');
             try {
-                // Delete the session directory
+                if (readyFallbackTimeout) {
+                    clearTimeout(readyFallbackTimeout);
+                    readyFallbackTimeout = null;
+                }
                 if (client) {
                     try {
                         await client.destroy();
                     } catch (err) {
                         console.error('[WhatsApp] Error destroying client:', err);
                     }
+                    client = null;
                 }
-                // Remove session directory
-                if (fs.existsSync(sessionPath)) {
-                    fs.rmSync(sessionPath, { recursive: true, force: true });
-                    console.log('[WhatsApp] Existing session removed for force refresh');
-                }
-                client = null;
                 isAuthenticated = false;
                 isReady = false;
+                lastAuthenticatedAt = 0;
+                readyAt = 0;
                 qrCodeData = null;
+                if (fs.existsSync(SESSION_DIR)) {
+                    fs.rmSync(SESSION_DIR, { recursive: true, force: true });
+                    console.log('[WhatsApp] Session directory removed for force refresh');
+                }
+                fs.mkdirSync(SESSION_DIR, { recursive: true });
+                if (!fs.existsSync(AVATAR_DIR)) {
+                    fs.mkdirSync(AVATAR_DIR, { recursive: true });
+                }
+                await new Promise(resolve => setTimeout(resolve, 1500));
             } catch (err) {
-                console.error('[WhatsApp] Error removing session:', err);
+                console.error('[WhatsApp] Error clearing session:', err);
             }
         }
+
+        // Do NOT destroy client here when !hasSession && client: that client is the one showing the QR
+        // and waiting for scan.
 
         // If client is not initialized, initialize it now
         if (!client) {
             console.log('[WhatsApp] Client not initialized - initializing now...');
             initializeWhatsApp();
-            // Wait for QR code to be generated (up to 5 seconds)
-            for (let i = 0; i < 10; i++) {
+            // Wait for QR code to be generated (up to 10 seconds)
+            for (let i = 0; i < 20; i++) {
                 await new Promise(resolve => setTimeout(resolve, 500));
                 if (qrCodeData) {
                     break;
@@ -429,10 +568,10 @@ app.get('/api/whatsapp/qr-code', async (req, res) => {
             });
         }
 
-        // If no QR code yet, wait longer and check again (up to 10 seconds)
-        // This handles the case where client is still initializing on VPS
+        // If no QR code yet, wait longer and check again (up to 15 seconds)
+        // This handles the case where client is still initializing (e.g. on VPS or after reinit)
         console.log('[WhatsApp] QR code not available yet - waiting for client to initialize...');
-        for (let i = 0; i < 20; i++) {
+        for (let i = 0; i < 30; i++) {
             await new Promise(resolve => setTimeout(resolve, 500));
             if (qrCodeData) {
                 console.log('[WhatsApp] QR code became available after waiting');
@@ -443,9 +582,8 @@ app.get('/api/whatsapp/qr-code', async (req, res) => {
                     message: 'Scan the QR code with WhatsApp to connect'
                 });
             }
-            // Check if client failed to initialize
             if (!client) {
-                console.log('[WhatsApp] Client initialization failed - retrying...');
+                console.log('[WhatsApp] Client not ready - initializing...');
                 initializeWhatsApp();
             }
         }
@@ -473,8 +611,10 @@ app.get('/api/whatsapp/qr-code', async (req, res) => {
  */
 app.get('/api/whatsapp/status', async (req, res) => {
     try {
-        const sessionPath = path.join(SESSION_DIR, '.wwebjs_auth');
-        const hasSession = fs.existsSync(sessionPath);
+        // Check if session folder was deleted and reset if needed
+        await checkAndResetIfSessionDeleted();
+        
+        const hasSession = hasAuthenticatedSession();
 
         // Check if client exists and is ready
         if (isAuthenticated && isReady && client) {
@@ -482,17 +622,19 @@ app.get('/api/whatsapp/status', async (req, res) => {
                 success: true,
                 is_connected: true,
                 is_authenticated: true,
+                is_ready: true,
                 has_session: hasSession,
                 message: 'Connected to WhatsApp'
             });
         }
 
-        // If authenticated but not ready yet, still show as connected (client is initializing)
+        // Authenticated but not ready yet (client still initializing; chats API may not work yet)
         if (isAuthenticated && !isReady && client) {
             return res.json({
                 success: true,
-                is_connected: true,  // Changed to true - authenticated means connected
+                is_connected: false,
                 is_authenticated: true,
+                is_ready: false,
                 has_session: hasSession,
                 message: 'Connected to WhatsApp (initializing...)'
             });
@@ -504,6 +646,7 @@ app.get('/api/whatsapp/status', async (req, res) => {
                 success: true,
                 is_connected: false,
                 is_authenticated: false,
+                is_ready: false,
                 has_session: true,
                 message: 'Session found - restoring connection...'
             });
@@ -515,6 +658,7 @@ app.get('/api/whatsapp/status', async (req, res) => {
                 success: true,
                 is_connected: false,
                 is_authenticated: false,
+                is_ready: false,
                 has_session: true,
                 message: 'Session found - initializing client...'
             });
@@ -524,6 +668,7 @@ app.get('/api/whatsapp/status', async (req, res) => {
             success: true,
             is_connected: false,
             is_authenticated: false,
+            is_ready: false,
             has_session: hasSession,
             message: hasSession ? 'Session found - connecting...' : 'QR code authentication required'
         });
@@ -546,8 +691,7 @@ app.post('/api/whatsapp/initialize', async (req, res) => {
             initializeWhatsApp();
         }
 
-        const sessionPath = path.join(SESSION_DIR, '.wwebjs_auth');
-        const hasSession = fs.existsSync(sessionPath);
+        const hasSession = hasAuthenticatedSession();
 
         if (isAuthenticated && isReady) {
             return res.json({
@@ -582,6 +726,9 @@ app.post('/api/whatsapp/initialize', async (req, res) => {
  */
 app.post('/api/whatsapp/contacts', async (req, res) => {
     try {
+        // Check if session folder was deleted and reset if needed
+        await checkAndResetIfSessionDeleted();
+        
         if (!isReady || !client) {
             return res.status(400).json({
                 success: false,
@@ -589,10 +736,34 @@ app.post('/api/whatsapp/contacts', async (req, res) => {
             });
         }
 
+        // Wait for warmup period after 'ready' before allowing getChats (WhatsApp Web needs time to initialize)
+        const timeSinceReady = readyAt ? (Date.now() - readyAt) : 0;
+        if (timeSinceReady < CHATS_WARMUP_MS) {
+            const waitMs = CHATS_WARMUP_MS - timeSinceReady;
+            console.log(`[WhatsApp] Waiting ${waitMs}ms for WhatsApp Web to fully initialize before getChats...`);
+            await new Promise(r => setTimeout(r, waitMs));
+        }
+
         const limit = req.body.limit || 100;
-        const chats = await client.getChats();
+        let chats;
+        const maxTries = 6;
+        const retryDelayMs = 5000;
+        for (let attempt = 1; attempt <= maxTries; attempt++) {
+            try {
+                chats = await client.getChats();
+                break;
+            } catch (getChatsErr) {
+                const isRetryable = /undefined|update|getChatModel|Evaluation failed/i.test(String(getChatsErr.message || ''));
+                if (attempt < maxTries && isRetryable) {
+                    console.log(`[WhatsApp] getChats attempt ${attempt}/${maxTries} failed, retrying in ${retryDelayMs}ms...`, getChatsErr.message);
+                    await new Promise(r => setTimeout(r, retryDelayMs));
+                } else {
+                    throw getChatsErr;
+                }
+            }
+        }
         
-        const contacts = chats.slice(0, limit).map(chat => ({
+        const contacts = (chats || []).slice(0, limit).map(chat => ({
             contact_id: chat.id._serialized,
             name: chat.name || chat.id.user || 'Unknown',
             is_group: chat.isGroup,
@@ -602,6 +773,7 @@ app.post('/api/whatsapp/contacts', async (req, res) => {
             avatar_url: null
         }));
 
+        console.log('[WhatsApp] Contacts loaded:', contacts.length, 'chats');
         return res.json({
             success: true,
             count: contacts.length,
@@ -609,9 +781,20 @@ app.post('/api/whatsapp/contacts', async (req, res) => {
         });
     } catch (error) {
         console.error('[WhatsApp] Error getting contacts:', error);
+        const msg = error.message || String(error);
+        const isGetChatModelError = /undefined|update|getChatModel|Evaluation failed/i.test(msg);
+        if (isGetChatModelError) {
+            console.log('[WhatsApp] Returning empty chats so user can retry; WhatsApp Web may need more time or a library update.');
+            return res.json({
+                success: true,
+                count: 0,
+                contacts: [],
+                warning: 'Chats could not be loaded yet. Run "npm install" (to get the latest WhatsApp library fix), restart the WhatsApp server, then click Refresh. If it still fails, log out and scan the QR code again.'
+            });
+        }
         res.status(500).json({
             success: false,
-            error: error.message
+            error: msg
         });
     }
 });
@@ -680,11 +863,22 @@ app.get('/api/whatsapp/avatar', async (req, res) => {
  */
 app.post('/api/whatsapp/messages', async (req, res) => {
     try {
+        // Check if session folder was deleted and reset if needed
+        await checkAndResetIfSessionDeleted();
+        
         if (!isReady || !client) {
             return res.status(400).json({
                 success: false,
                 error: 'WhatsApp not connected. Please authenticate first.'
             });
+        }
+
+        // Wait for warmup period after 'ready' before allowing getChatById (WhatsApp Web needs time to initialize)
+        const timeSinceReady = readyAt ? (Date.now() - readyAt) : 0;
+        if (timeSinceReady < CHATS_WARMUP_MS) {
+            const waitMs = CHATS_WARMUP_MS - timeSinceReady;
+            console.log(`[WhatsApp] Waiting ${waitMs}ms for WhatsApp Web to fully initialize before getChatById...`);
+            await new Promise(r => setTimeout(r, waitMs));
         }
 
         const { contact_id, limit = 50, include_media } = req.body;
@@ -696,11 +890,25 @@ app.post('/api/whatsapp/messages', async (req, res) => {
             });
         }
 
-        // Get chat by contact ID
-        const chat = await client.getChatById(contact_id);
-        
-        // Fetch messages from the chat
-        const messages = await chat.fetchMessages({ limit: limit });
+        const maxTries = 6;
+        const retryDelayMs = 5000;
+        let chat;
+        let messages;
+        for (let attempt = 1; attempt <= maxTries; attempt++) {
+            try {
+                chat = await client.getChatById(contact_id);
+                messages = await chat.fetchMessages({ limit: limit });
+                break;
+            } catch (messagesErr) {
+                const isRetryable = /undefined|update|getChatModel|Evaluation failed/i.test(String(messagesErr.message || ''));
+                if (attempt < maxTries && isRetryable) {
+                    console.log(`[WhatsApp] getChatById/fetchMessages attempt ${attempt}/${maxTries} failed, retrying in ${retryDelayMs}ms...`, messagesErr.message);
+                    await new Promise(r => setTimeout(r, retryDelayMs));
+                } else {
+                    throw messagesErr;
+                }
+            }
+        }
         try { (messages || []).forEach(cacheWhatsAppMessage); } catch (e) {}
 
         // Format messages for frontend
@@ -764,6 +972,7 @@ app.post('/api/whatsapp/messages', async (req, res) => {
         // Sort by timestamp (oldest first for display)
         formattedMessages.sort((a, b) => a.timestamp - b.timestamp);
 
+        console.log('[WhatsApp] Messages loaded for', contact_id, ':', formattedMessages.length, 'messages');
         return res.json({
             success: true,
             contact_id: contact_id,
@@ -773,9 +982,13 @@ app.post('/api/whatsapp/messages', async (req, res) => {
         });
     } catch (error) {
         console.error('[WhatsApp] Error getting messages:', error);
+        const msg = error.message || String(error);
+        const isPageNotReady = /undefined|update|getChatModel|Evaluation failed/i.test(msg);
         res.status(500).json({
             success: false,
-            error: error.message
+            error: isPageNotReady
+                ? 'WhatsApp is still loading. Please wait a few seconds and try again.'
+                : msg
         });
     }
 });
@@ -1079,12 +1292,12 @@ io.on('connection', (socket) => {
     console.log('[WhatsApp] Client connected via WebSocket:', socket.id);
     
     // Send current status when client connects
-    const sessionPath = path.join(SESSION_DIR, '.wwebjs_auth');
-    const hasSession = fs.existsSync(sessionPath);
+    const hasSession = hasAuthenticatedSession();
     
     socket.emit('whatsapp_status', {
         is_connected: isReady && isAuthenticated,
         is_authenticated: isAuthenticated,
+        is_ready: isReady && isAuthenticated,
         has_session: hasSession,
         message: isReady ? 'Connected to WhatsApp' : (hasSession ? 'Session found - connecting...' : 'QR code authentication required')
     });
@@ -1094,11 +1307,13 @@ io.on('connection', (socket) => {
     });
 });
 
-// Start server - listen on all interfaces (0.0.0.0) for VPS compatibility
+// Start server first so port 3000 is bound immediately (before heavy WhatsApp/Puppeteer init)
 server.listen(PORT, '0.0.0.0', () => {
     console.log(`[WhatsApp Server] Server running on http://0.0.0.0:${PORT}`);
     console.log(`[WhatsApp Server] WebSocket server ready`);
     console.log(`[WhatsApp Server] WhatsApp client initializing...`);
+    // Defer WhatsApp client init so the process is listening on port 3000 right away
+    setImmediate(() => initializeWhatsApp());
 });
 
 // Global error handlers to avoid silent exits and get better diagnostics
