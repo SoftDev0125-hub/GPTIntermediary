@@ -64,6 +64,38 @@ def _get_env_file_path():
     return env_path, os.path.exists(env_path)
 
 
+# Aliases for .env keys (e.g. "Bing_API_KEY" -> "BING_API_KEY") so Settings and chat see the value
+_ENV_KEY_ALIASES = {"Bing_API_KEY": "BING_API_KEY", "Bing_Search_Api_Key": "BING_API_KEY"}
+
+
+def _read_all_keys_from_dotenv_file(keys):
+    """
+    Read requested keys directly from the .env file (no os.environ).
+    Returns dict key -> value; missing keys get ''.
+    Ensures the Settings tab always reflects the actual .env file contents.
+    Accepts aliases (e.g. Bing_API_KEY) so values are found regardless of casing in .env.
+    """
+    env_path, exists = _get_env_file_path()
+    result = {k: '' for k in keys}
+    if not exists:
+        return result
+    try:
+        with open(env_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                if '=' not in line or line.strip().startswith('#'):
+                    continue
+                k, v = line.split('=', 1)
+                k = k.strip()
+                val = (v.strip().strip('"').strip("'") or "").strip()
+                if k in result:
+                    result[k] = val
+                elif k in _ENV_KEY_ALIASES and _ENV_KEY_ALIASES[k] in result and not result.get(_ENV_KEY_ALIASES[k]):
+                    result[_ENV_KEY_ALIASES[k]] = val
+    except Exception as e:
+        logger.warning(f"Failed to read .env file for settings: {e}")
+    return result
+
+
 def _write_env_key_to_dotenv(key_name, value):
     """Write or update a key in the project's .env file (best-effort).
     Returns True on success, False on failure."""
@@ -107,7 +139,7 @@ from services.app_launcher import AppLauncher
 from services.whatsapp_service import WhatsAppService
 from services.word_service import WordService
 from services.excel_service import ExcelService
-from services.contact_resolver import resolve_name_to_emails, email_finder_keys_status
+from services.contact_resolver import resolve_name_to_emails, email_finder_keys_status, message_keys_required, message_email_not_found
 
 # Database imports
 try:
@@ -1121,13 +1153,23 @@ async def send_email(
                     logger.warning(f"Failed to log contact matches: {log_exc}")
 
                 if not matches:
-                    # No matches found after database attempts - try external resolver
+                    # No matches found after database attempts - check API keys before calling resolver
+                    status = email_finder_keys_status()
+                    if not status.get("any_configured"):
+                        raise HTTPException(
+                            status_code=400,
+                            detail=message_keys_required(),
+                        )
+                    # Try external resolver (Bing / People API)
                     try:
                         logger.info(f"No local contact matches for '{query_name}', attempting external resolver")
                         candidates = resolve_name_to_emails(query_name)
                         logger.info(f"Resolver returned {len(candidates)} candidates for '{query_name}'")
                         if not candidates:
-                            raise HTTPException(status_code=404, detail=f"No contacts found with name containing '{query_name}'")
+                            raise HTTPException(
+                                status_code=404,
+                                detail=message_email_not_found(query_name),
+                            )
 
                         # If resolver returned candidates but caller did not confirm, ask for confirmation
                         if not getattr(request, 'confirm', False):
@@ -1229,12 +1271,17 @@ async def send_email(
                         # Don't store contacts that we failed to send to
                         continue
                     try:
-                        existing = db.query(Contact).filter(Contact.email == email_addr).first()
+                        existing_q = db.query(Contact).filter(Contact.email.ilike(email_addr))
+                        if user_id is not None:
+                            existing_q = existing_q.filter(Contact.user_id == user_id)
+                        else:
+                            existing_q = existing_q.filter(Contact.user_id == None)
+                        existing = existing_q.first()
                         if existing:
                             logger.info(f"Contact for {email_addr} already exists (id={existing.id})")
                             continue
-                        # Create contact record (user_id left NULL for global contact)
-                        new_contact = Contact(name=name_guess or email_addr, email=email_addr, user_id=None)
+                        # Create contact record (use current user_id when available)
+                        new_contact = Contact(name=name_guess or email_addr, email=email_addr, user_id=user_id)
                         db.add(new_contact)
                         db.commit()
                         logger.info(f"Stored new contact: {email_addr} (name='{name_guess}')")
@@ -3088,33 +3135,36 @@ class EnvVariablesRequest(BaseModel):
     people_api_key: Optional[str] = None
 
 
-# Keys shown in the Settings tab; all read from and written to .env only
+# Keys shown in the Settings tab: read from and written to .env only (not the database).
+# Telegram: TELEGRAM_PHONE_NUMBER, TELEGRAM_API_ID, TELEGRAM_API_HASH are displayed
+# from .env and any changes in the tab are saved back to .env.
+# Bing: we accept BING_API_KEY or BING_SEARCH_API_KEY; Settings uses BING_API_KEY for read/write
 SETTINGS_ENV_KEYS = [
     "OPENAI_API_KEY", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET",
     "USER_EMAIL", "USER_ACCESS_TOKEN", "USER_REFRESH_TOKEN",
     "TELEGRAM_API_ID", "TELEGRAM_API_HASH", "TELEGRAM_PHONE_NUMBER",
-    "SLACK_USER_TOKEN", "BING_SEARCH_API_KEY", "PEOPLE_API_KEY",
+    "SLACK_USER_TOKEN", "BING_API_KEY", "BING_SEARCH_API_KEY", "PEOPLE_API_KEY",
 ]
 
 
 @app.get("/api/settings/env")
 async def get_env_variables(
-    user_id: int = Depends(get_current_user_id) if AUTH_AVAILABLE and security else None,
+    user_id: Optional[int] = Depends(get_current_user_id_optional) if AUTH_AVAILABLE and optional_security else None,
 ):
     """
-    Get current environment variables from the .env file only (not the database).
-    Used by the Settings tab to display and edit .env values.
+    Get environment variables from the .env file only (not the database).
+    Used by the Settings tab to display Telegram (Phone Number, API ID, API Hash) and
+    other .env values. Works with or without login; when logged in, user_id is set for DB sync on save.
     """
-    if not user_id and AUTH_AVAILABLE and security:
-        raise HTTPException(status_code=401, detail="Authentication required")
-
     try:
         env_path, env_exists = _get_env_file_path()
-        # Read every key from .env file only (no database)
-        final_vars = {}
-        for key in SETTINGS_ENV_KEYS:
-            val = _read_env_key_from_dotenv(key)
-            final_vars[key] = (val or "").strip()
+        # Read every key directly from .env file only (no database, no os.environ)
+        # so Settings tab shows Telegram and other values exactly as stored in .env
+        final_vars = _read_all_keys_from_dotenv_file(SETTINGS_ENV_KEYS)
+        # Bing: expose single value for UI - prefer BING_API_KEY, fallback to BING_SEARCH_API_KEY
+        bing_val = final_vars.get("BING_API_KEY", "").strip() or final_vars.get("BING_SEARCH_API_KEY", "").strip()
+        final_vars["BING_API_KEY"] = bing_val
+        final_vars["BING_SEARCH_API_KEY"] = bing_val  # so UI field (bing_search_api_key) gets the value
 
         return {
             "success": True,
@@ -3132,6 +3182,7 @@ async def get_env_variables(
 
 
 # Map request field names (snake_case) to .env key names (UPPER_SNAKE)
+# Bing: write to both BING_API_KEY and BING_SEARCH_API_KEY so contact_resolver and Settings stay in sync
 _REQUEST_TO_ENV_KEY = {
     "openai_api_key": "OPENAI_API_KEY",
     "google_client_id": "GOOGLE_CLIENT_ID",
@@ -3143,7 +3194,7 @@ _REQUEST_TO_ENV_KEY = {
     "telegram_api_hash": "TELEGRAM_API_HASH",
     "telegram_phone_number": "TELEGRAM_PHONE_NUMBER",
     "slack_user_token": "SLACK_USER_TOKEN",
-    "bing_search_api_key": "BING_SEARCH_API_KEY",
+    "bing_search_api_key": "BING_API_KEY",  # primary key used by contact_resolver
     "people_api_key": "PEOPLE_API_KEY",
 }
 
@@ -3151,17 +3202,15 @@ _REQUEST_TO_ENV_KEY = {
 @app.post("/api/settings/env")
 async def update_env_variables(
     request: EnvVariablesRequest,
-    user_id: int = Depends(get_current_user_id) if AUTH_AVAILABLE and security else None,
+    user_id: Optional[int] = Depends(get_current_user_id_optional) if AUTH_AVAILABLE and optional_security else None,
     db: Session = Depends(get_db) if DATABASE_AVAILABLE else None,
 ):
     """
-    Update environment variables in the .env file. All values from the Settings tab
-    are written to the project .env file. Optionally syncs Gmail/Telegram/Slack to DB
-    for backward compatibility with code that reads from the database.
+    Update environment variables in the .env file. When the user changes Telegram
+    (Phone Number, API ID, API Hash) or other settings in the Settings tab, those
+    values are written to the project .env file. Works with or without login; DB sync
+    runs only when user is logged in. .env is the source of truth for the Settings tab.
     """
-    if not user_id and AUTH_AVAILABLE and security:
-        raise HTTPException(status_code=401, detail="Authentication required")
-
     try:
         from config_helpers import (
             update_gmail_config,
@@ -3184,6 +3233,9 @@ async def update_env_variables(
                 success_count += 1
             else:
                 errors.append(f"Failed to write {env_key} to .env")
+            # Bing: keep BING_SEARCH_API_KEY in sync so both key names work
+            if env_key == "BING_API_KEY":
+                _write_env_key_to_dotenv("BING_SEARCH_API_KEY", value)
 
         # 2) Optionally sync to DB for Gmail/Telegram/Slack so existing code paths still work
         if DATABASE_AVAILABLE and db is not None and user_id is not None:
@@ -3237,8 +3289,9 @@ async def update_env_variables(
 # ==================== FIND EMAIL BY NAME (CONTACTS + BING/PEOPLE API) ====================
 
 class FindEmailRequest(BaseModel):
-    """Request body for find-email endpoint"""
+    """Request body for find-email endpoint. Company is optional and improves search (e.g. 'Find email of xxx from company Y')."""
     name: str
+    company: Optional[str] = None
 
 
 @app.post("/api/contacts/find-email")
@@ -3248,11 +3301,13 @@ async def find_email_by_name(
     db: Session = Depends(get_db) if DATABASE_AVAILABLE else None,
 ):
     """
-    Find a person's email address by name. Checks the contacts database first;
-    if not found, uses Bing Search API and/or People API (when keys are in .env).
+    Find a person's email address by name (optional: company to narrow search).
+    Checks the contacts database first; if not found, uses Bing Search API and/or
+    People API (when keys are in .env). E.g. "Find the email of John from company Acme".
     Saves newly found emails to the contacts table.
     """
     name = (request.name or "").strip()
+    company = (request.company or "").strip() or None
     if not name:
         raise HTTPException(status_code=400, detail="Please provide a name to look up.")
 
@@ -3288,20 +3343,11 @@ async def find_email_by_name(
     # 2) No DB match – check if API keys are configured
     status = email_finder_keys_status()
     if not status.get("any_configured"):
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Email finder APIs are not configured. These are paid services. "
-                "To find email addresses by name when they are not in your contacts, add at least one of these keys to the .env file or the Settings tab:\n\n"
-                "• BING_SEARCH_API_KEY – Bing Web Search API (Azure). Get a key at https://www.microsoft.com/en-us/bing/apis/bing-web-search-api\n"
-                "• PEOPLE_API_KEY – e.g. Hunter.io Email Finder. Get a key at https://hunter.io/api\n\n"
-                "After adding a key, restart the app and try again."
-            ),
-        )
+        raise HTTPException(status_code=400, detail=message_keys_required())
 
-    # 3) Call resolver
+    # 3) Call resolver (with optional company for better Bing/People API results)
     try:
-        candidates = resolve_name_to_emails(name, max_results=5)
+        candidates = resolve_name_to_emails(name, company=company, max_results=5)
     except Exception as e:
         logger.error(f"Resolver error for '{name}': {e}")
         raise HTTPException(
@@ -3310,14 +3356,7 @@ async def find_email_by_name(
         )
 
     if not candidates:
-        raise HTTPException(
-            status_code=404,
-            detail=(
-                f"No email address could be found for \"{name}\". "
-                "Possible reasons: the person's email is not publicly available, search results did not contain a valid address, "
-                "or the name is too generic. Try adding more context (e.g. company name) or add the contact manually in Settings."
-            ),
-        )
+        raise HTTPException(status_code=404, detail=message_email_not_found(name))
 
     best = candidates[0]
     email = (best.get("email") or "").strip()

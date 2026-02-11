@@ -1255,6 +1255,17 @@
         const sendButton = document.getElementById('sendButton');
         const typingIndicator = document.getElementById('typingIndicator');
 
+        // Open links in chat in a new tab / external browser (avoid opening inside app webview)
+        if (chatContainer) {
+            chatContainer.addEventListener('click', function(e) {
+                const a = e.target.closest('a[href^="http"]');
+                if (!a) return;
+                e.preventDefault();
+                const url = a.getAttribute('href');
+                if (url) window.open(url, '_blank', 'noopener,noreferrer');
+            });
+        }
+
         // Contacts UI elements
         const contactNameInput = document.getElementById('contactNameInput');
         const contactEmailInput = document.getElementById('contactEmailInput');
@@ -1338,7 +1349,10 @@
             try {
                 // Use marked to convert markdown -> HTML and DOMPurify to sanitize
                 const raw = (typeof marked !== 'undefined') ? marked.parse(text) : text
-                const clean = (typeof DOMPurify !== 'undefined') ? DOMPurify.sanitize(raw) : raw
+                let clean = (typeof DOMPurify !== 'undefined') ? DOMPurify.sanitize(raw) : raw
+                // Force links to open in new tab / external browser (marked doesn't add target="_blank" by default)
+                clean = clean.replace(/<a (?![^>]*\btarget=)([^>]*href="([^"]*)")/gi,
+                    '<a target="_blank" rel="noopener noreferrer" $1');
                 return clean;
             } catch (e) {
                 console.error('Markdown render error:', e);
@@ -1562,7 +1576,7 @@
 
         // Make sure voice recognition appends trigger resize as well
 
-        // Voice Recognition Feature
+        // Voice Recognition Feature (Web Speech API)
         const voiceRecognitionButton = document.getElementById('voiceRecognitionButton');
         const voiceIcon = document.getElementById('voiceIcon');
         let recognition = null;
@@ -1570,6 +1584,9 @@
         let listeningActive = false; // Logical state: mic toggled ON
         let silenceTimer = null; // timer for detecting silence
         let currentTranscript = ''; // accumulated transcript while mic is ON
+
+        // Secure context required: Speech Recognition only works over HTTPS or localhost
+        const isSecureContext = window.isSecureContext || (window.location && (window.location.protocol === 'https:' || window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'));
 
         // Helper: send current input if non-empty
         function sendCurrentInputIfAny() {
@@ -1580,8 +1597,8 @@
             }
         }
 
-        // Check if Web Speech API is available
-        if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+        // Check if Web Speech API is available and we're in a secure context
+        if (('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) && isSecureContext) {
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
             recognition = new SpeechRecognition();
             
@@ -1639,6 +1656,7 @@
             recognition.onerror = (event) => {
                 console.error('[VOICE] Recognition error:', event.error);
                 isListening = false;
+                listeningActive = false; // stop auto-restart on error
                 voiceRecognitionButton.classList.remove('listening');
                 voiceRecognitionButton.title = 'Voice Recognition';
                 
@@ -1651,7 +1669,10 @@
                         errorMessage += 'No microphone found. Please check your microphone.';
                         break;
                     case 'not-allowed':
-                        errorMessage += 'Microphone permission denied. Please allow microphone access.';
+                        errorMessage += 'Microphone permission denied. Please allow microphone access in your browser.';
+                        break;
+                    case 'service-not-allowed':
+                        errorMessage += 'Speech service unavailable. Use https:// or open the app at http://localhost.';
                         break;
                     default:
                         errorMessage += event.error;
@@ -1666,14 +1687,17 @@
                 voiceRecognitionButton.classList.remove('listening');
                 voiceRecognitionButton.title = 'Voice Recognition';
 
-                // If user left mic ON, restart listening so we continue capturing multi-sentence input
+                // If user left mic ON, restart listening after a short delay (avoids "already started" in Chrome)
                 if (listeningActive) {
-                    try {
-                        recognition.start();
-                        console.log('[VOICE] Restarting voice recognition (mic still ON)');
-                    } catch (err) {
-                        console.warn('[VOICE] Could not restart recognition:', err);
-                    }
+                    setTimeout(() => {
+                        if (!listeningActive) return;
+                        try {
+                            recognition.start();
+                            console.log('[VOICE] Restarting voice recognition (mic still ON)');
+                        } catch (err) {
+                            console.warn('[VOICE] Could not restart recognition:', err);
+                        }
+                    }, 150);
                 }
             };
 
@@ -1707,18 +1731,32 @@
                         console.log('[VOICE] Microphone toggled ON');
                     } catch (error) {
                         console.error('[VOICE] Error starting recognition:', error);
+                        listeningActive = false;
                         if (error.message && error.message.includes('already started')) {
                             try { recognition.stop(); } catch (e) {}
                         } else {
-                            addMessage('Error starting voice recognition. Please try again.', 'error');
+                            const msg = (error.name === 'SecurityError' || error.message.includes('secure'))
+                                ? 'Voice recognition requires a secure connection. Open this app via https:// or http://localhost.'
+                                : 'Error starting voice recognition. Check microphone permission and try again.';
+                            addMessage(msg, 'error');
                         }
                     }
                 }
             });
         } else {
-            // Web Speech API not supported
-            console.warn('[VOICE] Web Speech API not supported in this browser');
-            voiceRecognitionButton.style.display = 'none';
+            // Web Speech API not supported or not in secure context
+            if (voiceRecognitionButton) {
+                if (!isSecureContext) {
+                    console.warn('[VOICE] Voice recognition requires HTTPS or localhost (current: ' + (window.location ? window.location.origin : 'unknown') + ')');
+                    voiceRecognitionButton.title = 'Voice recognition requires HTTPS or localhost';
+                    voiceRecognitionButton.addEventListener('click', () => {
+                        addMessage('Voice recognition only works over HTTPS or when you open the app at http://localhost. Use https:// or open from this machine at http://localhost.', 'error');
+                    });
+                } else {
+                    console.warn('[VOICE] Web Speech API not supported in this browser (Chrome/Edge recommended)');
+                    voiceRecognitionButton.style.display = 'none';
+                }
+            }
         }
 
         const unreadButton = document.getElementById('unreadButton');
@@ -10106,7 +10144,7 @@ Note: User tokens are for personal use. For bots, use Bot Token instead.`,
 2. Sign in with a Microsoft account
 3. Create a resource in Azure Portal (Bing Search v7)
 4. Copy your subscription key from "Keys and Endpoint"
-5. Add it to .env as BING_SEARCH_API_KEY or paste here
+5. Add it to .env as BING_API_KEY (or BING_SEARCH_API_KEY) or paste here
 
 Used to find a person's email by searching the web when they are not in your contacts.`,
             
@@ -10128,18 +10166,25 @@ Used with company/domain to find professional email addresses. Works best when y
         async function loadSettings() {
             try {
                 showMessage('Loading settings from .env file...', 'info');
-                // Include Authorization header if token available so backend can return per-user settings
                 const authToken = localStorage.getItem('auth_token');
                 const headers = {};
                 if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
                 const response = await fetch(`${API_BASE}/api/settings/env`, { headers });
                 
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
+                let data;
+                try {
+                    data = await response.json();
+                } catch (e) {
+                    showMessage('Invalid response from server. Check that the backend is running on ' + API_BASE, 'error');
+                    return;
                 }
-                
-                const data = await response.json();
                 console.log('Settings API response:', data);
+                
+                if (!response.ok) {
+                    const detail = data.detail || data.error || `HTTP ${response.status}`;
+                    showMessage(response.status === 401 || response.status === 403 ? 'Session expired or access denied. Try logging in again.' : ('Failed to load settings: ' + detail), 'error');
+                    return;
+                }
                 
                 if (data.success && data.variables) {
                     // Populate all fields - use nullish coalescing to preserve empty strings
@@ -10154,7 +10199,7 @@ Used with company/domain to find professional email addresses. Works best when y
                     document.getElementById('telegram_api_hash').value = vars.TELEGRAM_API_HASH ?? '';
                     document.getElementById('telegram_phone_number').value = vars.TELEGRAM_PHONE_NUMBER ?? '';
                     document.getElementById('slack_user_token').value = vars.SLACK_USER_TOKEN ?? '';
-                    document.getElementById('bing_search_api_key').value = vars.BING_SEARCH_API_KEY ?? '';
+                    document.getElementById('bing_search_api_key').value = vars.BING_API_KEY ?? vars.BING_SEARCH_API_KEY ?? '';
                     document.getElementById('people_api_key').value = vars.PEOPLE_API_KEY ?? '';
                     
                     // Log actual values for debugging
@@ -10221,8 +10266,19 @@ Used with company/domain to find professional email addresses. Works best when y
                     body: JSON.stringify(formData)
                 });
                 
-                const data = await response.json();
+                let data;
+                try {
+                    data = await response.json();
+                } catch (e) {
+                    showMessage('Invalid response from server. Check that the backend is running on ' + API_BASE, 'error');
+                    return;
+                }
                 
+                if (!response.ok) {
+                    const detail = data.detail || data.error || `HTTP ${response.status}`;
+                    showMessage(response.status === 401 || response.status === 403 ? 'Session expired or access denied. Try logging in again.' : ('Failed to save settings: ' + detail), 'error');
+                    return;
+                }
                 if (data.success) {
                     showMessage('✅ Settings saved successfully! ⚠️ IMPORTANT: Please restart the application for changes to take effect.', 'success');
                 } else {
@@ -10230,7 +10286,7 @@ Used with company/domain to find professional email addresses. Works best when y
                 }
             } catch (error) {
                 console.error('Error saving settings:', error);
-                showMessage('Error saving settings. Please check if the backend server is running.', 'error');
+                showMessage('Error saving settings. Please check if the backend server is running on ' + API_BASE + '. ' + error.message, 'error');
             }
         }
 

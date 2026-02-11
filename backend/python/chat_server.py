@@ -282,6 +282,24 @@ FUNCTIONS = [
             },
             "required": ["app_name"]
         }
+    },
+    {
+        "name": "find_email",
+        "description": "Look up a person's email address by name. Checks the user's contacts first, then web search (Bing) if not found. Use when the user asks for someone's email (e.g. 'What is John's email?', 'Find the email address of Jane').",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Full name or display name of the person (e.g. John Smith, Jane Doe)"
+                },
+                "company": {
+                    "type": "string",
+                    "description": "Optional company name to narrow search (e.g. Microsoft, Acme Corp)"
+                }
+            },
+            "required": ["name"]
+        }
     }
 ]
 
@@ -301,7 +319,8 @@ def call_backend_function(function_name, arguments, caller_credentials=None):
         'send_email': '/api/email/send',
         'get_unread_emails': '/api/email/unread',
         'reply_to_email': '/api/email/reply',
-        'launch_app': '/api/app/launch'
+        'launch_app': '/api/app/launch',
+        'find_email': '/api/contacts/find-email'
     }
     
     endpoint = endpoint_map.get(function_name)
@@ -884,6 +903,32 @@ Be conversational and helpful, like ChatGPT."""
                     logger.debug(f"[CHAT-{request_id}] News fallback failed: {e}")
         except Exception as e:
             logger.debug(f"News detection error: {e}")
+
+        # Bing grounding: inject web search results (like ChatGPT.com with Bing) when Bing key is set
+        try:
+            from services.contact_resolver import bing_web_search_grounding, email_finder_keys_status
+            if email_finder_keys_status().get("bing_configured"):
+                q = user_message.strip()
+                is_searchy = (
+                    q.endswith("?") or
+                    re.search(r"\b(what|who|when|where|why|how|which|current|latest|recent|today|is\s+\w+\s+\w+\?)\b", q, re.IGNORECASE)
+                )
+                if is_searchy and len(q) > 10:
+                    results = bing_web_search_grounding(q, max_results=5)
+                    if results:
+                        lines = ["Web search results (use to answer with up-to-date information):"]
+                        for i, r in enumerate(results, 1):
+                            snip = (r.get("snippet") or "").strip()
+                            url = (r.get("url") or "").strip()
+                            if snip:
+                                lines.append(f"{i}. {snip}")
+                            if url:
+                                lines.append(f"   Source: {url}")
+                        bing_snippet = "\n".join(lines)
+                        messages.insert(1, {"role": "system", "content": bing_snippet})
+                        logger.info(f"[CHAT-{request_id}] Bing grounding: injected {len(results)} web snippets")
+        except Exception as e:
+            logger.debug(f"[CHAT-{request_id}] Bing grounding failed: {e}")
         
         total_context = len(messages)
         logger.info(f"[CHAT] Total messages in context: {total_context}")
@@ -1014,6 +1059,23 @@ Be conversational and helpful, like ChatGPT."""
                     final_message = function_result.get('message', f"✅ Successfully launched {function_args.get('app_name', 'the app')}")
                 else:
                     final_message = function_result.get('detail', function_result.get('error', f"❌ Failed to launch {function_args.get('app_name', 'the app')}"))
+            elif function_name == 'find_email':
+                # Email lookup: DB first, then Bing (or show method to find). Return clear message.
+                status = function_result.get('_http_status', 0)
+                if status == 200 and function_result.get('success'):
+                    src = function_result.get('source', '')
+                    name_d = function_result.get('name', function_args.get('name', ''))
+                    email = function_result.get('email', '')
+                    if src == 'database':
+                        final_message = f"📧 **From your contacts** — **{name_d}**: {email}"
+                    else:
+                        final_message = f"📧 **Found via web search** (saved to your contacts) — **{name_d}**: {email}"
+                elif status == 400:
+                    final_message = "🔍 " + (function_result.get('detail', 'Email finder is not configured. Add BING_API_KEY to .env or Settings to look up emails by name.'))
+                elif status == 404:
+                    final_message = "🔍 " + (function_result.get('detail', f'No email found.')) + "\n\n_You can add contacts manually in Settings if you know the email._"
+                else:
+                    final_message = "🔍 " + (function_result.get('detail', function_result.get('error', 'Could not look up email. Please try again.')))
             else:
                 # For other functions, add function result to messages and call OpenAI again to get the response
                 messages.append({

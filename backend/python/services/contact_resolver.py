@@ -18,12 +18,16 @@ EMAIL_RE = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
 
 CLEARBIT_KEY = os.getenv('CLEARBIT_KEY') or os.getenv('CLEARBIT_API_KEY')
 HUNTER_KEY = os.getenv('HUNTER_KEY') or os.getenv('HUNTER_API_KEY')
-# Primary key names for Settings / .env: BING_SEARCH_API_KEY, PEOPLE_API_KEY
-BING_KEY = (
-    os.getenv('BING_SEARCH_API_KEY')
-    or os.getenv('BING_SEARCH_KEY')
-    or os.getenv('BING_API_KEY')
-)
+# Bing key: prefer BING_API_KEY (as in .env), then BING_SEARCH_API_KEY, BING_SEARCH_KEY, and Bing_API_KEY (common .env spelling)
+def _get_bing_key():
+    return (
+        os.getenv('BING_API_KEY')
+        or os.getenv('BING_SEARCH_API_KEY')
+        or os.getenv('BING_SEARCH_KEY')
+        or os.getenv('Bing_API_KEY')
+    )
+
+
 PEOPLE_API_KEY = os.getenv('PEOPLE_API_KEY') or HUNTER_KEY
 
 
@@ -45,17 +49,47 @@ def _extract_emails_from_text(text: str) -> List[str]:
     return EMAIL_RE.findall(text)
 
 
-def resolve_with_bing(query: str, max_results: int = 5) -> List[Dict]:
-    """Use Bing Web Search API to search for pages that may include emails for the query."""
-    if not BING_KEY:
+def bing_web_search_grounding(query: str, max_results: int = 6) -> List[Dict]:
+    """Run a general Bing Web Search and return snippets + URLs for chat grounding.
+    Use this to inject real-time web context into the LLM prompt (like ChatGPT.com with Bing).
+    Returns list of dicts: [{"snippet": str, "url": str}, ...]."""
+    bing_key = _get_bing_key()
+    if not bing_key:
+        return []
+    try:
+        endpoint = 'https://api.bing.microsoft.com/v7.0/search'
+        params = {'q': query.strip(), 'count': max_results}
+        headers = {'Ocp-Apim-Subscription-Key': bing_key}
+        r = requests.get(endpoint, params=params, headers=headers, timeout=10)
+        data = r.json()
+        out = []
+        for it in data.get('webPages', {}).get('value', []) or []:
+            snippet = (it.get('snippet') or '').strip()
+            url = (it.get('url') or '').strip()
+            if snippet or url:
+                out.append({'snippet': snippet, 'url': url})
+        return out
+    except Exception as e:
+        logger.warning(f"Bing grounding search failed: {e}")
+        return []
+
+
+def resolve_with_bing(query: str, company: Optional[str] = None, max_results: int = 5) -> List[Dict]:
+    """Use Bing Web Search API to search for pages that may include emails for the query.
+    When company is provided, includes it in the search to narrow results (e.g. "Find email of xxx from company Y")."""
+    bing_key = _get_bing_key()
+    if not bing_key:
         logger.info("Bing API key not configured; skipping Bing resolver")
         return []
     try:
         endpoint = 'https://api.bing.microsoft.com/v7.0/search'
-        # craft query to find email addresses and the person's name/company
-        q = f'"{query}" email OR contact OR "@"'
+        # Craft query: person name, optional company, and email-related terms
+        q = f'"{query}"'
+        if company and company.strip():
+            q += f' "{company.strip()}"'
+        q += ' email OR contact OR "@"'
         params = {'q': q, 'count': max_results}
-        headers = {'Ocp-Apim-Subscription-Key': BING_KEY}
+        headers = {'Ocp-Apim-Subscription-Key': bing_key}
         r = requests.get(endpoint, params=params, headers=headers, timeout=8)
         data = r.json()
         candidates = []
@@ -168,9 +202,9 @@ def resolve_name_to_emails(query: str, company: Optional[str] = None, max_result
     except Exception:
         pass
 
-    # 3) Bing Web Search
+    # 3) Bing Web Search (include company in query when provided)
     try:
-        bing = resolve_with_bing(q, max_results=max_results)
+        bing = resolve_with_bing(q, company=company, max_results=max_results)
         candidates.extend(bing)
     except Exception:
         pass
@@ -199,7 +233,7 @@ def resolve_name_to_emails(query: str, company: Optional[str] = None, max_result
 
 def email_finder_keys_status() -> dict:
     """Return status of API keys for email finder and user-facing instructions if missing."""
-    bing = bool(BING_KEY)
+    bing = bool(_get_bing_key())
     people = bool(PEOPLE_API_KEY)
     configured = bing or people
     instructions = (
@@ -207,7 +241,7 @@ def email_finder_keys_status() -> dict:
         "1. **Bing Web Search API** (finds emails via web search):\n"
         "   • Go to https://www.microsoft.com/en-us/bing/apis/bing-web-search-api\n"
         "   • Create a resource in Azure Portal, get your subscription key.\n"
-        "   • Add BING_SEARCH_API_KEY=your_key to the .env file or Settings tab.\n\n"
+        "   • Add BING_API_KEY=your_key (or BING_SEARCH_API_KEY) to the .env file or Settings tab.\n\n"
         "2. **People/Email Finder API** (e.g. Hunter.io for professional emails):\n"
         "   • Go to https://hunter.io/api (or your provider)\n"
         "   • Sign up and get an API key.\n"
@@ -215,6 +249,26 @@ def email_finder_keys_status() -> dict:
         "At least one key is required to find email addresses by name when they are not in your contacts."
     )
     return {"bing_configured": bing, "people_configured": people, "any_configured": configured, "instructions": instructions}
+
+
+def message_keys_required() -> str:
+    """User-friendly notification when Bing/People API keys are not in .env."""
+    return (
+        "Email finder APIs are not configured. To find or send to someone by name when they're not in your contacts, "
+        "add at least one of these keys to the .env file (or the Settings tab):\n\n"
+        "• BING_API_KEY (or BING_SEARCH_API_KEY) – Bing Web Search API (Azure). Get a key at https://www.microsoft.com/en-us/bing/apis/bing-web-search-api\n"
+        "• PEOPLE_API_KEY – e.g. Hunter.io Email Finder. Get a key at https://hunter.io/api\n\n"
+        "After adding a key, restart the app and try again."
+    )
+
+
+def message_email_not_found(name: str) -> str:
+    """User-friendly notification when keys are set but no email could be found for the person."""
+    return (
+        f'No email address could be found for "{name}". '
+        "Possible reasons: the person's email is not publicly available, search results did not contain a valid address, "
+        "or the name is too generic. Try adding more context (e.g. company name) or add the contact manually in Settings."
+    )
 
 
 if __name__ == '__main__':

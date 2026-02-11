@@ -331,7 +331,7 @@ def parse_command(message):
                     'needs_oauth': False
                 }
     
-    # Find email of a person: "find the email address of X", "find email of X", "what is X's email"
+    # Find email of a person: "find the email address of X", "find email of X from company Y", "what is X's email"
     find_email_patterns = [
         r"find\s+(?:the\s+)?email\s+(?:address\s+)?(?:of\s+)?(.+?)(?:\?|\.|$)",
         r"what\s+is\s+(.+?)'s\s+email",
@@ -341,9 +341,28 @@ def parse_command(message):
     for pat in find_email_patterns:
         m = re.search(pat, message, re.IGNORECASE)
         if m:
-            name = m.group(1).strip().strip('"\'.')
+            raw = m.group(1).strip().strip('"\'.')
+            if not raw or len(raw) <= 1:
+                continue
+            # Parse "Name from company X" / "Name at X" / "Name from X"
+            name, company = raw, None
+            for suffix_pat, group in [
+                (r"^(.+?)\s+from\s+company\s+(.+)$", (0, 1)),   # "John from company Microsoft" -> name, company
+                (r"^(.+?)\s+at\s+(.+)$", (0, 1)),                 # "John at Microsoft"
+                (r"^(.+?)\s+from\s+(.+)$", (0, 1)),               # "John from Microsoft"
+            ]:
+                sm = re.match(suffix_pat, raw, re.IGNORECASE)
+                if sm:
+                    name = sm.group(group[0] + 1).strip()
+                    company = sm.group(group[1] + 1).strip()
+                    if not company:
+                        company = None
+                    break
             if name and len(name) > 1:
-                return {'action': 'find_email', 'name': name}
+                out = {'action': 'find_email', 'name': name}
+                if company:
+                    out['company'] = company
+                return out
 
     # Check for generic email patterns
     if 'unread' in message_lower and 'email' in message_lower:
@@ -420,29 +439,43 @@ def execute_action(action_data):
     
     elif action == 'find_email':
         name = action_data.get('name', '').strip()
+        company = action_data.get('company', '').strip() or None
         if not name:
-            return {'response': 'Please specify a name to look up (e.g. "find the email address of John Doe").', 'function_called': None}
+            return {'response': 'Please specify a name to look up (e.g. "find the email address of John Doe" or "find the email of Jane from company Acme").', 'function_called': None}
         try:
+            payload = {"name": name}
+            if company:
+                payload["company"] = company
             response = requests.post(
                 f"{BACKEND_URL}/api/contacts/find-email",
-                json={"name": name},
+                json=payload,
                 timeout=15
             )
             data = response.json() if response.ok else {}
             if response.status_code == 200 and data.get('success'):
-                return {
-                    'response': f"📧 {data.get('message', '')} — **{data.get('name', name)}**: {data.get('email', '')}",
-                    'function_called': 'find_email'
-                }
+                source = data.get('source', '')
+                email = data.get('email', '')
+                display_name = data.get('name', name)
+                if source == 'database':
+                    msg = f"📧 **From your contacts** — **{display_name}**: {email}"
+                else:
+                    msg = f"📧 **Found via web search** (saved to your contacts) — **{display_name}**: {email}"
+                return {'response': msg, 'function_called': 'find_email'}
             if response.status_code == 400:
+                detail = data.get('detail', 'Email finder is not configured.')
+                if not isinstance(detail, str):
+                    detail = str(detail)
                 return {
-                    'response': "🔍 " + (data.get('detail', 'Email finder is not configured.') if isinstance(data.get('detail'), str) else str(data.get('detail', ''))),
+                    'response': "🔍 " + detail,
                     'function_called': None,
                     'error': True
                 }
             if response.status_code == 404:
+                detail = data.get('detail', f'No email found for "{name}".')
+                if not isinstance(detail, str):
+                    detail = str(detail)
                 return {
-                    'response': "🔍 " + (data.get('detail', f'No email found for "{name}".') if isinstance(data.get('detail'), str) else f'No email found for "{name}".'),
+                    'response': "🔍 " + detail + "\n\n_You can add contacts manually in Settings if you know the email._",
                     'function_called': None
                 }
             return {
@@ -851,6 +884,33 @@ You can discuss any topic freely - science, math, programming, history, creative
             except Exception as e:
                 logger.warning(f"News integration failed: {e}")
                 news_snippet = None
+
+            # Bing grounding: inject web search results into context (like ChatGPT.com with Bing)
+            bing_grounding_snippet = None
+            try:
+                from services.contact_resolver import bing_web_search_grounding, email_finder_keys_status
+                if email_finder_keys_status().get("bing_configured"):
+                    # Use grounding for questions / factual queries (not for greetings or commands)
+                    q = user_message.strip()
+                    is_searchy = (
+                        q.endswith("?") or
+                        re.search(r"\b(what|who|when|where|why|how|which|current|latest|recent|today|is\s+\w+\s+\w+\?)\b", q, re.IGNORECASE)
+                    )
+                    if is_searchy and len(q) > 10:
+                        results = bing_web_search_grounding(q, max_results=5)
+                        if results:
+                            lines = ["Web search results (use to answer with up-to-date information):"]
+                            for i, r in enumerate(results, 1):
+                                snip = (r.get("snippet") or "").strip()
+                                url = (r.get("url") or "").strip()
+                                if snip:
+                                    lines.append(f"{i}. {snip}")
+                                if url:
+                                    lines.append(f"   Source: {url}")
+                            bing_grounding_snippet = "\n".join(lines)
+                            logger.info(f"[CHAT] Bing grounding: injected {len(results)} web snippets")
+            except Exception as e:
+                logger.debug(f"Bing grounding failed: {e}")
             
             total_context = len(messages)
             logger.info(f"[CHAT] Total messages in context: {total_context} (1 system + {total_context-1} conversation messages)")
@@ -861,18 +921,13 @@ You can discuss any topic freely - science, math, programming, history, creative
             
             # Call OpenAI with function calling - use direct call with very short timeout
             # Only system + current user message to prevent timeout
-            # Insert news snippet into messages if available (place after system message)
+            # Insert news and/or Bing grounding snippets after system message (like ChatGPT.com)
+            minimal_messages = [messages[0]]
             if news_snippet:
-                minimal_messages = [
-                    messages[0],  # System message
-                    {"role": "system", "content": news_snippet},
-                    {"role": "user", "content": user_message}
-                ]
-            else:
-                minimal_messages = [
-                    messages[0],  # System message
-                    {"role": "user", "content": user_message}  # Current user message only
-                ]
+                minimal_messages.append({"role": "system", "content": news_snippet})
+            if bing_grounding_snippet:
+                minimal_messages.append({"role": "system", "content": bing_grounding_snippet})
+            minimal_messages.append({"role": "user", "content": user_message})
             
             logger.info(f"[CHAT] Calling OpenAI API with minimal context: {len(minimal_messages)} messages")
             
