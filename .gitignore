@@ -34,12 +34,14 @@ ENV/
 *.log
 logs/
 
-# IDE
+# IDE / Editor
 .vscode/
 .idea/
+.cursor/
+.cursorrules
+*~
 *.swp
 *.swo
-*~
 
 # OS
 .DS_Store
