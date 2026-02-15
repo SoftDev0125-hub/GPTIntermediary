@@ -37,8 +37,6 @@ logs/
 # IDE / Editor
 .vscode/
 .idea/
-.cursor/
-.cursorrules
 *~
 *.swp
 *.swo
