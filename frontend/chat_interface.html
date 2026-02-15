@@ -1799,20 +1799,40 @@
             }
         }
 
+        /** Strip HTML/DOCTYPE and return plain text for list preview (no raw markup). */
+        function emailBodyToPlainSummary(htmlOrText, maxLen) {
+            if (!htmlOrText) return '';
+            let s = String(htmlOrText)
+                .replace(/<!DOCTYPE[^>]*>/gi, '')
+                .replace(/<\?xml[^>]*\?>/gi, '')
+                .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+                .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '')
+                .replace(/<[^>]+>/g, ' ')
+                .replace(/\s+/g, ' ')
+                .trim();
+            if (maxLen && s.length > maxLen) s = s.substring(0, maxLen) + '...';
+            return s;
+        }
+
         function renderEmails() {
             const totalPages = getTotalPages();
             const startIdx = (currentPage - 1) * emailsPerPage;
             const endIdx = startIdx + emailsPerPage;
             const paginatedEmails = allEmails.slice(startIdx, endIdx);
 
-            const emailItems = paginatedEmails.map((email, index) => `
-                <div class="email-item" data-email-index="${startIdx + index}">
-                    <div class="email-from">From: ${email.from_email || 'Unknown'}</div>
-                    <div class="email-subject">${email.subject || '(No Subject)'}</div>
-                    <div class="email-summary">${email.summary ? email.summary : (email.body ? (email.body.substring(0,120) + (email.body.length>120? '...':'')) : '')}</div>
-                    <div class="email-date">${email.date || new Date().toLocaleDateString()}</div>
-                </div>
-            `).join('');
+            const emailItems = paginatedEmails.map((email, index) => {
+                const from = escapeHtml(String(email.from_email || 'Unknown'));
+                const subject = escapeHtml(String(email.subject || '(No Subject)'));
+                const rawSummary = email.summary ? String(email.summary) : (email.body || '');
+                const summary = escapeHtml(emailBodyToPlainSummary(rawSummary, 120));
+                const date = escapeHtml(String(email.date || new Date().toLocaleDateString()));
+                return `<div class="email-item" data-email-index="${startIdx + index}">
+                    <div class="email-from">From: ${from}</div>
+                    <div class="email-subject">${subject}</div>
+                    <div class="email-summary">${summary}</div>
+                    <div class="email-date">${date}</div>
+                </div>`;
+            }).join('');
 
             emailList.innerHTML = emailItems;
             updateEmailCount();

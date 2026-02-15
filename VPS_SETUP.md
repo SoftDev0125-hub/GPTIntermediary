@@ -95,20 +95,6 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
-    # WhatsApp Server (Node.js on port 3000) - if needed
-    # Strip /whatsapp prefix when proxying (e.g., /whatsapp/api/whatsapp/... -> /api/whatsapp/...)
-    location /whatsapp/ {
-        proxy_pass http://localhost:3000/;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection 'upgrade';
-        proxy_set_header Host $host;
-        proxy_cache_bypass $http_upgrade;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-
     # Telegram Server (Node.js on port 3001) - if needed
     # Strip /telegram prefix when proxying
     location /telegram/ {
@@ -214,7 +200,7 @@ The application will be accessible from anywhere, not just the VPS!
    - `5000`: Chat Server (Flask)
    - `8000`: Backend API (FastAPI)
    - `8001`: Django Server (if used)
-   - `3000-3002`: Node.js servers (WhatsApp, Telegram, Slack)
+   - `3001-3002`: Node.js servers (Telegram, Slack)
 
 2. **Backend URL:** The backend URL in `chat_server.py` stays as `http://localhost:8000` because the chat server and backend run on the same VPS and communicate internally.
 

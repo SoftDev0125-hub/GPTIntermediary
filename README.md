@@ -19,15 +19,6 @@ A comprehensive desktop application that combines AI chat capabilities with real
 
 ### 💬 Real-Time Messaging Platforms
 
-#### WhatsApp Integration
-- **QR Code Authentication**: Scan QR code to connect WhatsApp Web
-- **Session Persistence**: Auto-connect on app restart (like WhatsApp Web)
-- **Real-Time Chat**: Instant message delivery via WebSocket
-- **Media Support**: View and download images, videos, and files
-- **Message Management**: Edit and delete sent messages
-- **Contact Management**: View contacts and chat history
-- **Node.js Backend**: Powered by `whatsapp-web.js` and Socket.IO
-
 #### Telegram Integration
 - **Telegram Bot API**: Connect via Telegram Bot API
 - **Message Retrieval**: Get messages from chats and groups
@@ -104,8 +95,6 @@ A comprehensive desktop application that combines AI chat capabilities with real
 - **Google Cloud Project**: For Gmail API access
 - **Telegram Bot Token**: [Create Bot](https://core.telegram.org/bots/tutorial)
 - **Slack App** (optional): For Slack integration
-- **WhatsApp**: Your WhatsApp account (QR code authentication)
-
 ## 🛠️ Installation
 
 ### 1. Clone the Repository
@@ -196,7 +185,7 @@ python app.py
 This will:
 - Start the FastAPI backend server (port 8000)
 - Start the chat server (port 5000)
-- Start the Node.js WhatsApp server (port 3000)
+- Start the Node.js Telegram and Slack servers (ports 3001, 3002)
 - Start Django service if available (port 8001)
 - Open the application in your default browser
 
@@ -212,11 +201,10 @@ python backend/python/main.py
 python backend/python/chat_server.py
 ```
 
-**Terminal 3 - WhatsApp Server:**
+**Terminal 3 - Telegram/Slack (optional):**
 ```bash
-npm start
-# or
-node backend/node/whatsapp_server.js
+npm run telegram   # or: node backend/node/telegram_server.js
+npm run slack      # or: node backend/node/slack_server.js
 ```
 
 **Terminal 4 - Django Service (Optional):**
@@ -237,13 +225,6 @@ Then open `frontend/chat_interface.html` (or `http://72.62.162.44:5000/chat_inte
    - "Send an email to john@example.com"
    - "Show me my unread emails"
    - "Create a Word document"
-
-### WhatsApp
-1. Click on the **WhatsApp** tab
-2. Click **Refresh** to load contacts
-3. Scan the QR code with your WhatsApp mobile app (first time only)
-4. Select a contact to view messages
-5. Send messages, view media, edit/delete messages
 
 ### Telegram
 1. Click on the **Telegram** tab
@@ -289,7 +270,7 @@ Then open `frontend/chat_interface.html` (or `http://72.62.162.44:5000/chat_inte
                 ├─────────────────┬─────────────────┬──────────────┐
                 │                 │                 │              │
         ┌───────▼──────┐   ┌──────▼──────┐   ┌──────▼──────┐   ┌───▼──────┐
-        │  Chat Server │   │ Backend API │   │ WhatsApp    │   │ Django   │
+        │  Chat Server │   │ Backend API │   │ Telegram    │   │ Django   │
         │  (Port 5000) │   │ (Port 8000) │   │ Node Server │   │ (8001)   │
         │              │   │             │   │ (Port 3000) │   │          │
         └───────┬──────┘   └──────┬──────┘   └──────┬──────┘   └──────────┘
@@ -299,7 +280,7 @@ Then open `frontend/chat_interface.html` (or `http://72.62.162.44:5000/chat_inte
         ┌───────▼────────┐                ┌────────▼────────┐
         │   OpenAI API   │                │  External APIs  │
         │   (GPT-3.5/4)  │                │  Gmail/Telegram │
-        └────────────────┘                │  Slack/WhatsApp │
+        └────────────────┘                │  Slack/Telegram │
                                           └─────────────────┘
 ```
 
@@ -323,7 +304,6 @@ GPTIntermediary/
 │   │   └── config/              # Configuration
 │   │
 │   ├── node/                    # Node.js messaging backends
-│   │   ├── whatsapp_server.js
 │   │   ├── telegram_server.js
 │   │   └── slack_server.js
 │   │
@@ -336,8 +316,6 @@ GPTIntermediary/
 ├── .env                         # Environment variables (create this)
 │
 ├── telegram_session/           # Telegram session files
-├── whatsapp_session/            # WhatsApp session (Playwright)
-├── whatsapp_session_node/       # WhatsApp session (Node.js)
 └── logs/                        # Application logs
 ```
 
@@ -359,17 +337,6 @@ GPTIntermediary/
 ### Slack
 - `POST /api/slack/messages` - Get Slack messages
 - `POST /api/slack/send` - Send Slack message
-
-### WhatsApp (Node.js Backend - Port 3000)
-- `GET /api/whatsapp/status` - Check connection status
-- `GET /api/whatsapp/qr-code` - Get QR code for authentication
-- `POST /api/whatsapp/initialize` - Initialize WhatsApp service
-- `POST /api/whatsapp/contacts` - Get contacts/chats
-- `POST /api/whatsapp/messages` - Get messages for a contact
-- `POST /api/whatsapp/send` - Send WhatsApp message
-- `GET /api/whatsapp/media/:messageId` - Download media
-- `PUT /api/whatsapp/message/:messageId` - Edit message
-- `DELETE /api/whatsapp/message/:messageId` - Delete message
 
 ### Word Documents
 - `POST /api/word/create` - Create Word document
@@ -410,12 +377,6 @@ GPTIntermediary/
 
 ## 🐛 Troubleshooting
 
-### WhatsApp Connection Issues
-- **QR Code not appearing**: Check if Node.js server is running on port 3000
-- **Session not persisting**: Check `whatsapp_session_node` directory permissions
-- **Messages not loading**: Verify WhatsApp Web is authenticated
-- **Chat list empty / "getChats" error**: The app uses `whatsapp-web.js` from GitHub main (fix for WhatsApp Web changes). Run `npm install`, restart the WhatsApp server, then click **Refresh** in the WhatsApp sidebar. If it still fails, log out and scan the QR code again.
-
 ### Telegram Connection Issues
 - **Authentication failed**: Check `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` in `.env`
 - **Session expired**: Delete `telegram_session/telegram_session.session` and re-authenticate
@@ -429,7 +390,7 @@ GPTIntermediary/
 - **Tables not created**: Run `python init_tables.py`
 
 ### General Issues
-- **Port already in use**: Stop other services using ports 3000, 5000, 8000, or 8001
+- **Port already in use**: Stop other services using ports 5000, 8000, 3001, 3002, or 8001
 - **Module not found**: Run `pip install -r requirements.txt` and `npm install`
 - **OpenAI errors**: Verify `OPENAI_API_KEY` is set correctly
 
@@ -465,7 +426,6 @@ This project is open source and available for personal and commercial use.
 ## 🙏 Acknowledgments
 
 - OpenAI for GPT API
-- whatsapp-web.js for WhatsApp integration
 - FastAPI for the backend framework
 - All contributors and users
 
