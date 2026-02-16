@@ -19,7 +19,7 @@ import sys
 import random
 import uuid
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta
 import requests
 from pathlib import Path
 from dotenv import load_dotenv
@@ -35,13 +35,21 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
+def _get_project_root():
+    """Project root: when frozen (PyInstaller exe), use exe directory; otherwise backend/python/../.."""
+    if getattr(sys, 'frozen', False):
+        return os.path.dirname(sys.executable)
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+
+
 # Robust env loader (fallback to manual .env parsing) to handle .env lines with spaces
 def _read_env_key_from_dotenv(key_name):
     val = os.getenv(key_name)
     if val:
         return val.strip()
     try:
-        base = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+        base = _get_project_root()
         env_path = os.path.join(base, '.env')
         if not os.path.exists(env_path):
             return ''
@@ -59,7 +67,7 @@ def _read_env_key_from_dotenv(key_name):
 
 def _get_env_file_path():
     """Return (absolute_path, exists) for the project .env file."""
-    base = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+    base = _get_project_root()
     env_path = os.path.join(base, '.env')
     return env_path, os.path.exists(env_path)
 
@@ -539,7 +547,7 @@ async def root():
 @app.get("/api/news")
 async def get_latest_news(country: Optional[str] = 'us', q: Optional[str] = None, pageSize: int = 5):
     """
-    Fetch latest news using NewsAPI.org's top-headlines endpoint.
+    Fetch latest news using NewsAPI.org. Returns newest first; response is not cached.
     Query params:
       - country: 2-letter country code (default 'us')
       - q: optional search query
@@ -549,15 +557,17 @@ async def get_latest_news(country: Optional[str] = 'us', q: Optional[str] = None
         raise HTTPException(status_code=503, detail="NewsAPI key not configured")
 
     url = 'https://newsapi.org/v2/top-headlines'
-    # If a specific query/topic is provided, use the 'everything' endpoint
+    # If a specific query/topic is provided, use the 'everything' endpoint (newest first, last 7 days)
     if q:
         url = 'https://newsapi.org/v2/everything'
+        from_date = (datetime.utcnow() - timedelta(days=7)).strftime('%Y-%m-%d')
         params = {
             'apiKey': NEWSAPI_KEY,
             'q': q,
             'pageSize': min(pageSize, 20),
             'sortBy': 'publishedAt',
-            'language': 'en'
+            'language': 'en',
+            'from': from_date,
         }
     else:
         params = {
@@ -585,8 +595,11 @@ async def get_latest_news(country: Optional[str] = 'us', q: Optional[str] = None
                 'description': a.get('description')
             })
 
-        return { 'success': True, 'articles': articles }
-
+        from fastapi.responses import JSONResponse
+        return JSONResponse(
+            content={'success': True, 'articles': articles},
+            headers={'Cache-Control': 'no-store, no-cache, must-revalidate'},
+        )
     except HTTPException:
         raise
     except Exception as e:
@@ -3898,8 +3911,9 @@ async def delete_user(
 
 
 if __name__ == "__main__":
+    # Use app object directly so it works when frozen (PyInstaller); "main:app" string import can fail in exe
     uvicorn.run(
-        "main:app",
+        app,
         host="0.0.0.0",
         port=8000,
         reload=False,

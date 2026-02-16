@@ -3,6 +3,7 @@ Database configuration and session management for PostgreSQL
 Connects to existing gptintermediarydb database
 """
 import os
+import sys
 from pathlib import Path
 from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
@@ -10,9 +11,12 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import NullPool
 from dotenv import load_dotenv
 
-# Load environment from project root .env only (GPTIntermediary/.env)
-current_dir = Path(__file__).parent
-root_dir = current_dir.parent.parent  # project root
+# Project root: when running as PyInstaller exe, use exe directory; otherwise backend/python/../..
+if getattr(sys, "frozen", False):
+    root_dir = Path(sys.executable).resolve().parent
+else:
+    current_dir = Path(__file__).parent
+    root_dir = current_dir.parent.parent
 if (root_dir / ".env").exists():
     load_dotenv(dotenv_path=root_dir / ".env")
 else:

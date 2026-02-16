@@ -14,9 +14,17 @@ import random
 import logging
 from pathlib import Path
 from dotenv import load_dotenv
+import sys
+
+def _get_project_root():
+    """Project root: when frozen (PyInstaller exe), use exe directory; otherwise backend/python/../.."""
+    if getattr(sys, 'frozen', False):
+        return os.path.dirname(sys.executable)
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+
 
 # Load project root .env only (GPTIntermediary/.env)
-_load_env_root = Path(__file__).resolve().parent.parent.parent
+_load_env_root = Path(_get_project_root())
 load_dotenv(_load_env_root / '.env')
 
 # Robust env loader (fallback) to handle .env formatting variations
@@ -25,7 +33,7 @@ def _read_env_key_from_dotenv(key_name):
     if val:
         return val.strip()
     try:
-        base = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+        base = _get_project_root()
         env_path = os.path.join(base, '.env')
         if not os.path.exists(env_path):
             return ''
@@ -47,17 +55,20 @@ if not NEWSAPI_KEY:
     logging.warning('NEWSAPI_KEY not configured; news features may be limited')
 
 def fetch_latest_news(q=None, country='us', pageSize=10):
-    """Fetch news using NewsAPI; use 'everything' for queries and 'top-headlines' otherwise."""
+    """Fetch news using NewsAPI; use 'everything' for queries (newest first, last 7 days) and 'top-headlines' otherwise."""
     if not NEWSAPI_KEY:
         return []
     try:
         if q:
+            from datetime import datetime, timedelta
+            from_date = (datetime.utcnow() - timedelta(days=7)).strftime('%Y-%m-%d')
             params = {
                 'apiKey': NEWSAPI_KEY,
                 'q': q,
                 'pageSize': min(pageSize, 20),
                 'sortBy': 'publishedAt',
-                'language': 'en'
+                'language': 'en',
+                'from': from_date,
             }
             resp = requests.get('https://newsapi.org/v2/everything', params=params, timeout=10)
         else:
@@ -97,7 +108,7 @@ CORS(app)  # Enable CORS for frontend
 app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max request size
 
-# Configuration
+# Configuration - read at startup; get_openai_client() re-reads from .env so Settings updates apply without restart
 OPENAI_API_KEY = _read_env_key_from_dotenv('OPENAI_API_KEY') or os.getenv('OPENAI_API_KEY') or ''
 BACKEND_URL = "http://localhost:8000"
 
@@ -106,13 +117,21 @@ BACKEND_URL = "http://localhost:8000"
 from openai import OpenAI
 _openai_client = None
 
+def _current_openai_key():
+    """Return current OpenAI API key (re-read from .env so Settings tab changes take effect)."""
+    return (_read_env_key_from_dotenv('OPENAI_API_KEY') or os.getenv('OPENAI_API_KEY') or '').strip()
+
 def get_openai_client():
-    """Get or create OpenAI client instance"""
-    global _openai_client
+    """Get or create OpenAI client instance. Re-reads key from .env so updated key in Settings is used."""
+    global _openai_client, OPENAI_API_KEY
+    current_key = _current_openai_key()
+    if current_key != OPENAI_API_KEY:
+        OPENAI_API_KEY = current_key
+        _openai_client = None
     if _openai_client is None:
         _openai_client = OpenAI(
             api_key=OPENAI_API_KEY,
-            timeout=(5.0, 12.0),  # Connect: 5s, Read: 12s (shorter for faster responses)
+            timeout=(10.0, 90.0),  # Connect: 10s, Read: 90s (allow full response on slower PCs/networks)
             max_retries=0  # No retries - fail fast
         )
     return _openai_client
@@ -125,7 +144,8 @@ def analyze_emails_with_ai(emails, request_id=None, max_items=5):
     returns: string summary or None on failure
     """
     try:
-        if not OPENAI_API_KEY or OPENAI_API_KEY == 'your_openai_api_key_here':
+        key = _current_openai_key()
+        if not key or key == 'your_openai_api_key_here':
             return None
 
         client = get_openai_client()
@@ -363,7 +383,7 @@ def call_backend_function(function_name, arguments, caller_credentials=None):
 def index():
     """Serve the login page"""
     try:
-        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+        project_root = _get_project_root()
         html_path = os.path.join(project_root, 'frontend', 'login.html')
         return send_file(html_path)
     except Exception as e:
@@ -374,7 +394,7 @@ def index():
 def chat_interface():
     """Serve the chat interface HTML (requires authentication)"""
     try:
-        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+        project_root = _get_project_root()
         html_path = os.path.join(project_root, 'frontend', 'chat_interface.html')
         return send_file(html_path)
     except Exception as e:
@@ -385,7 +405,7 @@ def chat_interface():
 def admin_panel():
     """Serve the admin panel HTML (requires admin authentication)"""
     try:
-        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+        project_root = _get_project_root()
         html_path = os.path.join(project_root, 'frontend', 'admin_panel.html')
         return send_file(html_path)
     except Exception as e:
@@ -396,7 +416,7 @@ def admin_panel():
 def styles():
     """Serve the main stylesheet for the frontend pages"""
     try:
-        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+        project_root = _get_project_root()
         css_path = os.path.join(project_root, 'frontend', 'styles.css')
         return send_file(css_path)
     except Exception as e:
@@ -448,7 +468,8 @@ def chat():
     else:
         logger.warning(f"[CHAT] No user_id provided in request. Data keys: {list(data.keys()) if data else 'None'}")
     
-    if not OPENAI_API_KEY or OPENAI_API_KEY == 'your_openai_api_key_here':
+    current_key = _current_openai_key()
+    if not current_key or current_key == 'your_openai_api_key_here':
         return jsonify({
             'response': '[WARNING] OpenAI API key not configured. Please set OPENAI_API_KEY in your .env file.',
             'error': 'missing_api_key'
@@ -699,7 +720,8 @@ def chat():
                 preview_lines.append(f"{idx}. **{subject}** — _{sender}_\n   {preview_text}")
 
             # Prefer AI analysis when available; otherwise synthesize a summary locally
-            ai_enabled = bool(OPENAI_API_KEY and OPENAI_API_KEY != 'your_openai_api_key_here')
+            _key = _current_openai_key()
+            ai_enabled = bool(_key and _key != 'your_openai_api_key_here')
             ai_result = None
 
             # If sender-specific query, prepare compact email payloads (use full body when available)
@@ -1267,7 +1289,8 @@ if __name__ == '__main__':
     print("=" * 60)
     print(f"Backend URL: {BACKEND_URL}")
     # Use ASCII-safe characters for Windows compatibility
-    api_status = '[OK] Configured' if OPENAI_API_KEY and OPENAI_API_KEY != 'your_openai_api_key_here' else '[X] Not configured'
+    _key = _current_openai_key()
+    api_status = '[OK] Configured' if (_key and _key != 'your_openai_api_key_here') else '[X] Not configured'
     print(f"OpenAI API Key: {api_status}")
     print("=" * 60)
     print("\n[*] Server running on http://localhost:5000")

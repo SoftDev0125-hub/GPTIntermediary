@@ -3,9 +3,20 @@
  * Handles Telegram authentication and operations using GramJS (telegram package)
  */
 
-// Load environment variables from project root .env (GPTIntermediary/.env)
+// Log uncaught errors before exit (so dist/logs/telegram_server.log shows the real cause)
+process.on('uncaughtException', (err) => {
+  console.error('[Telegram] Uncaught exception:', err && err.stack ? err.stack : err);
+  process.exit(1);
+});
+process.on('unhandledRejection', (reason, p) => {
+  console.error('[Telegram] Unhandled rejection:', reason);
+  process.exit(1);
+});
+
+// Load environment variables from project root .env (GPTIntermediary/.env or dist/.env)
 const path = require('path');
-require('dotenv').config({ path: path.join(__dirname, '..', '..', '.env') });
+const envPath = path.join(__dirname, '..', '..', '.env');
+try { require('dotenv').config({ path: envPath }); } catch (e) { /* .env optional */ }
 
 const express = require('express');
 const { TelegramClient } = require('telegram');

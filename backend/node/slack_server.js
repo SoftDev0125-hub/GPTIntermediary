@@ -3,9 +3,20 @@
  * Handles Slack authentication and operations using Slack Web API (slack-sdk)
  */
 
-// Load project root .env (GPTIntermediary/.env)
+// Log uncaught errors before exit (so dist/logs/slack_server.log shows the real cause)
+process.on('uncaughtException', (err) => {
+  console.error('[Slack] Uncaught exception:', err && err.stack ? err.stack : err);
+  process.exit(1);
+});
+process.on('unhandledRejection', (reason, p) => {
+  console.error('[Slack] Unhandled rejection:', reason);
+  process.exit(1);
+});
+
+// Load project root .env (GPTIntermediary/.env or dist/.env)
 const path = require('path');
-require('dotenv').config({ path: path.join(__dirname, '..', '..', '.env') });
+const envPath = path.join(__dirname, '..', '..', '.env');
+try { require('dotenv').config({ path: envPath }); } catch (e) { /* .env optional */ }
 
 const express = require('express');
 const { WebClient } = require('@slack/web-api');

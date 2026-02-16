@@ -3,6 +3,16 @@
  * Handles QR code authentication and WhatsApp operations using whatsapp-web.js
  */
 
+// Log uncaught errors before exit (so dist/logs/whatsapp_server.log shows the real cause)
+process.on('uncaughtException', (err) => {
+  console.error('[WhatsApp] Uncaught exception:', err && err.stack ? err.stack : err);
+  process.exit(1);
+});
+process.on('unhandledRejection', (reason, p) => {
+  console.error('[WhatsApp] Unhandled rejection:', reason);
+  process.exit(1);
+});
+
 const express = require('express');
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode');

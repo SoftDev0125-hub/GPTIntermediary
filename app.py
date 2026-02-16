@@ -42,20 +42,57 @@ telegram_log = None
 DJANGO_DIR = os.path.join("backend", "django_app")
 DJANGO_PORT = 8001
 
+def _is_frozen():
+    """True when running as a PyInstaller bundle (standalone exe)."""
+    return getattr(sys, 'frozen', False)
+
+
+def _get_script_dir():
+    """Project/installation root: exe directory when frozen, else directory of app.py."""
+    if _is_frozen():
+        return os.path.dirname(os.path.abspath(sys.executable))
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+def _print_log_tail(log_path, max_lines=35):
+    """Print last max_lines of a log file so user sees why a server exited."""
+    if not log_path or not os.path.isfile(log_path):
+        return
+    try:
+        with open(log_path, 'r', encoding='utf-8', errors='replace') as f:
+            lines = f.readlines()
+        if not lines:
+            return
+        tail = lines[-max_lines:] if len(lines) > max_lines else lines
+        print("[!] Last lines of log:")
+        for line in tail:
+            print("    " + line.rstrip())
+    except Exception as e:
+        print(f"[!] Could not read log: {e}")
+
+
 def start_servers():
     """Start all backend servers in separate processes"""
     global backend_process, chat_process, django_process, whatsapp_node_process, telegram_node_process, slack_node_process, servers_running
     global backend_log, chat_log, django_log, whatsapp_log, telegram_log, slack_log
     
-    # Make sure we're in the right directory
-    script_dir = os.path.dirname(os.path.abspath(__file__))
+    # Make sure we're in the right directory (exe dir when frozen)
+    script_dir = _get_script_dir()
     os.chdir(script_dir)
 
     backend_py_dir = os.path.join(script_dir, "backend", "python")
+    frozen = _is_frozen()
+    backend_exe = os.path.join(script_dir, "backend.exe") if frozen else None
+    chat_exe = os.path.join(script_dir, "chat.exe") if frozen else None
+    _node_path = os.path.join(script_dir, "node_runtime", "node.exe")
+    node_exe = _node_path if (frozen and os.path.isfile(_node_path)) else "node"
     
     servers_running = True
+    log_dir = os.path.join(script_dir, 'logs')
     print("[*] Starting all backend servers...")
     print(f"[*] Working directory: {os.getcwd()}")
+    if frozen:
+        print(f"[*] Logs (if servers fail): {log_dir}")
     
     try:
         # Start backend server (backend/python/main.py on port 8000)
@@ -71,15 +108,17 @@ def start_servers():
                 print(f"[!] Error while ensuring port 8000 is free: {e}")
 
             # Create log file for backend server output
-            log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logs')
+            os.makedirs(log_dir, exist_ok=True)
             os.makedirs(log_dir, exist_ok=True)
             backend_log = open(os.path.join(log_dir, 'backend_server.log'), 'w', encoding='utf-8')
             
+            backend_cmd = [backend_exe] if frozen and backend_exe and os.path.isfile(backend_exe) else [sys.executable, "main.py"]
+            backend_cwd = script_dir if frozen else backend_py_dir
             backend_process = subprocess.Popen(
-                [sys.executable, "main.py"],
+                backend_cmd,
                 stdout=backend_log,  # Write to log file
                 stderr=backend_log,  # Write errors to log file
-                cwd=backend_py_dir,
+                cwd=backend_cwd,
                 # Prevent child from inheriting debug/reloader environment variables
                 env={k: v for k, v in os.environ.items() if k not in ('DEBUG', 'FLASK_DEBUG', 'FLASK_ENV')},
                 creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
@@ -155,21 +194,24 @@ def start_servers():
             servers_running = False
             return
         
-        # Start chat server (backend/python/chat_server.py on port 5000)
+        # Start chat server (backend/python/chat_server.py on port 5000, or chat.exe when frozen)
         print("[*] Starting chat server (port 5000)...")
-        # Try chat_server.py first, fallback to chat_server_simple.py
-        chat_server_file = "chat_server.py"
-        if not os.path.exists(os.path.join(backend_py_dir, chat_server_file)):
-            chat_server_file = "chat_server_simple.py"
+        # When frozen we run chat.exe (no .py file on disk); when not frozen we need the .py file
+        if frozen and chat_exe and os.path.isfile(chat_exe):
+            chat_server_file = "chat_server.py"  # only for error messages
+        else:
+            chat_server_file = "chat_server.py"
             if not os.path.exists(os.path.join(backend_py_dir, chat_server_file)):
-                print("[!] No chat server file found (looking for chat_server.py or chat_server_simple.py)")
-                servers_running = False
-                return
+                chat_server_file = "chat_server_simple.py"
+                if not os.path.exists(os.path.join(backend_py_dir, chat_server_file)):
+                    print("[!] No chat server file found (looking for chat_server.py or chat_server_simple.py)")
+                    servers_running = False
+                    return
         
         try:
             # Avoid stdout/stderr PIPE without readers (can deadlock/hang long-running servers on Windows)
             try:
-                log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logs')
+                log_dir = os.path.join(script_dir, 'logs')
                 os.makedirs(log_dir, exist_ok=True)
                 chat_log = open(os.path.join(log_dir, 'chat_server.log'), 'a', encoding='utf-8')
             except Exception:
@@ -179,11 +221,13 @@ def start_servers():
                 chat_log_path = os.path.join(log_dir, 'chat_server.log')
                 chat_log.flush()  # Ensure log file is ready
             
+            chat_cmd = [chat_exe] if frozen and chat_exe and os.path.isfile(chat_exe) else [sys.executable, chat_server_file]
+            chat_cwd = script_dir if frozen else backend_py_dir
             chat_process = subprocess.Popen(
-                [sys.executable, chat_server_file],
+                chat_cmd,
                 stdout=chat_log if chat_log else subprocess.DEVNULL,
                 stderr=chat_log if chat_log else subprocess.DEVNULL,
-                cwd=backend_py_dir,
+                cwd=chat_cwd,
                 # Ensure child process doesn't inherit debug/reloader env vars
                 env={k: v for k, v in os.environ.items() if k not in ('DEBUG', 'FLASK_DEBUG', 'FLASK_ENV')},
                 creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
@@ -240,49 +284,67 @@ def start_servers():
             servers_running = False
             return
         
-        # Start Django server if django_app directory exists
+        # Start Django server if django_app directory exists or django.exe (frozen)
         try:
-            if os.path.exists(DJANGO_DIR) and os.path.isdir(DJANGO_DIR):
+            django_exe = os.path.join(script_dir, "django.exe") if frozen and os.path.isfile(os.path.join(script_dir, "django.exe")) else None
+            django_dir_abs = os.path.abspath(os.path.join(script_dir, DJANGO_DIR))
+            manage_py = os.path.join(django_dir_abs, "manage.py")
+            start_django = (frozen and django_exe) or (os.path.exists(DJANGO_DIR) and os.path.isdir(DJANGO_DIR) and os.path.exists(manage_py))
+            if start_django:
                 print(f"[*] Starting Django server on port {DJANGO_PORT}...")
-                # Get absolute path to manage.py
-                django_dir_abs = os.path.abspath(DJANGO_DIR)
-                manage_py = os.path.join(django_dir_abs, "manage.py")
-                if os.path.exists(manage_py):
+                try:
                     try:
-                        try:
-                            log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logs')
-                            os.makedirs(log_dir, exist_ok=True)
-                            django_log = open(os.path.join(log_dir, 'django_server.log'), 'a', encoding='utf-8')
-                        except Exception:
-                            django_log = None
+                        log_dir = os.path.join(script_dir, 'logs')
+                        os.makedirs(log_dir, exist_ok=True)
+                        django_log = open(os.path.join(log_dir, 'django_server.log'), 'a', encoding='utf-8')
+                    except Exception:
+                        django_log = None
+                    env = os.environ.copy()
+                    env["DJANGO_PORT"] = str(DJANGO_PORT)
+                    if frozen and django_exe:
+                        django_process = subprocess.Popen(
+                            [django_exe],
+                            stdout=django_log if django_log else subprocess.DEVNULL,
+                            stderr=django_log if django_log else subprocess.DEVNULL,
+                            cwd=script_dir,
+                            env=env,
+                            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
+                        )
+                    else:
                         django_process = subprocess.Popen(
                             [sys.executable, "manage.py", "runserver", f"127.0.0.1:{DJANGO_PORT}", "--noreload"],
                             stdout=django_log if django_log else subprocess.DEVNULL,
                             stderr=django_log if django_log else subprocess.DEVNULL,
-                            cwd=django_dir_abs,  # Use absolute path for cwd
+                            cwd=django_dir_abs,
                             creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
                         )
-                        time.sleep(3)
-                        if django_process.poll() is not None:
-                            stdout, stderr = django_process.communicate()
-                            print("[!] Django server failed to start!")
-                            if stderr:
-                                print(f"[!] Error: {stderr.decode('utf-8', errors='ignore')[:200]}")
-                        else:
-                            print(f"[OK] Django server started on http://localhost:{DJANGO_PORT}")
-                    except Exception as e:
-                        print(f"[!] Error starting Django server: {e}")
+                    time.sleep(3)
+                    if django_process.poll() is not None:
+                        print("[!] Django server failed to start!")
+                        if django_log:
+                            try:
+                                django_log.seek(0)
+                                err = django_log.read(500)
+                                if err:
+                                    print(f"[!] Log: {err[-500:]}")
+                            except Exception:
+                                pass
+                    else:
+                        print(f"[OK] Django server started on http://localhost:{DJANGO_PORT}")
+                except Exception as e:
+                    print(f"[!] Error starting Django server: {e}")
+            elif not frozen:
+                if not os.path.exists(DJANGO_DIR) or not os.path.isdir(DJANGO_DIR):
+                    print(f"[!] Django directory not found: {DJANGO_DIR} (skipping)")
                 else:
                     print(f"[!] manage.py not found in {DJANGO_DIR}")
-            else:
-                print(f"[!] Django directory not found: {DJANGO_DIR} (skipping)")
         except Exception as e:
             print(f"[!] Django start error (skipping): {e}")
         
         # Start Node.js WhatsApp server (whatsapp_server.js on port 3000)
         print("[*] Starting Node.js WhatsApp server (port 3000)...")
         whatsapp_server_file = os.path.join("backend", "node", "whatsapp_server.js")
-        if os.path.exists(os.path.join(os.path.dirname(os.path.abspath(__file__)), whatsapp_server_file)):
+        if os.path.exists(os.path.join(script_dir, whatsapp_server_file)):
             try:
                 # Check if port 3000 is already in use and kill the process
                 print("[*] Checking if port 3000 is available...")
@@ -290,33 +352,38 @@ def start_servers():
                     print("[*] Killed existing process on port 3000")
                     time.sleep(1)  # Wait a moment for port to be released
                 
-                # Check if Node.js is available
+                # Check if Node.js is available (use bundled node_exe when frozen)
                 try:
                     node_check = subprocess.run(
-                        ['node', '--version'],
+                        [node_exe, '--version'],
                         capture_output=True,
-                        timeout=2
+                        timeout=2,
+                        cwd=script_dir
                     )
                     if node_check.returncode != 0:
                         raise FileNotFoundError("Node.js not found")
                     print(f"[*] Node.js version: {node_check.stdout.decode('utf-8', errors='ignore').strip()}")
                 except FileNotFoundError:
                     print("[!] Node.js not found. WhatsApp server will not start.")
-                    print("[!] Install Node.js from https://nodejs.org/")
+                    if frozen:
+                        print(f"[!] Place Node.js in: {os.path.join(script_dir, 'node_runtime')}")
+                        print("[!] (Copy node.exe and DLLs from https://nodejs.org/ Windows 64-bit .zip)")
+                    else:
+                        print("[!] Install Node.js from https://nodejs.org/")
                     whatsapp_node_process = None
                 else:
                     # Log to file (avoid PIPE without readers which can hang servers)
                     try:
-                        log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logs')
+                        log_dir = os.path.join(script_dir, 'logs')
                         os.makedirs(log_dir, exist_ok=True)
                         whatsapp_log = open(os.path.join(log_dir, 'whatsapp_server.log'), 'a', encoding='utf-8')
                     except Exception:
                         whatsapp_log = None
                     whatsapp_node_process = subprocess.Popen(
-                        ['node', whatsapp_server_file],
+                        [node_exe, whatsapp_server_file],
                         stdout=(whatsapp_log if whatsapp_log else subprocess.DEVNULL),
                         stderr=(whatsapp_log if whatsapp_log else subprocess.DEVNULL),
-                        cwd=os.path.dirname(os.path.abspath(__file__)),
+                        cwd=script_dir,
                         creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
                     )
                     # Wait for WhatsApp server to bind to port (Node + whatsapp-web.js require can be slow)
@@ -326,11 +393,8 @@ def start_servers():
                         time.sleep(1)
                         if whatsapp_node_process.poll() is not None:
                             print("[!] WhatsApp Node.js server process exited!")
-                            try:
-                                log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logs')
-                                print(f"[!] Check logs/whatsapp_server.log for details: {os.path.join(log_dir, 'whatsapp_server.log')}")
-                            except Exception:
-                                pass
+                            _print_log_tail(os.path.join(log_dir, 'whatsapp_server.log'))
+                            print(f"[!] Full log: {os.path.join(log_dir, 'whatsapp_server.log')}")
                             whatsapp_node_process = None
                             break
                         try:
@@ -357,7 +421,7 @@ def start_servers():
         # Start Node.js Telegram server (telegram_server.js on port 3001)
         print("[*] Starting Node.js Telegram server (port 3001)...")
         telegram_server_file = os.path.join("backend", "node", "telegram_server.js")
-        if os.path.exists(os.path.join(os.path.dirname(os.path.abspath(__file__)), telegram_server_file)):
+        if os.path.exists(os.path.join(script_dir, telegram_server_file)):
             try:
                 # Check if port 3001 is already in use and kill the process
                 print("[*] Checking if port 3001 is available...")
@@ -400,38 +464,38 @@ def start_servers():
                 try:
                     if 'node_check' not in locals() or node_check is None or node_check.returncode != 0:
                         node_check = subprocess.run(
-                            ['node', '--version'],
+                            [node_exe, '--version'],
                             capture_output=True,
-                            timeout=2
+                            timeout=2,
+                            cwd=script_dir
                         )
                         if node_check.returncode != 0:
                             raise FileNotFoundError("Node.js not found")
                 except FileNotFoundError:
                     print("[!] Node.js not found. Telegram server will not start.")
+                    if frozen and telegram_node_process is None:
+                        print(f"[!] Place Node.js in: {os.path.join(script_dir, 'node_runtime')}")
                     telegram_node_process = None
                 else:
                     # Log to file (avoid PIPE without readers which can hang servers)
                     try:
-                        log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logs')
+                        log_dir = os.path.join(script_dir, 'logs')
                         os.makedirs(log_dir, exist_ok=True)
                         telegram_log = open(os.path.join(log_dir, 'telegram_server.log'), 'a', encoding='utf-8')
                     except Exception:
                         telegram_log = None
                     telegram_node_process = subprocess.Popen(
-                        ['node', telegram_server_file],
+                        [node_exe, telegram_server_file],
                         stdout=(telegram_log if telegram_log else subprocess.DEVNULL),
                         stderr=(telegram_log if telegram_log else subprocess.DEVNULL),
-                        cwd=os.path.dirname(os.path.abspath(__file__)),
+                        cwd=script_dir,
                         creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
                     )
                     time.sleep(3)  # Wait for Telegram server to start
                     if telegram_node_process.poll() is not None:
                         print("[!] Telegram Node.js server failed to start!")
-                        try:
-                            log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logs')
-                            print(f"[!] Check logs/telegram_server.log for details: {os.path.join(log_dir, 'telegram_server.log')}")
-                        except Exception:
-                            pass
+                        _print_log_tail(os.path.join(log_dir, 'telegram_server.log'))
+                        print(f"[!] Full log: {os.path.join(log_dir, 'telegram_server.log')}")
                         telegram_node_process = None
                     else:
                         # Verify server is actually listening
@@ -456,7 +520,7 @@ def start_servers():
         # Start Node.js Slack server (slack_server.js on port 3002)
         print("[*] Starting Node.js Slack server (port 3002)...")
         slack_server_file = os.path.join("backend", "node", "slack_server.js")
-        if os.path.exists(os.path.join(os.path.dirname(os.path.abspath(__file__)), slack_server_file)):
+        if os.path.exists(os.path.join(script_dir, slack_server_file)):
             try:
                 # Check if port 3002 is already in use and kill the process
                 print("[*] Checking if port 3002 is available...")
@@ -468,38 +532,38 @@ def start_servers():
                 try:
                     if 'node_check' not in locals() or node_check is None or node_check.returncode != 0:
                         node_check = subprocess.run(
-                            ['node', '--version'],
+                            [node_exe, '--version'],
                             capture_output=True,
-                            timeout=2
+                            timeout=2,
+                            cwd=script_dir
                         )
                         if node_check.returncode != 0:
                             raise FileNotFoundError("Node.js not found")
                 except FileNotFoundError:
                     print("[!] Node.js not found. Slack server will not start.")
+                    if frozen:
+                        print(f"[!] Place Node.js in: {os.path.join(script_dir, 'node_runtime')}")
                     slack_node_process = None
                 else:
                     # Log to file (avoid PIPE without readers which can hang servers)
                     try:
-                        log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logs')
+                        log_dir = os.path.join(script_dir, 'logs')
                         os.makedirs(log_dir, exist_ok=True)
                         slack_log = open(os.path.join(log_dir, 'slack_server.log'), 'a', encoding='utf-8')
                     except Exception:
                         slack_log = None
                     slack_node_process = subprocess.Popen(
-                        ['node', slack_server_file],
+                        [node_exe, slack_server_file],
                         stdout=(slack_log if slack_log else subprocess.DEVNULL),
                         stderr=(slack_log if slack_log else subprocess.DEVNULL),
-                        cwd=os.path.dirname(os.path.abspath(__file__)),
+                        cwd=script_dir,
                         creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
                     )
                     time.sleep(3)  # Wait for Slack server to start
                     if slack_node_process.poll() is not None:
                         print("[!] Slack Node.js server failed to start!")
-                        try:
-                            log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logs')
-                            print(f"[!] Check logs/slack_server.log for details: {os.path.join(log_dir, 'slack_server.log')}")
-                        except Exception:
-                            pass
+                        _print_log_tail(os.path.join(log_dir, 'slack_server.log'))
+                        print(f"[!] Full log: {os.path.join(log_dir, 'slack_server.log')}")
                         slack_node_process = None
                     else:
                         # Verify server is actually listening
