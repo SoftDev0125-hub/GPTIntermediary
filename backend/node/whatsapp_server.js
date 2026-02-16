@@ -174,7 +174,8 @@ function initializeWhatsApp() {
     }
 
     // Create client with LocalAuth for session persistence
-    // webVersionCache: { type: 'none' } = use latest compatible WhatsApp Web (avoids "Cannot read 'default'" after scan)
+    // Library pinned to 1.34.2: 1.34.3+ regressed with "auth timeout" (live WhatsApp Web no longer
+    // exposes window.Debug.VERSION in time). See pedroslopez/whatsapp-web.js#5680.
     client = new Client({
         authStrategy: new LocalAuth({
             dataPath: SESSION_DIR
@@ -190,9 +191,6 @@ function initializeWhatsApp() {
                 '--no-zygote',
                 '--disable-gpu'
             ]
-        },
-        webVersionCache: {
-            type: 'none'
         }
     });
 
