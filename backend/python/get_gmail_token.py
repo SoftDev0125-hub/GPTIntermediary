@@ -112,24 +112,43 @@ def get_gmail_credentials():
     # Save tokens
     print("\n✅ Got credentials!")
     print(f"\n📝 Access Token: {creds.token[:50]}...")
-    print(f"📝 Refresh Token: {creds.refresh_token[:50]}..." if creds.refresh_token else "📝 Refresh Token: (none)")
+    if creds.refresh_token:
+        print(f"📝 Refresh Token: {creds.refresh_token[:50]}...")
+    else:
+        print("📝 Refresh Token: (none) - see note below")
+    
+    if not creds.refresh_token:
+        print("\n⚠️  No refresh token from Google (common if you already authorized before).")
+        print("   To get one: go to https://myaccount.google.com/permissions")
+        print("   → Remove this app's access → run this script again and sign in.")
     
     # Update .env file (same file we loaded)
     env_path = ENV_PATH
     with open(env_path, 'r') as f:
         lines = f.readlines()
     
+    replaced_access = False
+    replaced_refresh = False
     with open(env_path, 'w') as f:
         for line in lines:
             if line.startswith('USER_ACCESS_TOKEN='):
                 f.write(f'USER_ACCESS_TOKEN={creds.token}\n')
+                replaced_access = True
             elif line.startswith('USER_REFRESH_TOKEN='):
                 if creds.refresh_token:
                     f.write(f'USER_REFRESH_TOKEN={creds.refresh_token}\n')
+                    replaced_refresh = True
                 else:
                     f.write(line)
             else:
                 f.write(line)
+        # If .env had no lines for these, append them so tokens are never lost
+        if not replaced_access:
+            f.write(f'\n# User OAuth Tokens (from get_gmail_token.py)\nUSER_ACCESS_TOKEN={creds.token}\n')
+        if not replaced_refresh and creds.refresh_token:
+            f.write(f'USER_REFRESH_TOKEN={creds.refresh_token}\n')
+        elif not replaced_refresh:
+            f.write('USER_REFRESH_TOKEN=\n')
     
     print(f"\n✅ Tokens saved to .env file!")
     print("\n🚀 Now restart your chat server to use the new tokens")

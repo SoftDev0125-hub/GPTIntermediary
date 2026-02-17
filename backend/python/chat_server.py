@@ -422,6 +422,52 @@ def styles():
     except Exception as e:
         return f"Error loading styles.css: {str(e)}", 500
 
+
+# Proxy WhatsApp REST API so the frontend can use same-origin (no CORS) when served from chat server
+WHATSAPP_NODE_URL = os.environ.get("WHATSAPP_NODE_URL", "http://127.0.0.1:3000")
+
+
+@app.route('/api/whatsapp/<path:subpath>', methods=['GET', 'POST', 'PUT', 'DELETE'])
+def proxy_whatsapp(subpath):
+    """Proxy WhatsApp API requests to the Node server so browser uses same origin (port 5000)."""
+    url = f"{WHATSAPP_NODE_URL.rstrip('/')}/api/whatsapp/{subpath}"
+    if request.query_string:
+        url = f"{url}?{request.query_string.decode('utf-8')}"
+    try:
+        kwargs = {"timeout": 30}
+        if request.method == 'GET':
+            r = requests.get(url, **kwargs)
+        elif request.method in ('POST', 'PUT'):
+            # Forward JSON body so Node server receives it correctly
+            body = request.get_data(as_text=True)
+            try:
+                payload = request.get_json(silent=True)
+                if payload is not None:
+                    kwargs["json"] = payload
+                else:
+                    kwargs["data"] = body
+                    kwargs["headers"] = {"Content-Type": request.headers.get("Content-Type", "application/json")}
+            except Exception:
+                kwargs["data"] = body
+                kwargs["headers"] = {"Content-Type": request.headers.get("Content-Type", "application/json")}
+            if request.method == 'POST':
+                r = requests.post(url, **kwargs)
+            else:
+                r = requests.put(url, **kwargs)
+        elif request.method == 'DELETE':
+            r = requests.delete(url, **kwargs)
+        else:
+            return jsonify({"error": "Method not allowed"}), 405
+        ct = r.headers.get('Content-Type', 'application/json')
+        return r.content, r.status_code, {'Content-Type': ct}
+    except requests.exceptions.ConnectionError:
+        return jsonify({"success": False, "error": "WhatsApp server not reachable. Make sure the app started the WhatsApp server (port 3000)."}), 503
+    except requests.exceptions.Timeout:
+        return jsonify({"success": False, "error": "WhatsApp server did not respond in time."}), 504
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 502
+
+
 @app.route('/health', methods=['GET'])
 def health():
     """Health check endpoint"""

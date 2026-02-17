@@ -744,6 +744,7 @@
                         <div class="whatsapp-header-content">
                             <h2 id="whatsappCurrentChat">WhatsApp</h2>
                             <div class="whatsapp-header-info" id="whatsappStatus"></div>
+                            <button type="button" id="whatsappRefreshMessagesBtn" class="whatsapp-refresh-msg-btn" title="Refresh messages" style="display: none; margin-left: 8px; padding: 4px 10px; font-size: 12px; cursor: pointer;">Refresh</button>
                         </div>
                     </div>
                     <div class="whatsapp-messages-container" id="whatsappMessagesContainer">
@@ -1136,13 +1137,16 @@
             return `${window.location.origin}${servicePath}`;
         };
         const TELEGRAM_API_URL = getNodeServerUrl(3001, '/telegram');
-        const WHATSAPP_API_URL = getNodeServerUrl(3000, '/whatsapp');
+        // Always use chat server (same origin) for WhatsApp REST API - chat server proxies to Node on 3000 (avoids CORS and connection issues)
+        const WHATSAPP_API_URL = CHAT_SERVER_URL;
+        const WHATSAPP_SOCKET_URL = getNodeServerUrl(3000, '/whatsapp'); // Socket.IO connects to Node server (port 3000)
         const SLACK_API_URL = getNodeServerUrl(3002, '/slack');
         
         // Debug: Log the configured URLs
         console.log('[CONFIG] API_BASE:', API_BASE);
         console.log('[CONFIG] TELEGRAM_API_URL:', TELEGRAM_API_URL);
         console.log('[CONFIG] WHATSAPP_API_URL:', WHATSAPP_API_URL);
+        console.log('[CONFIG] WHATSAPP_SOCKET_URL:', WHATSAPP_SOCKET_URL);
         console.log('[CONFIG] SLACK_API_URL:', SLACK_API_URL);
         
         // Main tab switching function - defined globally so it's accessible everywhere
@@ -3749,6 +3753,7 @@
         let whatsappIsLoadingChats = false;
         let whatsappJustScannedQR = false; // Track if QR was just scanned (vs. existing session on launch)
         let whatsappSocket = null;
+        let whatsappRealtimePollTimer = null; // Fallback polling when WebSocket is not connected
         let currentChatMessages = []; // Store messages for currently open chat
 
         /**
@@ -4305,7 +4310,7 @@
                 reconnectionDelay: 1000,
                 reconnectionDelayMax: 5000,
                 reconnectionAttempts: Infinity,
-                timeout: 20000,
+                timeout: 30000,
                 transports: ['websocket', 'polling']
             };
             
@@ -4315,12 +4320,13 @@
             }
             
             whatsappSocket = io(hostname === 'localhost' || hostname === '127.0.0.1' 
-                ? WHATSAPP_API_URL 
+                ? WHATSAPP_SOCKET_URL 
                 : window.location.origin, 
                 whatsappSocketOptions);
 
             whatsappSocket.on('connect', () => {
                 console.log('[*] WhatsApp WebSocket connected - Real-time messaging active');
+                stopWhatsAppRealtimePolling();
             });
 
             whatsappSocket.on('disconnect', (reason) => {
@@ -4372,6 +4378,43 @@
                 // Update existing message with full info
                 handleIncomingWhatsAppMessage(message, false); // false = update existing
             });
+        }
+
+        function stopWhatsAppRealtimePolling() {
+            if (whatsappRealtimePollTimer) {
+                clearInterval(whatsappRealtimePollTimer);
+                whatsappRealtimePollTimer = null;
+                console.log('[*] WhatsApp real-time polling stopped (WebSocket active or tab inactive)');
+            }
+        }
+
+        function startWhatsAppRealtimePolling() {
+            if (whatsappSocket && whatsappSocket.connected) return;
+            if (!currentWhatsAppChatId) return;
+            if (whatsappRealtimePollTimer) return;
+            console.log('[*] WhatsApp WebSocket not connected - starting fallback polling for real-time updates');
+            whatsappRealtimePollTimer = setInterval(async () => {
+                try {
+                    if (whatsappSocket && whatsappSocket.connected) return;
+                    if (!currentWhatsAppChatId) return;
+                    const response = await fetch(`${WHATSAPP_API_URL}/api/whatsapp/messages`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ contact_id: currentWhatsAppChatId, limit: 100 })
+                    });
+                    if (!response.ok) return;
+                    const data = await response.json();
+                    if (!data.success || !data.messages) return;
+                    const prevLen = currentChatMessages.length;
+                    currentChatMessages = data.messages;
+                    if (currentChatMessages.length !== prevLen && whatsappMessagesList) {
+                        const contactName = document.getElementById('whatsappCurrentChat')?.textContent || 'Contact';
+                        displayWhatsAppMessages(currentChatMessages, contactName);
+                        if (whatsappStatus) whatsappStatus.textContent = `${data.count} messages`;
+                        if (whatsappCount) whatsappCount.textContent = `${data.count} messages`;
+                    }
+                } catch (e) { /* ignore */ }
+            }, 1000);
         }
 
         /**
@@ -4774,10 +4817,12 @@
                 whatsappQrContainer.style.display = 'none';
             }
             
-            // Show input container
+            // Show input container and refresh button
             if (whatsappInputContainer) {
                 whatsappInputContainer.style.display = 'block';
             }
+            const whatsappRefreshMessagesBtn = document.getElementById('whatsappRefreshMessagesBtn');
+            if (whatsappRefreshMessagesBtn) whatsappRefreshMessagesBtn.style.display = 'inline-block';
             
             // Update active state in sidebar
             document.querySelectorAll('.whatsapp-chat-item').forEach(item => {
@@ -4832,6 +4877,8 @@
                     
                     // Display messages
                     displayWhatsAppMessages(currentChatMessages, contactName);
+                    // If WebSocket is not connected, use polling so new messages still appear (real-time fallback)
+                    startWhatsAppRealtimePolling();
                 } else {
                     throw new Error(data.error || 'Failed to load messages');
                 }
@@ -5064,21 +5111,24 @@
                     })
                 });
 
+                const data = await response.json().catch(() => ({}));
                 if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    throw new Error(data.error || `HTTP ${response.status}: ${response.statusText}`);
                 }
-
-                const data = await response.json();
+                if (!data.success && data.error) {
+                    throw new Error(data.error);
+                }
                 console.log('[*] Message sent:', data);
 
-                // Remove temporary message (real one will come via WebSocket)
-                const listEl = whatsappMessagesList || whatsappMessagesContainer;
-                const tempElement = listEl?.querySelector(`[data-message-id="${tempMessageId}"]`);
-                if (tempElement) {
-                    tempElement.remove();
+                // Keep the optimistic message visible: update its id to the real message_id so it stays and won't duplicate when WebSocket delivers the same message
+                const realId = data.message_id || null;
+                if (realId) {
+                    const idx = currentChatMessages.findIndex(m => m.id === tempMessageId);
+                    if (idx !== -1) currentChatMessages[idx].id = realId;
+                    const listEl = whatsappMessagesList || whatsappMessagesContainer;
+                    const tempElement = listEl?.querySelector(`[data-message-id="${tempMessageId}"]`);
+                    if (tempElement) tempElement.setAttribute('data-message-id', realId);
                 }
-                
-                // Real message will arrive via WebSocket and display instantly
             } catch (error) {
                 console.error('[!] Error sending WhatsApp message:', error);
                 
@@ -5092,7 +5142,11 @@
                 // Restore message text
                 whatsappMessageInput.value = messageText;
                 
-                alert(`Error sending message: ${error.message}`);
+                let errMsg = error.message || 'Unknown error';
+                if (errMsg.includes('Failed to fetch') || errMsg.includes('NetworkError')) {
+                    errMsg = 'Cannot reach WhatsApp server. Make sure the app is running and the WhatsApp server started (port 3000), then try again.';
+                }
+                alert(`Error sending message: ${errMsg}`);
             } finally {
                 if (whatsappSendButton) whatsappSendButton.disabled = false;
             }
@@ -5100,6 +5154,18 @@
 
         if (whatsappSendButton) {
             whatsappSendButton.addEventListener('click', sendWhatsAppMessage);
+        }
+        const whatsappRefreshMessagesBtn = document.getElementById('whatsappRefreshMessagesBtn');
+        if (whatsappRefreshMessagesBtn) {
+            whatsappRefreshMessagesBtn.addEventListener('click', async () => {
+                if (!currentWhatsAppChatId) return;
+                const contactName = document.getElementById('whatsappCurrentChat')?.textContent || 'Contact';
+                whatsappRefreshMessagesBtn.disabled = true;
+                whatsappRefreshMessagesBtn.textContent = '...';
+                await loadWhatsAppContactMessages(currentWhatsAppChatId, contactName);
+                whatsappRefreshMessagesBtn.disabled = false;
+                whatsappRefreshMessagesBtn.textContent = 'Refresh';
+            });
         }
         if (whatsappMessageInput) {
             whatsappMessageInput.addEventListener('keypress', (e) => {
@@ -5156,6 +5222,7 @@
                 console.log('[*] Telegram tab activated - initializing Telegram WebSocket...');
                 initializeTelegramWebSocket();
             } else {
+                stopWhatsAppRealtimePolling();
                 if (whatsappAuthCheckInterval) {
                     clearInterval(whatsappAuthCheckInterval);
                     whatsappAuthCheckInterval = null;

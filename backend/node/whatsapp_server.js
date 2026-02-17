@@ -261,7 +261,8 @@ function initializeWhatsApp() {
             cacheWhatsAppMessage(message);
             console.log('[WhatsApp] New message received:', message.from, message.body?.substring(0, 50));
             
-            // Emit immediately with basic info (don't wait for async operations)
+            // Get chat first so contact_id matches the open conversation (1:1 or group)
+            const chat = await message.getChat();
             const quickMessage = {
                 id: message.id._serialized,
                 body: message.body || '',
@@ -273,9 +274,9 @@ function initializeWhatsApp() {
                 mediaUrl: null,
                 mediaMimetype: null,
                 mediaFilename: null,
-                contact_id: message.from, // Use from as contact_id initially
-                contact_name: 'Loading...', // Will be updated
-                is_group: false
+                contact_id: chat.id._serialized,
+                contact_name: 'Loading...',
+                is_group: !!chat.isGroup
             };
             
             // If message has media, try to download it asynchronously
@@ -285,7 +286,6 @@ function initializeWhatsApp() {
                         quickMessage.mediaUrl = `data:${media.mimetype};base64,${media.data}`;
                         quickMessage.mediaMimetype = media.mimetype;
                         quickMessage.mediaFilename = media.filename || null;
-                        // Emit update with media
                         io.emit('whatsapp_message_update', quickMessage);
                     }
                 }).catch(err => {
@@ -293,14 +293,10 @@ function initializeWhatsApp() {
                 });
             }
             
-            // Emit immediately for instant display
             io.emit('whatsapp_message', quickMessage);
             
-            // Get chat info asynchronously and emit update
             try {
-                const chat = await message.getChat();
                 const contact = await message.getContact();
-                
                 const formattedMessage = {
                     id: message.id._serialized,
                     body: message.body || '',
@@ -314,10 +310,8 @@ function initializeWhatsApp() {
                     mediaFilename: quickMessage.mediaFilename,
                     contact_id: chat.id._serialized,
                     contact_name: chat.name || contact.name || 'Unknown',
-                    is_group: chat.isGroup
+                    is_group: !!chat.isGroup
                 };
-                
-                // Emit updated message with full info
                 io.emit('whatsapp_message_update', formattedMessage);
             } catch (chatError) {
                 console.error('[WhatsApp] Error getting chat info:', chatError);
@@ -335,7 +329,7 @@ function initializeWhatsApp() {
         if (message.fromMe) {
             try {
                 cacheWhatsAppMessage(message);
-                // Emit immediately with basic info
+                const chat = await message.getChat();
                 const quickMessage = {
                     id: message.id._serialized,
                     body: message.body || '',
@@ -347,19 +341,17 @@ function initializeWhatsApp() {
                     mediaUrl: null,
                     mediaMimetype: null,
                     mediaFilename: null,
-                    contact_id: message.to, // Use 'to' for sent messages
+                    contact_id: chat.id._serialized,
                     contact_name: 'Loading...',
-                    is_group: false
+                    is_group: !!chat.isGroup
                 };
                 
-                // If message has media, try to download it asynchronously
                 if (message.hasMedia) {
                     message.downloadMedia().then(media => {
                         if (media) {
                             quickMessage.mediaUrl = `data:${media.mimetype};base64,${media.data}`;
                             quickMessage.mediaMimetype = media.mimetype;
                             quickMessage.mediaFilename = media.filename || null;
-                            // Emit update with media
                             io.emit('whatsapp_message_update', quickMessage);
                         }
                     }).catch(err => {
@@ -367,12 +359,9 @@ function initializeWhatsApp() {
                     });
                 }
                 
-                // Emit immediately for instant display
                 io.emit('whatsapp_message', quickMessage);
                 
-                // Get chat info and emit update
                 try {
-                    const chat = await message.getChat();
                     const contact = await message.getContact();
                     
                     const formattedMessage = {
@@ -388,7 +377,7 @@ function initializeWhatsApp() {
                         mediaFilename: quickMessage.mediaFilename,
                         contact_id: chat.id._serialized,
                         contact_name: chat.name || contact.name || 'Unknown',
-                        is_group: chat.isGroup
+                        is_group: !!chat.isGroup
                     };
                     
                     // Emit updated message with full info
@@ -1240,8 +1229,8 @@ app.post('/api/whatsapp/send', async (req, res) => {
             });
         }
 
-        // Send message
-        const message = await client.sendMessage(contact_id, text);
+        // Send message. Use sendSeen: false to avoid WhatsApp Web bug (TypeError: Cannot read properties of undefined (reading 'markedUnread')) in sendSeen
+        const message = await client.sendMessage(contact_id, text, { sendSeen: false });
 
         return res.json({
             success: true,
