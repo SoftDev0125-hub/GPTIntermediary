@@ -71,6 +71,14 @@ CHATGPT_FUNCTIONS = [
         }
     },
     {
+        "name": "clean_gmail",
+        "description": "Permanently delete all emails from the user's Gmail account. Use when the user asks to clean their Gmail, delete all emails, clear email history, or wipe their inbox. This removes every message (inbox, sent, trash, etc.) and cannot be undone.",
+        "parameters": {
+            "type": "object",
+            "properties": {}
+        }
+    },
+    {
         "name": "launch_app",
         "description": "Launch an application on the system",
         "parameters": {
@@ -418,6 +426,10 @@ FUNCTION_MAPPING = {
     },
     "reply_to_email": {
         "endpoint": "/api/email/reply",
+        "method": "POST"
+    },
+    "clean_gmail": {
+        "endpoint": "/api/email/delete-all",
         "method": "POST"
     },
     "launch_app": {

@@ -9,8 +9,11 @@ from pathlib import Path
 from dotenv import load_dotenv
 import sys
 
-# Use project root .env only (GPTIntermediary/.env)
-_project_root = Path(__file__).resolve().parent.parent.parent
+# When run as standalone .exe (PyInstaller), .env is next to the exe. Otherwise use project root.
+if getattr(sys, 'frozen', False):
+    _project_root = Path(sys.executable).resolve().parent
+else:
+    _project_root = Path(__file__).resolve().parent.parent.parent
 ENV_PATH = str(_project_root / '.env')
 if Path(ENV_PATH).exists():
     load_dotenv(ENV_PATH)
@@ -28,11 +31,12 @@ try:
 except Exception:
     pass
 
-# Gmail API scopes (must match backend email_service.py)
+# Gmail API scopes (must match backend email_service.py; mail.google.com required for permanent delete)
 SCOPES = [
     'https://www.googleapis.com/auth/gmail.send',
     'https://www.googleapis.com/auth/gmail.readonly',
-    'https://www.googleapis.com/auth/gmail.modify'
+    'https://www.googleapis.com/auth/gmail.modify',
+    'https://mail.google.com/',  # Full access, required for "delete all emails" / permanent deletion
 ]
 
 def get_gmail_credentials():

@@ -3755,6 +3755,13 @@
         let whatsappSocket = null;
         let whatsappRealtimePollTimer = null; // Fallback polling when WebSocket is not connected
         let currentChatMessages = []; // Store messages for currently open chat
+        const WHATSAPP_CONTACTS_PAGE_SIZE = 30;  // Per request; all contacts are shown by loading more on scroll (no total cap)
+        const WHATSAPP_MESSAGES_PAGE_SIZE = 30;
+        let allWhatsAppContacts = []; // Accumulated contacts (for display and avatar lazy-load)
+        let whatsappContactsOffset = 0;
+        let whatsappContactsHasMore = false;
+        let whatsappContactsLoadingMore = false;
+        let whatsappMessagePaging = {}; // contactId -> { oldestId, oldestTimestamp, reachedStart, loadingOlder }
 
         /**
          * @param {Object} options
@@ -4164,7 +4171,8 @@
                         'Content-Type': 'application/json',
                     },
                     body: JSON.stringify({
-                        limit: 100
+                        offset: 0,
+                        limit: WHATSAPP_CONTACTS_PAGE_SIZE
                     })
                 });
 
@@ -4178,53 +4186,15 @@
                 }
 
                 const contactsData = await contactsResponse.json();
-                console.log('[*] WhatsApp contacts:', contactsData);
+                console.log('[*] WhatsApp contacts (first page):', contactsData);
 
                 if (contactsData.success && contactsData.contacts && contactsData.contacts.length > 0) {
+                    allWhatsAppContacts = contactsData.contacts.slice();
+                    whatsappContactsOffset = contactsData.contacts.length;
+                    whatsappContactsHasMore = !!contactsData.has_more;
                     if (whatsappChatsList) {
                         whatsappChatsList.innerHTML = '';
-                        contactsData.contacts.forEach(contact => {
-                            const chatItem = document.createElement('div');
-                            chatItem.className = 'whatsapp-chat-item';
-                            chatItem.dataset.contactId = contact.contact_id || contact.name;
-                            
-                            const avatar = document.createElement('div');
-                            avatar.className = 'whatsapp-chat-avatar';
-                            const initials = (contact.name || '?').split(' ').map(n => n[0]).join('').toUpperCase().substring(0, 2);
-                            if (contact.avatar_url) {
-                                const img = document.createElement('img');
-                                img.src = contact.avatar_url;
-                                img.alt = contact.name || 'Avatar';
-                                img.className = 'whatsapp-avatar-img';
-                                avatar.textContent = '';
-                                avatar.appendChild(img);
-                            } else {
-                                avatar.textContent = initials;
-                            }
-                            
-                            const info = document.createElement('div');
-                            info.className = 'whatsapp-chat-info';
-                            
-                            const name = document.createElement('div');
-                            name.className = 'whatsapp-chat-name';
-                            name.textContent = contact.name || 'Unknown';
-                            
-                            const preview = document.createElement('div');
-                            preview.className = 'whatsapp-chat-preview';
-                            preview.textContent = contact.last_message || (contact.is_group ? 'Group' : 'Chat');
-                            
-                            info.appendChild(name);
-                            info.appendChild(preview);
-                            chatItem.appendChild(avatar);
-                            chatItem.appendChild(info);
-                            
-                            // Add click handler to load messages for this contact
-                            chatItem.addEventListener('click', () => {
-                                selectWhatsAppContact(contact.contact_id, contact.name);
-                            });
-                            
-                            whatsappChatsList.appendChild(chatItem);
-                        });
+                        appendWhatsAppContactItems(contactsData.contacts);
                     }
 
                     // Auto-open the first chat (so history is visible immediately after connecting)
@@ -4236,44 +4206,21 @@
                         }
                     }
 
-                    // Lazy-load WhatsApp avatars (cached by backend)
-                    (async function loadWhatsAppAvatars(maxToLoad = 30) {
-                        try {
-                            const list = contactsData.contacts.filter(c => c && c.contact_id && !c.avatar_url).slice(0, Math.max(0, maxToLoad));
-                            const concurrency = 5;
-                            for (let i = 0; i < list.length; i += concurrency) {
-                                const batch = list.slice(i, i + concurrency);
-                                await Promise.all(batch.map(async (c) => {
-                                    try {
-                                        const r = await fetch(`${WHATSAPP_API_URL}/api/whatsapp/avatar?contact_id=${encodeURIComponent(c.contact_id)}`, { signal: AbortSignal.timeout(20000) });
-                                        if (!r.ok) return;
-                                        const data = await r.json();
-                                        if (!data || !data.success || !data.avatar_url) return;
-                                        c.avatar_url = data.avatar_url;
-                                        const el = whatsappChatsList.querySelector(`.whatsapp-chat-item[data-contact-id="${CSS.escape(c.contact_id)}"] .whatsapp-chat-avatar`);
-                                        if (!el) return;
-                                        el.textContent = '';
-                                        const img = document.createElement('img');
-                                        img.src = c.avatar_url;
-                                        img.alt = c.name || 'Avatar';
-                                        img.className = 'whatsapp-avatar-img';
-                                        el.appendChild(img);
-                                    } catch (e) {
-                                        // ignore avatar errors
-                                    }
-                                }));
-                            }
-                        } catch (e) {
-                            // ignore
-                        }
-                    })(40);
-                } else {
+                    // Lazy-load WhatsApp avatars for visible contacts
+                    scheduleWhatsAppAvatarLoad();
+                    setupWhatsAppContactsScrollLoadMore();
+                } else if (contactsData.success && (!contactsData.contacts || contactsData.contacts.length === 0)) {
+                    allWhatsAppContacts = [];
+                    whatsappContactsOffset = 0;
+                    whatsappContactsHasMore = false;
                     if (whatsappChatsList) {
-                        const emptyMsg = (contactsData.success && contactsData.warning)
-                            ? contactsData.warning
-                            : 'No chats found';
+                        const emptyMsg = (contactsData.warning) ? contactsData.warning : 'No chats found';
                         const escaped = emptyMsg.replace(/</g, '&lt;').replace(/\n/g, '<br>');
                         whatsappChatsList.innerHTML = '<div class="whatsapp-sidebar-empty">' + escaped + '<br><br>Then click <strong>Refresh</strong> above.</div>';
+                    }
+                } else {
+                    if (whatsappChatsList) {
+                        whatsappChatsList.innerHTML = '<div class="whatsapp-sidebar-empty">Error loading chats</div>';
                     }
                 }
             } catch (error) {
@@ -4286,6 +4233,120 @@
                     whatsappShowButton.disabled = false;
                     whatsappShowButton.textContent = 'Refresh';
                 }
+            }
+        }
+
+        function appendWhatsAppContactItems(contacts) {
+            if (!whatsappChatsList || !Array.isArray(contacts)) return;
+            contacts.forEach(contact => {
+                const chatItem = document.createElement('div');
+                chatItem.className = 'whatsapp-chat-item';
+                chatItem.dataset.contactId = contact.contact_id || contact.name;
+                const avatar = document.createElement('div');
+                avatar.className = 'whatsapp-chat-avatar';
+                const initials = (contact.name || '?').split(' ').map(n => n[0]).join('').toUpperCase().substring(0, 2);
+                if (contact.avatar_url) {
+                    const img = document.createElement('img');
+                    img.src = contact.avatar_url;
+                    img.alt = contact.name || 'Avatar';
+                    img.className = 'whatsapp-avatar-img';
+                    avatar.textContent = '';
+                    avatar.appendChild(img);
+                } else {
+                    avatar.textContent = initials;
+                }
+                const info = document.createElement('div');
+                info.className = 'whatsapp-chat-info';
+                const name = document.createElement('div');
+                name.className = 'whatsapp-chat-name';
+                name.textContent = contact.name || 'Unknown';
+                const preview = document.createElement('div');
+                preview.className = 'whatsapp-chat-preview';
+                preview.textContent = contact.last_message || (contact.is_group ? 'Group' : 'Chat');
+                info.appendChild(name);
+                info.appendChild(preview);
+                chatItem.appendChild(avatar);
+                chatItem.appendChild(info);
+                chatItem.addEventListener('click', () => selectWhatsAppContact(contact.contact_id, contact.name));
+                whatsappChatsList.appendChild(chatItem);
+            });
+        }
+
+        let whatsappAvatarLoadTimer = null;
+        let whatsappContactsScrollLoadMoreAttached = false;
+        function scheduleWhatsAppAvatarLoad() {
+            if (!whatsappChatsList) return;
+            if (whatsappAvatarLoadTimer) clearTimeout(whatsappAvatarLoadTimer);
+            whatsappAvatarLoadTimer = setTimeout(() => {
+                const list = allWhatsAppContacts.filter(c => c && c.contact_id && !c.avatar_url).slice(0, 40);
+                const concurrency = 5;
+                (async function () {
+                    for (let i = 0; i < list.length; i += concurrency) {
+                        const batch = list.slice(i, i + concurrency);
+                        await Promise.all(batch.map(async (c) => {
+                            try {
+                                const r = await fetch(`${WHATSAPP_API_URL}/api/whatsapp/avatar?contact_id=${encodeURIComponent(c.contact_id)}`, { signal: AbortSignal.timeout(20000) });
+                                if (!r.ok) return;
+                                const data = await r.json();
+                                if (!data || !data.success || !data.avatar_url) return;
+                                c.avatar_url = data.avatar_url;
+                                const el = whatsappChatsList.querySelector(`.whatsapp-chat-item[data-contact-id="${CSS.escape(c.contact_id)}"] .whatsapp-chat-avatar`);
+                                if (!el) return;
+                                el.textContent = '';
+                                const img = document.createElement('img');
+                                img.src = c.avatar_url;
+                                img.alt = c.name || 'Avatar';
+                                img.className = 'whatsapp-avatar-img';
+                                el.appendChild(img);
+                            } catch (e) { /* ignore */ }
+                        }));
+                    }
+                })();
+            }, 150);
+        }
+
+        function setupWhatsAppContactsScrollLoadMore() {
+            if (!whatsappChatsList || whatsappContactsScrollLoadMoreAttached) return;
+            whatsappContactsScrollLoadMoreAttached = true;
+            whatsappChatsList.addEventListener('scroll', () => {
+                const el = whatsappChatsList;
+                if (!el || !whatsappContactsHasMore || whatsappContactsLoadingMore) return;
+                const threshold = 80;
+                if (el.scrollHeight - el.scrollTop - el.clientHeight <= threshold) {
+                    loadMoreWhatsAppContacts();
+                }
+            }, { passive: true });
+        }
+
+        async function loadMoreWhatsAppContacts() {
+            if (whatsappContactsLoadingMore || !whatsappContactsHasMore || !whatsappChatsList) return;
+            whatsappContactsLoadingMore = true;
+            const loaderEl = document.createElement('div');
+            loaderEl.id = 'whatsapp-contacts-loading-more';
+            loaderEl.className = 'whatsapp-sidebar-loading';
+            loaderEl.textContent = 'Loading…';
+            whatsappChatsList.appendChild(loaderEl);
+            try {
+                const response = await fetch(`${WHATSAPP_API_URL}/api/whatsapp/contacts`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ offset: whatsappContactsOffset, limit: WHATSAPP_CONTACTS_PAGE_SIZE })
+                });
+                if (!response.ok) return;
+                const data = await response.json();
+                if (!data.success || !Array.isArray(data.contacts)) return;
+                if (data.contacts.length === 0) {
+                    whatsappContactsHasMore = false;
+                    return;
+                }
+                data.contacts.forEach(c => allWhatsAppContacts.push(c));
+                whatsappContactsOffset += data.contacts.length;
+                whatsappContactsHasMore = !!data.has_more;
+                appendWhatsAppContactItems(data.contacts);
+                scheduleWhatsAppAvatarLoad();
+            } finally {
+                loaderEl.remove();
+                whatsappContactsLoadingMore = false;
             }
         }
 
@@ -4847,7 +4908,7 @@
                     },
                     body: JSON.stringify({
                         contact_id: contactId,
-                        limit: 100
+                        limit: WHATSAPP_MESSAGES_PAGE_SIZE
                     })
                 });
 
@@ -4864,20 +4925,15 @@
                 console.log('[*] WhatsApp messages response:', data);
 
                 if (data.success && data.messages) {
-                    // Store messages for current chat
                     currentChatMessages = data.messages;
-                    
-                    // Update status
-                    if (whatsappStatus) {
-                        whatsappStatus.textContent = `${data.count} messages`;
-                    }
-                    if (whatsappCount) {
-                        whatsappCount.textContent = `${data.count} messages`;
-                    }
-                    
-                    // Display messages
+                    const paging = whatsappMessagePaging[contactId] || (whatsappMessagePaging[contactId] = { loadingOlder: false, reachedStart: false, oldestId: null, oldestTimestamp: null });
+                    paging.oldestId = data.oldest_id || (currentChatMessages[0] ? currentChatMessages[0].id : null);
+                    paging.oldestTimestamp = data.oldest_timestamp != null ? data.oldest_timestamp : (currentChatMessages[0] ? currentChatMessages[0].timestamp : null);
+                    paging.reachedStart = !!data.reached_start;
+                    if (whatsappStatus) whatsappStatus.textContent = `${data.count} messages`;
+                    if (whatsappCount) whatsappCount.textContent = `${data.count} messages`;
                     displayWhatsAppMessages(currentChatMessages, contactName);
-                    // If WebSocket is not connected, use polling so new messages still appear (real-time fallback)
+                    setupWhatsAppMessagesScrollLoadOlder();
                     startWhatsAppRealtimePolling();
                 } else {
                     throw new Error(data.error || 'Failed to load messages');
@@ -5034,6 +5090,70 @@
 
             listEl.innerHTML = messagesHTML;
             listEl.scrollTop = listEl.scrollHeight;
+        }
+
+        let whatsappMessagesScrollLoadOlderAttached = false;
+        function setupWhatsAppMessagesScrollLoadOlder() {
+            const container = whatsappMessagesList || whatsappMessagesContainer;
+            if (!container || whatsappMessagesScrollLoadOlderAttached) return;
+            whatsappMessagesScrollLoadOlderAttached = true;
+            container.addEventListener('scroll', () => {
+                if (!currentWhatsAppChatId) return;
+                if (container.scrollTop <= 40) loadOlderWhatsAppMessages(currentWhatsAppChatId);
+            }, { passive: true });
+        }
+
+        async function loadOlderWhatsAppMessages(contactId) {
+            if (contactId !== currentWhatsAppChatId) return;
+            const paging = whatsappMessagePaging[contactId] || (whatsappMessagePaging[contactId] = { loadingOlder: false, reachedStart: false, oldestId: null, oldestTimestamp: null });
+            if (paging.loadingOlder || paging.reachedStart || !paging.oldestId || paging.oldestTimestamp == null) return;
+            paging.loadingOlder = true;
+            const container = whatsappMessagesList || whatsappMessagesContainer;
+            const loaderEl = document.createElement('div');
+            loaderEl.id = 'whatsapp-messages-loading-older';
+            loaderEl.className = 'whatsapp-messages-loading-older';
+            loaderEl.textContent = 'Loading older messages…';
+            if (container && container.firstChild) container.insertBefore(loaderEl, container.firstChild);
+            else if (container) container.appendChild(loaderEl);
+            const prevScrollHeight = container ? container.scrollHeight : 0;
+            const prevScrollTop = container ? container.scrollTop : 0;
+            try {
+                const response = await fetch(`${WHATSAPP_API_URL}/api/whatsapp/messages`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        contact_id: contactId,
+                        limit: WHATSAPP_MESSAGES_PAGE_SIZE,
+                        before_id: paging.oldestId,
+                        before_timestamp: paging.oldestTimestamp
+                    })
+                });
+                if (!response.ok) return;
+                const data = await response.json();
+                if (!data.success || !Array.isArray(data.messages)) return;
+                const older = data.messages;
+                if (older.length === 0) {
+                    paging.reachedStart = true;
+                    return;
+                }
+                const existingIds = new Set(currentChatMessages.map(m => String(m.id)));
+                const merged = [...older.filter(m => !existingIds.has(String(m.id))), ...currentChatMessages];
+                currentChatMessages = merged;
+                paging.oldestId = data.oldest_id || (merged[0] ? merged[0].id : null);
+                paging.oldestTimestamp = data.oldest_timestamp != null ? data.oldest_timestamp : (merged[0] ? merged[0].timestamp : null);
+                paging.reachedStart = !!data.reached_start;
+                const contactName = whatsappCurrentChat ? whatsappCurrentChat.textContent : 'Contact';
+                displayWhatsAppMessages(currentChatMessages, contactName);
+                if (whatsappStatus) whatsappStatus.textContent = `${currentChatMessages.length} messages`;
+                if (whatsappCount) whatsappCount.textContent = `${currentChatMessages.length} messages`;
+                if (container) {
+                    const newScrollHeight = container.scrollHeight;
+                    container.scrollTop = (newScrollHeight - prevScrollHeight) + prevScrollTop;
+                }
+            } finally {
+                document.getElementById('whatsapp-messages-loading-older')?.remove();
+                paging.loadingOlder = false;
+            }
         }
 
         /**

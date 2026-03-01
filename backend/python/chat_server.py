@@ -290,6 +290,14 @@ FUNCTIONS = [
         }
     },
     {
+        "name": "clean_gmail",
+        "description": "Permanently delete all emails from the user's Gmail account. Use when the user asks to clean their Gmail, delete all emails, clear email history, or wipe their inbox. This cannot be undone.",
+        "parameters": {
+            "type": "object",
+            "properties": {}
+        }
+    },
+    {
         "name": "launch_app",
         "description": "Launch an application on the computer",
         "parameters": {
@@ -327,18 +335,22 @@ FUNCTIONS = [
 def call_backend_function(function_name, arguments, caller_credentials=None):
     """Call the backend API with function arguments"""
     
-    # Add user credentials to email functions. Prefer caller-provided credentials
-    if function_name in ['send_email', 'get_unread_emails', 'reply_to_email']:
+    # Add user credentials to email functions. Prefer caller-provided credentials (only if valid)
+    if function_name in ['send_email', 'get_unread_emails', 'reply_to_email', 'clean_gmail']:
+        creds = None
         if caller_credentials and isinstance(caller_credentials, dict) and caller_credentials.get('access_token'):
-            arguments['user_credentials'] = caller_credentials
-        else:
-            arguments['user_credentials'] = USER_CREDENTIALS
+            creds = caller_credentials
+        elif USER_CREDENTIALS and USER_CREDENTIALS.get('access_token') and 'mock' not in (USER_CREDENTIALS.get('access_token') or '').lower():
+            creds = USER_CREDENTIALS
+        if creds:
+            arguments['user_credentials'] = creds
     
     # Map function names to endpoints
     endpoint_map = {
         'send_email': '/api/email/send',
         'get_unread_emails': '/api/email/unread',
         'reply_to_email': '/api/email/reply',
+        'clean_gmail': '/api/email/delete-all',
         'launch_app': '/api/app/launch',
         'find_email': '/api/contacts/find-email'
     }
@@ -355,6 +367,8 @@ def call_backend_function(function_name, arguments, caller_credentials=None):
         timeout_sec = 5
         if function_name in ('get_unread_emails', 'reply_to_email', 'send_email'):
             timeout_sec = 25
+        if function_name == 'clean_gmail':
+            timeout_sec = 300  # Delete-all can take a long time for large mailboxes
         import time as _time
         t0 = _time.time()
         response = requests.post(url, json=arguments, timeout=timeout_sec)
@@ -526,6 +540,25 @@ def chat():
             'response': 'Please enter a message.',
             'error': True
         })
+
+    # Fast-path: "Clean my Gmail" / "Delete all emails" -> call delete-all backend directly
+    try:
+        clean_pattern = re.search(
+            r"\b(clean\s+(my\s+)?gmail|delete\s+all\s+(my\s+)?emails?|clear\s+(my\s+)?(gmail|email)|wipe\s+(my\s+)?(gmail|inbox)|empty\s+(my\s+)?(gmail|inbox))\b",
+            user_message,
+            re.IGNORECASE
+        )
+        if clean_pattern:
+            caller_creds = data.get('user_credentials') if isinstance(data, dict) else None
+            result = call_backend_function('clean_gmail', {}, caller_credentials=caller_creds)
+            if isinstance(result, dict) and result.get('success'):
+                count = result.get('data', {}).get('deleted_count', 0)
+                msg = result.get('message', f'Permanently deleted {count} emails from your Gmail account.')
+                return jsonify({'response': msg, 'function_called': 'clean_gmail'})
+            err = result.get('error') or result.get('detail') or result.get('message') or str(result)
+            return jsonify({'response': f"Could not clean Gmail: {err}", 'error': True, 'function_called': 'clean_gmail'}), 500
+    except Exception as e_cmd:
+        print(f"Direct clean Gmail handling failed: {e_cmd}")
 
     # Quick command: handle direct "Send <message> to <recipient>" by generating
     # an AI-written subject/body and sending via backend /api/email/send

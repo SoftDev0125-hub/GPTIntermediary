@@ -27,15 +27,35 @@ else:
 # fall back to a local SQLite file so the app can run standalone without PostgreSQL.
 raw_db_url = os.getenv("DATABASE_URL", "").strip()
 
-# Detect whether the env var is a meaningful Postgres URL
+# When running as standalone .exe (frozen), avoid requiring PostgreSQL on the target PC:
+# use SQLite if DATABASE_URL is missing or points to localhost (no Postgres installed there).
+is_frozen = getattr(sys, "frozen", False)
+
+def _is_localhost_postgres(url):
+    if not url or not url.strip():
+        return False
+    u = url.strip().lower()
+    if u.startswith("sqlite:"):
+        return False
+    return "localhost" in u or "127.0.0.1" in u
+
 USE_SQLITE = False
 if not raw_db_url:
     USE_SQLITE = True
+elif raw_db_url.startswith("sqlite:"):
+    # Explicit SQLite URL: use as-is (don't overwrite with default path)
+    USE_SQLITE = False
+    DATABASE_URL = raw_db_url
 else:
-    # Treat obvious placeholder as unset
-    if raw_db_url.startswith("postgresql://postgres:password@localhost") or raw_db_url.startswith('sqlite:') is False and 'postgres' not in raw_db_url:
-        # If it's not a postgres URL, fall back to sqlite
+    # Postgres URL: use SQLite when standalone and URL points to localhost (PC likely has no Postgres)
+    if is_frozen and _is_localhost_postgres(raw_db_url):
         USE_SQLITE = True
+    elif raw_db_url.startswith("postgresql://postgres:password@localhost"):
+        USE_SQLITE = True
+    elif "postgres" not in raw_db_url:
+        USE_SQLITE = True
+    else:
+        DATABASE_URL = raw_db_url
 
 if USE_SQLITE:
     # Place SQLite database in repo root 'data' directory

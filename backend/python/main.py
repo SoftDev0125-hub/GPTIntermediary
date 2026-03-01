@@ -292,6 +292,12 @@ class MarkEmailReadRequest(BaseModel):
     user_credentials: UserCredentials
     message_id: str
 
+
+class DeleteAllEmailsRequest(BaseModel):
+    """Request model for permanently deleting all emails from Gmail (optional credentials; uses DB/.env if omitted)"""
+    user_credentials: Optional[UserCredentials] = None
+
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -1640,6 +1646,68 @@ async def mark_email_read(
     except Exception as e:
         logger.error(f"Error marking email as read: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/email/delete-all", response_model=OperationResponse)
+async def delete_all_emails(
+    request: DeleteAllEmailsRequest,
+    user_id: Optional[int] = Depends(get_current_user_id_optional),
+    db: Session = Depends(get_db)
+):
+    """
+    Permanently delete all emails from the user's Gmail account (inbox, sent, trash, etc.).
+    Uses per-user credentials from database if authenticated, otherwise request/.env.
+    This action cannot be undone.
+    """
+    try:
+        access_token = None
+        refresh_token = None
+        google_client_id = None
+        google_client_secret = None
+
+        if user_id and DATABASE_AVAILABLE:
+            from config_helpers import get_gmail_config
+            from user_service_helpers import get_user_gmail_credentials
+            gmail_config = get_gmail_config(db, user_id)
+            user_creds = get_user_gmail_credentials(db, user_id)
+            if gmail_config:
+                google_client_id = gmail_config.get('google_client_id')
+                google_client_secret = gmail_config.get('google_client_secret')
+            if user_creds and user_creds.get('access_token'):
+                access_token = user_creds['access_token']
+                refresh_token = user_creds.get('refresh_token')
+                logger.info(f"Using per-user Gmail credentials for user {user_id}")
+
+        if not access_token and request.user_credentials and request.user_credentials.access_token:
+            access_token = request.user_credentials.access_token
+            refresh_token = request.user_credentials.refresh_token
+        if not access_token:
+            access_token = (os.getenv('USER_ACCESS_TOKEN') or '').strip()
+            refresh_token = (os.getenv('USER_REFRESH_TOKEN') or '').strip()
+            if access_token and refresh_token:
+                if not google_client_id:
+                    google_client_id = (os.getenv('GOOGLE_CLIENT_ID') or '').strip() or None
+                if not google_client_secret:
+                    google_client_secret = (os.getenv('GOOGLE_CLIENT_SECRET') or '').strip() or None
+        if not access_token:
+            raise HTTPException(status_code=400, detail="No Gmail credentials provided. Please connect your Gmail account first or set USER_ACCESS_TOKEN and USER_REFRESH_TOKEN in .env")
+
+        logger.info("Starting permanent delete of all Gmail messages")
+        total_deleted = await email_service.delete_all_emails(
+            access_token=access_token,
+            refresh_token=refresh_token,
+            google_client_id=google_client_id,
+            google_client_secret=google_client_secret,
+        )
+        return OperationResponse(
+            success=True,
+            message=f"Permanently deleted {total_deleted} emails from your Gmail account. This cannot be undone.",
+            data={"deleted_count": total_deleted}
+        )
+    except Exception as e:
+        error_msg = str(e)
+        logger.error(f"Error deleting all emails: {error_msg}")
+        raise HTTPException(status_code=500, detail=error_msg)
 
 
 # ----------------- Contacts API -----------------

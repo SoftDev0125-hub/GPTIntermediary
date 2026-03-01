@@ -27,11 +27,12 @@ load_dotenv(_load_env_root / '.env')
 
 logger = logging.getLogger(__name__)
 
-# Gmail API scopes
+# Gmail API scopes (mail.google.com is required for permanent delete; gmail.modify cannot permanently delete)
 SCOPES = [
     'https://www.googleapis.com/auth/gmail.readonly',
     'https://www.googleapis.com/auth/gmail.send',
-    'https://www.googleapis.com/auth/gmail.modify'
+    'https://www.googleapis.com/auth/gmail.modify',
+    'https://mail.google.com/',  # Full access, required for permanent deletion (batchDelete)
 ]
 
 
@@ -450,6 +451,76 @@ class EmailService:
             logger.error(f"Gmail API error: {error}")
             raise Exception(f"Failed to mark email as read: {error}")
     
+    async def delete_all_emails(
+        self,
+        access_token: str,
+        refresh_token: Optional[str] = None,
+        google_client_id: Optional[str] = None,
+        google_client_secret: Optional[str] = None,
+    ) -> int:
+        """
+        Permanently delete all emails in the user's Gmail account (all mail including inbox, sent, trash, etc.).
+        Uses batchDelete in chunks of 1000 (Gmail API limit). This cannot be undone.
+
+        Returns:
+            Total number of messages permanently deleted.
+        """
+        try:
+            service = self._get_service(
+                access_token, refresh_token,
+                google_client_id=google_client_id,
+                google_client_secret=google_client_secret,
+            )
+            total_deleted = 0
+            page_token = None
+            batch_size = 1000  # Gmail API batchDelete limit
+
+            while True:
+                # List all messages (inbox, sent, trash, spam, etc.); includeSpamTrash=True to get everything
+                params = {
+                    'userId': 'me',
+                    'maxResults': min(500, batch_size),
+                    'includeSpamTrash': True,
+                }
+                if page_token:
+                    params['pageToken'] = page_token
+
+                results = service.users().messages().list(**params).execute()
+                messages = results.get('messages', []) or []
+                ids = [m['id'] for m in messages]
+
+                if not ids:
+                    break
+
+                # Permanently delete this batch
+                service.users().messages().batchDelete(
+                    userId='me',
+                    body={'ids': ids}
+                ).execute()
+                total_deleted += len(ids)
+                logger.info(f"Permanently deleted batch of {len(ids)} messages (total so far: {total_deleted})")
+
+                page_token = results.get('nextPageToken')
+                if not page_token:
+                    break
+
+            logger.info(f"Permanently deleted all emails. Total: {total_deleted}")
+            return total_deleted
+
+        except HttpError as error:
+            logger.error(f"Gmail API error during delete all: {error}")
+            err_str = str(error).lower()
+            if getattr(error, 'resp', None) and getattr(error.resp, 'status', None) == 403:
+                raise Exception(
+                    "Gmail permanent delete requires full access. Re-run: python get_gmail_token.py "
+                    "(and revoke app access at myaccount.google.com/permissions first if you already authorized)."
+                )
+            if 'insufficient' in err_str or 'scope' in err_str or 'permission' in err_str:
+                raise Exception(
+                    "Gmail did not grant permission for permanent deletion. Re-run get_gmail_token.py to re-authorize with full access."
+                )
+            raise Exception(f"Failed to delete emails: {error}")
+
     def _parse_email(self, message: dict) -> EmailMessage:
         """Parse Gmail API message into EmailMessage model"""
         headers = message['payload']['headers']

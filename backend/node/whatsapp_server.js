@@ -51,6 +51,10 @@ let readyAt = 0;
 let readyFallbackTimeout = null;
 // Warmup delay: wait this many ms after 'ready' before allowing getChats/getChatById (WhatsApp Web needs time to initialize)
 const CHATS_WARMUP_MS = 15000;
+// Cache getChats() result for pagination (avoid repeated heavy getChats() calls)
+const CHATS_CACHE_MS = 120000; // 2 minutes
+let chatsCache = null;
+let chatsCacheAt = 0;
 // Cache messages so media can be fetched later even when whatsapp-web.js can't resolve by id (common for older messages)
 const messageCacheById = new Map(); // messageId -> Message
 
@@ -143,6 +147,8 @@ async function checkAndResetIfSessionDeleted() {
             console.error('[WhatsApp] Error destroying client:', err);
         }
         client = null;
+        chatsCache = null;
+        chatsCacheAt = 0;
         isAuthenticated = false;
         isReady = false;
         lastAuthenticatedAt = 0;
@@ -455,6 +461,8 @@ function initializeWhatsApp() {
         if (reason === 'LOGOUT') {
             console.log('[WhatsApp] Session logged out - reinitializing...');
             client = null;
+            chatsCache = null;
+            chatsCacheAt = 0;
             initializeWhatsApp();
         }
     });
@@ -518,6 +526,8 @@ app.get('/api/whatsapp/qr-code', async (req, res) => {
                         console.error('[WhatsApp] Error destroying client:', err);
                     }
                     client = null;
+                    chatsCache = null;
+                    chatsCacheAt = 0;
                 }
                 isAuthenticated = false;
                 isReady = false;
@@ -741,26 +751,34 @@ app.post('/api/whatsapp/contacts', async (req, res) => {
             await new Promise(r => setTimeout(r, waitMs));
         }
 
-        const limit = req.body.limit || 100;
+        const limit = Math.min(Math.max(parseInt(req.body.limit, 10) || 20, 1), 100);
+        const offset = Math.max(parseInt(req.body.offset, 10) || 0, 0);
         let chats;
-        const maxTries = 6;
-        const retryDelayMs = 5000;
-        for (let attempt = 1; attempt <= maxTries; attempt++) {
-            try {
-                chats = await client.getChats();
-                break;
-            } catch (getChatsErr) {
-                const isRetryable = /undefined|update|getChatModel|Evaluation failed/i.test(String(getChatsErr.message || ''));
-                if (attempt < maxTries && isRetryable) {
-                    console.log(`[WhatsApp] getChats attempt ${attempt}/${maxTries} failed, retrying in ${retryDelayMs}ms...`, getChatsErr.message);
-                    await new Promise(r => setTimeout(r, retryDelayMs));
-                } else {
-                    throw getChatsErr;
+        const now = Date.now();
+        if (chatsCache && (now - chatsCacheAt) < CHATS_CACHE_MS) {
+            chats = chatsCache;
+        } else {
+            const maxTries = 6;
+            const retryDelayMs = 5000;
+            for (let attempt = 1; attempt <= maxTries; attempt++) {
+                try {
+                    chats = await client.getChats();
+                    chatsCache = chats;
+                    chatsCacheAt = Date.now();
+                    break;
+                } catch (getChatsErr) {
+                    const isRetryable = /undefined|update|getChatModel|Evaluation failed/i.test(String(getChatsErr.message || ''));
+                    if (attempt < maxTries && isRetryable) {
+                        console.log(`[WhatsApp] getChats attempt ${attempt}/${maxTries} failed, retrying in ${retryDelayMs}ms...`, getChatsErr.message);
+                        await new Promise(r => setTimeout(r, retryDelayMs));
+                    } else {
+                        throw getChatsErr;
+                    }
                 }
             }
         }
         
-        const contacts = (chats || []).slice(0, limit).map(chat => ({
+        const allContacts = (chats || []).map(chat => ({
             contact_id: chat.id._serialized,
             name: chat.name || chat.id.user || 'Unknown',
             is_group: chat.isGroup,
@@ -769,11 +787,15 @@ app.post('/api/whatsapp/contacts', async (req, res) => {
             unread_count: chat.unreadCount || 0,
             avatar_url: null
         }));
+        const contacts = allContacts.slice(offset, offset + limit);
+        const has_more = offset + contacts.length < allContacts.length;
 
-        console.log('[WhatsApp] Contacts loaded:', contacts.length, 'chats');
+        console.log('[WhatsApp] Contacts loaded:', contacts.length, 'of', allContacts.length, '(offset', offset, ')');
         return res.json({
             success: true,
             count: contacts.length,
+            total_count: allContacts.length,
+            has_more: has_more,
             contacts: contacts
         });
     } catch (error) {
@@ -878,7 +900,9 @@ app.post('/api/whatsapp/messages', async (req, res) => {
             await new Promise(r => setTimeout(r, waitMs));
         }
 
-        const { contact_id, limit = 50, include_media } = req.body;
+        const { contact_id, limit = 50, include_media, before_id, before_timestamp } = req.body;
+        const fetchLimit = Math.min(Math.max(parseInt(limit, 10) || 30, 1), 100);
+        const loadOlder = before_id != null && before_timestamp != null;
 
         if (!contact_id) {
             return res.status(400).json({
@@ -894,7 +918,9 @@ app.post('/api/whatsapp/messages', async (req, res) => {
         for (let attempt = 1; attempt <= maxTries; attempt++) {
             try {
                 chat = await client.getChatById(contact_id);
-                messages = await chat.fetchMessages({ limit: limit });
+                // When loading older messages, fetch more so we can filter by before_timestamp
+                const requestLimit = loadOlder ? Math.max(fetchLimit * 2, 100) : fetchLimit;
+                messages = await chat.fetchMessages({ limit: requestLimit });
                 break;
             } catch (messagesErr) {
                 const isRetryable = /undefined|update|getChatModel|Evaluation failed/i.test(String(messagesErr.message || ''));
@@ -908,8 +934,17 @@ app.post('/api/whatsapp/messages', async (req, res) => {
         }
         try { (messages || []).forEach(cacheWhatsAppMessage); } catch (e) {}
 
+        if (loadOlder && Array.isArray(messages) && messages.length > 0) {
+            const beforeTs = Number(before_timestamp);
+            messages = messages.filter(m => (m.timestamp || 0) < beforeTs);
+            messages.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+            messages = messages.slice(-fetchLimit);
+        } else if (Array.isArray(messages)) {
+            messages.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+        }
+
         // Format messages for frontend
-        const formattedMessages = await Promise.all(messages.map(async (msg) => {
+        const formattedMessages = await Promise.all((messages || []).map(async (msg) => {
             const baseMessage = {
                 id: msg.id._serialized,
                 body: msg.body || '',
@@ -969,13 +1004,20 @@ app.post('/api/whatsapp/messages', async (req, res) => {
         // Sort by timestamp (oldest first for display)
         formattedMessages.sort((a, b) => a.timestamp - b.timestamp);
 
-        console.log('[WhatsApp] Messages loaded for', contact_id, ':', formattedMessages.length, 'messages');
+        const reached_start = formattedMessages.length === 0 || formattedMessages.length < fetchLimit;
+        const oldest_id = formattedMessages.length > 0 ? formattedMessages[0].id : null;
+        const oldest_timestamp = formattedMessages.length > 0 ? formattedMessages[0].timestamp : null;
+
+        console.log('[WhatsApp] Messages loaded for', contact_id, ':', formattedMessages.length, 'messages' + (loadOlder ? ' (older)' : ''));
         return res.json({
             success: true,
             contact_id: contact_id,
             contact_name: chat.name || 'Unknown',
             count: formattedMessages.length,
-            messages: formattedMessages
+            messages: formattedMessages,
+            reached_start: reached_start,
+            oldest_id: oldest_id,
+            oldest_timestamp: oldest_timestamp
         });
     } catch (error) {
         console.error('[WhatsApp] Error getting messages:', error);
