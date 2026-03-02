@@ -1519,13 +1519,21 @@
                     // If this message was sent from voice input, speak the response
                     if (speak && 'speechSynthesis' in window) {
                         try {
+                            // Mark TTS as playing - recognition stays on but we ignore transcripts (except "stop")
+                            // to prevent laptop mic from echoing the app's voice as user input
+                            ttsPlaying = true;
                             // Cancel any existing utterances and speak the new response
                             window.speechSynthesis.cancel();
                             const utter = new SpeechSynthesisUtterance(data.response);
                             // Prefer recognition language if available
                             try { utter.lang = (recognition && recognition.lang) ? recognition.lang : 'en-US'; } catch (e) {}
+                            utter.onend = () => {
+                                ttsPlaying = false;
+                                console.log('[VOICE] TTS finished');
+                            };
                             window.speechSynthesis.speak(utter);
                         } catch (e) {
+                            ttsPlaying = false;
                             console.warn('TTS playback failed:', e);
                         }
                     }
@@ -1596,6 +1604,7 @@
         let recognition = null;
         let isListening = false; // UI state: whether mic shows as listening
         let listeningActive = false; // Logical state: mic toggled ON
+        let ttsPlaying = false; // True while TTS is speaking - prevents mic from echoing app's voice back
         let silenceTimer = null; // timer for detecting silence
         let currentTranscript = ''; // accumulated transcript while mic is ON
 
@@ -1628,6 +1637,9 @@
                 voiceRecognitionButton.title = 'Listening... Click to stop';
             };
 
+            // Stop commands that should halt voice response (TTS) when spoken
+            const STOP_TTS_COMMANDS = ['stop', 'stop talking', 'stop speaking', 'enough', 'quiet', 'shut up', 'that\'s enough', 'no more'];
+
             // Final results from speech recognition
             recognition.onresult = (event) => {
                 try {
@@ -1638,6 +1650,20 @@
                         .trim();
 
                     if (!transcript) return;
+
+                    // While TTS is playing, ignore all transcripts except stop commands (prevents echo feedback)
+                    if (ttsPlaying) {
+                        const transcriptLower = transcript.toLowerCase().trim();
+                        if (STOP_TTS_COMMANDS.some(cmd => transcriptLower === cmd)) {
+                            if ('speechSynthesis' in window && window.speechSynthesis.speaking) {
+                                window.speechSynthesis.cancel();
+                                ttsPlaying = false;
+                                console.log('[VOICE] Voice response stopped by voice command');
+                            }
+                        }
+                        return; // Discard - likely echo from laptop speakers
+                    }
+
                     console.log('[VOICE] Recognized text:', transcript);
 
                     // Append recognized text to accumulated transcript
@@ -1715,8 +1741,20 @@
                 }
             };
 
+            // Helper: stop TTS if currently speaking (used by mic click and voice "stop" command)
+            function stopVoiceResponseIfPlaying() {
+                if ('speechSynthesis' in window && window.speechSynthesis.speaking) {
+                    window.speechSynthesis.cancel();
+                    ttsPlaying = false;
+                    console.log('[VOICE] Voice response stopped by user');
+                }
+            }
+
             // Handle button click: toggle listeningActive
             voiceRecognitionButton.addEventListener('click', () => {
+                // If a voice response is playing, stop it (user interrupts by pressing mic)
+                stopVoiceResponseIfPlaying();
+
                 if (listeningActive) {
                     // Turn mic OFF
                     listeningActive = false;
