@@ -1316,6 +1316,8 @@
 
         // Store conversation history for context
         let conversationHistory = [];
+        // When chat returns unread emails, store next_page_token so "show more" can load next 20
+        let lastEmailPageToken = null;
 
         function addMessage(text, type = 'assistant') {
             const messageDiv = document.createElement('div');
@@ -1477,8 +1479,9 @@
                     },
                     body: JSON.stringify({ 
                         message: message,
-                        user_id: userIdInt,  // Send validated user_id
-                        history: conversationHistory  // Send conversation history for context
+                        user_id: userIdInt,
+                        history: conversationHistory,
+                        email_page_token: lastEmailPageToken || undefined
                     }),
                     signal: controller.signal
                 });
@@ -1507,6 +1510,11 @@
 
                 if (data.response) {
                     addMessage(data.response, 'assistant');
+                    if (data.function_called === 'get_unread_emails' && data.next_page_token) {
+                        lastEmailPageToken = data.next_page_token;
+                    } else {
+                        lastEmailPageToken = null;
+                    }
 
                     // If this message was sent from voice input, speak the response
                     if (speak && 'speechSynthesis' in window) {
@@ -1773,24 +1781,23 @@
         let allEmails = [];
         let totalUnread = 0;
         let currentPage = 1;
-        const emailsPerPage = 10;
+        const emailsPerPage = 50; // Server returns 50 per page
+        /** Tokens to request each page: pageTokens[1] = null (first page), pageTokens[2] = token from page 1, ... */
+        let pageTokens = [null];
 
         function getTotalPages() {
-            return Math.ceil(allEmails.length / emailsPerPage);
-        }
-
-        function goToPage(pageNum) {
-            const totalPages = getTotalPages();
-            if (pageNum < 1 || pageNum > totalPages) return;
-            currentPage = pageNum;
-            renderEmails();
+            return totalUnread <= 0 ? 0 : Math.ceil(totalUnread / emailsPerPage);
         }
 
         function updateEmailCount() {
             if (!emailCount) return;
-            const shown = allEmails.length;
-            const total = totalUnread || 0;
-            emailCount.textContent = `Showing ${shown} / ${total} unread`;
+            if (totalUnread === 0) {
+                emailCount.textContent = 'Showing 0 / 0 unread';
+                return;
+            }
+            const start = (currentPage - 1) * emailsPerPage + 1;
+            const end = Math.min(currentPage * emailsPerPage, totalUnread);
+            emailCount.textContent = `Showing ${start}-${end} of ${totalUnread} unread`;
         }
 
         // Get credentials from environment (exposed by backend)
@@ -1822,17 +1829,13 @@
 
         function renderEmails() {
             const totalPages = getTotalPages();
-            const startIdx = (currentPage - 1) * emailsPerPage;
-            const endIdx = startIdx + emailsPerPage;
-            const paginatedEmails = allEmails.slice(startIdx, endIdx);
-
-            const emailItems = paginatedEmails.map((email, index) => {
+            const emailItems = allEmails.map((email, index) => {
                 const from = escapeHtml(String(email.from_email || 'Unknown'));
                 const subject = escapeHtml(String(email.subject || '(No Subject)'));
                 const rawSummary = email.summary ? String(email.summary) : (email.body || '');
                 const summary = escapeHtml(emailBodyToPlainSummary(rawSummary, 120));
                 const date = escapeHtml(String(email.date || new Date().toLocaleDateString()));
-                return `<div class="email-item" data-email-index="${startIdx + index}">
+                return `<div class="email-item" data-email-index="${index}">
                     <div class="email-from">From: ${from}</div>
                     <div class="email-subject">${subject}</div>
                     <div class="email-summary">${summary}</div>
@@ -1843,7 +1846,6 @@
             emailList.innerHTML = emailItems;
             updateEmailCount();
 
-            // Add click handlers to email items
             document.querySelectorAll('.email-item').forEach(item => {
                 item.addEventListener('click', () => {
                     const emailIndex = parseInt(item.dataset.emailIndex);
@@ -1851,7 +1853,6 @@
                 });
             });
 
-            // Update pagination controls (both top and bottom)
             updatePaginationControls(totalPages);
         }
 
@@ -1978,74 +1979,37 @@
             const nextButton = document.getElementById('nextButton');
             const prevButtonTop = document.getElementById('prevButtonTop');
             const nextButtonTop = document.getElementById('nextButtonTop');
+            const pageNumbers = document.getElementById('pageNumbers');
+            const pageNumbersBottom = document.getElementById('pageNumbersBottom');
 
             if (totalPages > 1) {
-                // Show both pagination controls
                 paginationControlsTop.style.display = 'flex';
                 paginationControls.style.display = 'flex';
-                
-                // Update button states for both top and bottom
                 prevButton.disabled = currentPage === 1;
-                nextButton.disabled = currentPage === totalPages;
+                nextButton.disabled = currentPage >= totalPages;
                 prevButtonTop.disabled = currentPage === 1;
-                nextButtonTop.disabled = currentPage === totalPages;
-                
-                // Generate page numbers for both top and bottom (same structure)
-                generatePageNumbers(totalPages, 'pageNumbers');
-                generatePageNumbers(totalPages, 'pageNumbersBottom');
+                nextButtonTop.disabled = currentPage >= totalPages;
+                if (pageNumbers) pageNumbers.textContent = `Page ${currentPage} of ${totalPages}`;
+                if (pageNumbersBottom) pageNumbersBottom.textContent = `Page ${currentPage} of ${totalPages}`;
             } else {
                 paginationControlsTop.style.display = 'none';
                 paginationControls.style.display = 'none';
             }
         }
 
-        function generatePageNumbers(totalPages, containerId = 'pageNumbers') {
-            const pageNumbers = document.getElementById(containerId);
-            if (!pageNumbers) return;
-            
-            let numbersHTML = '';
-            
-            // Show up to 7 page numbers with ellipsis for large page counts
-            const maxVisible = 7;
-            
-            if (totalPages <= maxVisible) {
-                // Show all pages
-                for (let i = 1; i <= totalPages; i++) {
-                    numbersHTML += `<button class="page-number ${i === currentPage ? 'active' : ''}" data-page="${i}">${i}</button>`;
-                }
-            } else {
-                // Show first page
-                numbersHTML += `<button class="page-number ${currentPage === 1 ? 'active' : ''}" data-page="1">1</button>`;
-                
-                if (currentPage > 3) {
-                    numbersHTML += `<span class="page-ellipsis">...</span>`;
-                }
-                
-                // Show pages around current page
-                const start = Math.max(2, currentPage - 1);
-                const end = Math.min(totalPages - 1, currentPage + 1);
-                
-                for (let i = start; i <= end; i++) {
-                    numbersHTML += `<button class="page-number ${i === currentPage ? 'active' : ''}" data-page="${i}">${i}</button>`;
-                }
-                
-                if (currentPage < totalPages - 2) {
-                    numbersHTML += `<span class="page-ellipsis">...</span>`;
-                }
-                
-                // Show last page
-                numbersHTML += `<button class="page-number ${currentPage === totalPages ? 'active' : ''}" data-page="${totalPages}">${totalPages}</button>`;
-            }
-            
-            pageNumbers.innerHTML = numbersHTML;
-            
-            // Add click handlers to page number buttons
-            pageNumbers.querySelectorAll('.page-number').forEach(btn => {
-                btn.addEventListener('click', () => {
-                    const page = parseInt(btn.dataset.page);
-                    goToPage(page);
-                });
+        async function fetchEmailPage(pageToken) {
+            const creds = await getUserCredentials();
+            if (!creds || !creds.access_token) return { success: false, error: 'Gmail credentials not found' };
+            const body = { user_credentials: creds, limit: 50 };
+            if (pageToken) body.page_token = pageToken;
+            const response = await fetch(`${API_BASE}/api/email/unread`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
             });
+            const data = await response.json();
+            if (!response.ok) return { success: false, error: data.detail || data.error || JSON.stringify(data) };
+            return data;
         }
 
         async function loadUnreadEmails() {
@@ -2054,85 +2018,87 @@
             allEmails = [];
             totalUnread = 0;
             currentPage = 1;
+            pageTokens = [null];
 
             try {
-                // Get real credentials
-                console.log('[*] Fetching credentials...');
                 const creds = await getUserCredentials();
-                console.log('[*] Got credentials:', {
-                    access_token: creds?.access_token ? creds.access_token.substring(0, 20) + '...' : 'NONE',
-                    refresh_token: creds?.refresh_token ? creds.refresh_token.substring(0, 20) + '...' : 'NONE',
-                    email: creds?.email
-                });
-                
                 if (!creds || !creds.access_token) {
-                    console.error('[!] Credentials missing');
                     emailList.innerHTML = '<div class="empty-state"><div class="empty-state-text">Error</div><p>Gmail credentials not found. Please restart the app.</p></div>';
-                    if (emailCount) emailCount.textContent = 'Showing 0 / -- unread';
+                    if (emailCount) emailCount.textContent = 'Showing 0 / 0 unread';
                     unreadButton.disabled = false;
                     unreadButton.textContent = 'Unread Mail';
                     return;
                 }
 
-                console.log('[*] Requesting unread emails from backend...');
-                const response = await fetch(`${API_BASE}/api/email/unread`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        user_credentials: creds,
-                        max_results: 50  // Reduced from 1000 to 50 for faster loading
-                    })
-                });
+                const data = await fetchEmailPage(null);
+                if (!data.success) {
+                    emailList.innerHTML = `<div class="empty-state"><div class="empty-state-text">Error</div><p>${data.error || 'Failed to load'}</p></div>`;
+                    if (emailCount) emailCount.textContent = 'Showing 0 / 0 unread';
+                    unreadButton.disabled = false;
+                    unreadButton.textContent = 'Unread Mail';
+                    return;
+                }
 
-                console.log('[*] Response status:', response.status);
-                const data = await response.json();
-                console.log('[*] Response data:', data);
+                allEmails = data.emails || [];
+                totalUnread = typeof data.total_unread === 'number' ? data.total_unread : allEmails.length;
+                if (data.next_page_token) pageTokens[1] = data.next_page_token;
 
-                if (response.ok && data.success) {
-                    allEmails = data.emails || [];
-                    totalUnread = typeof data.total_unread === 'number' ? data.total_unread : allEmails.length;
+                if (allEmails.length === 0) {
+                    emailList.innerHTML = '<div class="empty-state"><div class="empty-state-text">OK</div><p>No unread emails</p></div>';
                     updateEmailCount();
-                    console.log(`[OK] Got ${allEmails.length} emails`);
-                    if (allEmails.length === 0) {
-                        emailList.innerHTML = '<div class="empty-state"><div class="empty-state-text">OK</div><p>No unread emails</p></div>';
-                    } else {
-                        renderEmails();
-                    }
                 } else {
-                    const errorMsg = data.error || data.detail || JSON.stringify(data);
-                    console.error('[!] Backend error:', errorMsg);
-                    emailList.innerHTML = `<div class="empty-state"><div class="empty-state-text">Error</div><p>${errorMsg}</p></div>`;
-                    if (emailCount) emailCount.textContent = 'Showing 0 / -- unread';
+                    renderEmails();
                 }
             } catch (error) {
-                console.error('[!] Exception:', error);
                 emailList.innerHTML = `<div class="empty-state"><div class="empty-state-text">Error</div><p>Exception: ${error.message}</p></div>`;
-                if (emailCount) emailCount.textContent = 'Showing 0 / -- unread';
+                if (emailCount) emailCount.textContent = 'Showing 0 / 0 unread';
             }
-
             unreadButton.disabled = false;
             unreadButton.textContent = 'Unread Mail';
+        }
+
+        async function loadPage(pageNum) {
+            const totalPages = getTotalPages();
+            if (pageNum < 1 || pageNum > totalPages) return;
+            const token = pageTokens[pageNum - 1] !== undefined ? pageTokens[pageNum - 1] : null;
+            document.getElementById('prevButton').disabled = true;
+            document.getElementById('nextButton').disabled = true;
+            document.getElementById('prevButtonTop').disabled = true;
+            document.getElementById('nextButtonTop').disabled = true;
+            emailList.innerHTML = '<div class="empty-state"><div class="empty-state-text">Loading...</div><p>Fetching emails...</p></div>';
+
+            try {
+                const data = await fetchEmailPage(token);
+                if (!data.success) {
+                    emailList.innerHTML = `<div class="empty-state"><div class="empty-state-text">Error</div><p>${data.error || 'Failed to load'}</p></div>`;
+                    updatePaginationControls(getTotalPages());
+                    return;
+                }
+                allEmails = data.emails || [];
+                if (typeof data.total_unread === 'number') totalUnread = data.total_unread;
+                currentPage = pageNum;
+                if (data.next_page_token) pageTokens[pageNum] = data.next_page_token;
+                renderEmails();
+            } catch (error) {
+                emailList.innerHTML = `<div class="empty-state"><div class="empty-state-text">Error</div><p>${error.message}</p></div>`;
+                updatePaginationControls(getTotalPages());
+            }
         }
 
         unreadButton.addEventListener('click', loadUnreadEmails);
         refreshButton.addEventListener('click', loadUnreadEmails);
 
         document.getElementById('prevButton').addEventListener('click', () => {
-            goToPage(currentPage - 1);
+            if (currentPage > 1) loadPage(currentPage - 1);
         });
-
         document.getElementById('nextButton').addEventListener('click', () => {
-            goToPage(currentPage + 1);
+            if (currentPage < getTotalPages()) loadPage(currentPage + 1);
         });
-
         document.getElementById('prevButtonTop').addEventListener('click', () => {
-            goToPage(currentPage - 1);
+            if (currentPage > 1) loadPage(currentPage - 1);
         });
-
         document.getElementById('nextButtonTop').addEventListener('click', () => {
-            goToPage(currentPage + 1);
+            if (currentPage < getTotalPages()) loadPage(currentPage + 1);
         });
 
         // Close email detail modal
@@ -3755,8 +3721,12 @@
         let whatsappSocket = null;
         let whatsappRealtimePollTimer = null; // Fallback polling when WebSocket is not connected
         let currentChatMessages = []; // Store messages for currently open chat
-        const WHATSAPP_CONTACTS_PAGE_SIZE = 30;  // Per request; all contacts are shown by loading more on scroll (no total cap)
+        const WHATSAPP_CONTACTS_PAGE_SIZE = 50;  // Per request; all contacts are shown by loading more on scroll (no total cap)
         const WHATSAPP_MESSAGES_PAGE_SIZE = 30;
+        // Timeouts set long so contact list and chat history always have time to load (prioritize display over quick failure)
+        const WHATSAPP_CONTACTS_FIRST_LOAD_TIMEOUT_MS = 300000;  // 5 min: first load runs getChats() which loads ALL chats
+        const WHATSAPP_CONTACTS_LOAD_MORE_TIMEOUT_MS = 180000;    // 3 min: paginated load (cache may expire with many contacts)
+        const WHATSAPP_MESSAGES_TIMEOUT_MS = 180000;             // 3 min: loading chat history (can be slow with long history)
         let allWhatsAppContacts = []; // Accumulated contacts (for display and avatar lazy-load)
         let whatsappContactsOffset = 0;
         let whatsappContactsHasMore = false;
@@ -4165,15 +4135,14 @@
                     return;
                 }
 
+                if (whatsappChatsList) {
+                    whatsappChatsList.innerHTML = '<div class="whatsapp-sidebar-loading">Loading contacts…<br><small>With many chats this can take several minutes. Please wait.</small></div>';
+                }
                 const contactsResponse = await fetch(`${WHATSAPP_API_URL}/api/whatsapp/contacts`, {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        offset: 0,
-                        limit: WHATSAPP_CONTACTS_PAGE_SIZE
-                    })
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ offset: 0, limit: WHATSAPP_CONTACTS_PAGE_SIZE }),
+                    signal: AbortSignal.timeout(WHATSAPP_CONTACTS_FIRST_LOAD_TIMEOUT_MS)
                 });
 
                 if (!contactsResponse.ok) {
@@ -4226,7 +4195,12 @@
             } catch (error) {
                 console.error('[!] WhatsApp error:', error);
                 if (whatsappChatsList) {
-                    whatsappChatsList.innerHTML = '<div class="whatsapp-sidebar-empty">Error loading chats</div>';
+                    const isTimeout = (error && (error.name === 'AbortError' || error.name === 'TimeoutError')) || /timeout|aborted/i.test(String(error.message || ''));
+                    const msg = isTimeout
+                        ? 'Loading contacts took too long. With many chats it can take several minutes. Please try again.'
+                        : (error && error.message) ? error.message : 'Error loading chats';
+                    const escaped = msg.replace(/</g, '&lt;').replace(/\n/g, '<br>');
+                    whatsappChatsList.innerHTML = '<div class="whatsapp-sidebar-empty">' + escaped + '<br><br>Click <strong>Refresh</strong> to try again.</div>';
                 }
             } finally {
                 if (whatsappShowButton) {
@@ -4330,7 +4304,8 @@
                 const response = await fetch(`${WHATSAPP_API_URL}/api/whatsapp/contacts`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ offset: whatsappContactsOffset, limit: WHATSAPP_CONTACTS_PAGE_SIZE })
+                    body: JSON.stringify({ offset: whatsappContactsOffset, limit: WHATSAPP_CONTACTS_PAGE_SIZE }),
+                    signal: AbortSignal.timeout(WHATSAPP_CONTACTS_LOAD_MORE_TIMEOUT_MS)
                 });
                 if (!response.ok) return;
                 const data = await response.json();
@@ -4903,13 +4878,9 @@
                 
                 const response = await fetch(`${WHATSAPP_API_URL}/api/whatsapp/messages`, {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        contact_id: contactId,
-                        limit: WHATSAPP_MESSAGES_PAGE_SIZE
-                    })
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ contact_id: contactId, limit: WHATSAPP_MESSAGES_PAGE_SIZE }),
+                    signal: AbortSignal.timeout(WHATSAPP_MESSAGES_TIMEOUT_MS)
                 });
 
                 if (!response.ok) {
@@ -5126,7 +5097,8 @@
                         limit: WHATSAPP_MESSAGES_PAGE_SIZE,
                         before_id: paging.oldestId,
                         before_timestamp: paging.oldestTimestamp
-                    })
+                    }),
+                    signal: AbortSignal.timeout(WHATSAPP_MESSAGES_TIMEOUT_MS)
                 });
                 if (!response.ok) return;
                 const data = await response.json();

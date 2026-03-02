@@ -732,6 +732,9 @@ app.post('/api/whatsapp/initialize', async (req, res) => {
  * Get WhatsApp contacts/chats
  */
 app.post('/api/whatsapp/contacts', async (req, res) => {
+    // Allow up to 5 minutes for getChats() when user has hundreds/thousands of chats (no server-side timeout)
+    req.setTimeout(300000);
+    res.setTimeout(300000);
     try {
         // Check if session folder was deleted and reset if needed
         await checkAndResetIfSessionDeleted();
@@ -881,6 +884,9 @@ app.get('/api/whatsapp/avatar', async (req, res) => {
  * Get messages for a specific contact/chat
  */
 app.post('/api/whatsapp/messages', async (req, res) => {
+    // Allow up to 5 minutes for fetchMessages when chat has long history (prioritize displaying messages)
+    req.setTimeout(300000);
+    res.setTimeout(300000);
     try {
         // Check if session folder was deleted and reset if needed
         await checkAndResetIfSessionDeleted();

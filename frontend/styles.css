@@ -2549,6 +2549,12 @@ body::before {
     color: #8696a0;
     font-size: 13px;
 }
+.whatsapp-sidebar-loading small {
+    display: block;
+    margin-top: 6px;
+    font-size: 11px;
+    color: #667781;
+}
 
 .whatsapp-chat-item {
     padding: 10px 16px;

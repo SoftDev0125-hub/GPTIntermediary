@@ -235,23 +235,24 @@ class EmailService:
         refresh_token: Optional[str] = None,
         google_client_id: Optional[str] = None,
         google_client_secret: Optional[str] = None,
-        query: Optional[str] = None
-    ) -> tuple[List[EmailMessage], int]:
+        query: Optional[str] = None,
+        page_token: Optional[str] = None
+    ) -> tuple[List[EmailMessage], int, Optional[str]]:
         """
-        Retrieve unread emails
-        
-        Args:
-            limit: Maximum number of emails to retrieve
-        
+        Retrieve unread emails, optionally one page at a time for pagination.
+
+        When page_token is provided or limit <= 50, fetches a single page (up to 50)
+        and returns next_page_token for the next page. Otherwise fetches up to `limit`
+        messages and returns next_page_token=None.
+
         Returns:
-            List of unread email messages
+            (email_list_sorted, total_unread, next_page_token)
         """
         try:
             # Get service with user credentials
             service = self._get_service(access_token, refresh_token, google_client_id, google_client_secret)
-            
+
             # Get total unread count from system label (more accurate than page-limited list)
-            # Add timeout handling
             try:
                 label_info = service.users().labels().get(userId='me', id='UNREAD').execute()
                 total_unread = label_info.get('messagesUnread', 0)
@@ -259,43 +260,47 @@ class EmailService:
                 logger.warning(f"Could not get unread count: {str(label_error)}")
                 total_unread = 0
 
-            # Query for unread messages (paged) with timeout handling
-            # Use provided query (e.g., 'in:inbox category:primary is:unread') or default to unread
             list_query = query or 'is:unread'
+            page_size = min(500, max(1, limit))
+            single_page = page_token is not None or page_size <= 50
+
             try:
                 message_ids = []
-                page_token = None
-                # Gmail API returns paged results; loop until we have enough or no more pages
+                next_page_token_out = None
+                current_token = page_token
+
                 while True:
                     params = {
                         'userId': 'me',
                         'q': list_query,
-                        'maxResults': min(500, max(1, limit))
+                        'maxResults': page_size if single_page else min(500, max(1, limit))
                     }
-                    if page_token:
-                        params['pageToken'] = page_token
+                    if current_token:
+                        params['pageToken'] = current_token
 
                     results = service.users().messages().list(**params).execute()
                     page_msgs = results.get('messages', []) or []
                     for m in page_msgs:
-                        if len(message_ids) >= limit:
+                        if len(message_ids) >= (page_size if single_page else limit):
                             break
                         message_ids.append(m.get('id'))
 
-                    page_token = results.get('nextPageToken')
-                    if not page_token or len(message_ids) >= limit:
+                    current_token = results.get('nextPageToken')
+                    if single_page:
+                        next_page_token_out = current_token
+                        break
+                    if not current_token or len(message_ids) >= limit:
                         break
             except Exception as list_error:
                 error_msg = str(list_error)
                 if 'timeout' in error_msg.lower() or '10060' in error_msg:
                     logger.error("Gmail API timeout - network connection issue")
                     raise Exception("Connection timeout. Please check your internet connection and try again.")
-                else:
-                    raise
+                raise
 
+            fetch_ids = message_ids[:limit] if not single_page else message_ids
             email_list = []
-            # Fetch full message bodies for the collected ids (respect limit)
-            for mid in message_ids[:limit]:
+            for mid in fetch_ids:
                 try:
                     message = service.users().messages().get(
                         userId='me',
@@ -305,11 +310,9 @@ class EmailService:
                 except Exception as msg_error:
                     logger.warning(f"Failed to fetch message {mid}: {msg_error}")
                     continue
-
                 email_data = self._parse_email(message)
                 email_list.append(email_data)
-            
-            # Attempt to sort emails by parsed date (newest first)
+
             try:
                 from email.utils import parsedate_to_datetime
                 def _parse_dt(e):
@@ -317,14 +320,13 @@ class EmailService:
                         return parsedate_to_datetime(e.date)
                     except Exception:
                         return None
-
                 email_list_sorted = sorted(email_list, key=lambda e: _parse_dt(e) or datetime.min, reverse=True)
             except Exception:
                 email_list_sorted = email_list
 
             logger.info(f"Retrieved {len(email_list_sorted)} unread emails (total unread: {total_unread})")
-            return email_list_sorted, total_unread
-        
+            return email_list_sorted, total_unread, next_page_token_out if single_page else None
+
         except HttpError as error:
             logger.error(f"Gmail API error: {error}")
             raise Exception(f"Failed to fetch unread emails: {error}")

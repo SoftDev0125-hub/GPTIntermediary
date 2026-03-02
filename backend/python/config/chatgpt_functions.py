@@ -38,8 +38,12 @@ CHATGPT_FUNCTIONS = [
             "properties": {
                 "limit": {
                     "type": "integer",
-                    "description": "Maximum number of unread emails to retrieve (default: 10)",
-                    "default": 10
+                    "description": "Maximum number of unread emails to retrieve (default: 50, capped for performance)",
+                    "default": 50
+                },
+                "page_token": {
+                    "type": "string",
+                    "description": "Optional Gmail page token to fetch the next page of unread emails"
                 }
             }
         }

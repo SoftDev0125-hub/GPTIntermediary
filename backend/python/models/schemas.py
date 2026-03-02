@@ -58,6 +58,7 @@ class EmailListResponse(BaseModel):
     count: int
     total_unread: int
     emails: List[EmailMessage]
+    next_page_token: Optional[str] = None
 
 
 class OperationResponse(BaseModel):

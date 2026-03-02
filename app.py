@@ -37,6 +37,7 @@ chat_log = None
 django_log = None
 whatsapp_log = None
 telegram_log = None
+slack_log = None
 
 # Django server configuration
 DJANGO_DIR = os.path.join("backend", "django_app")
@@ -260,7 +261,8 @@ def start_servers():
                 # Try to read error from log file
                 if chat_log_path and os.path.exists(chat_log_path):
                     try:
-                        with open(chat_log_path, 'r', encoding='utf-8') as f:
+                        # Logs may contain non-UTF8 bytes on Windows; never crash while reading them.
+                        with open(chat_log_path, 'r', encoding='utf-8', errors='replace') as f:
                             log_content = f.read()
                             if log_content:
                                 # Show last 500 characters of log

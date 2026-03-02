@@ -282,9 +282,10 @@ from pydantic import BaseModel
 
 class GetUnreadEmailsRequest(BaseModel):
     """Request model for getting unread emails"""
-    user_credentials: UserCredentials
-    limit: int = 1000
+    user_credentials: Optional[UserCredentials] = None  # optional for auth via JWT/DB
+    limit: int = 50
     query: Optional[str] = None
+    page_token: Optional[str] = None
 
 
 class MarkEmailReadRequest(BaseModel):
@@ -1429,18 +1430,19 @@ async def get_unread_emails(
         if not access_token:
             raise HTTPException(status_code=400, detail="No Gmail credentials provided. Please connect your Gmail account first or set USER_ACCESS_TOKEN and USER_REFRESH_TOKEN in .env")
         
-        # Cap limit to prevent slow loading
-        actual_limit = min(request.limit, 50)  # Max 50 emails for performance
-        if request.limit > 50:
+        # For pagination: when page_token is set, fetch one page (50). Otherwise cap at 50 for first page.
+        actual_limit = min(request.limit, 50)
+        if request.limit > 50 and not request.page_token:
             logger.info(f"Requested {request.limit} emails, capping to {actual_limit} for performance")
-        logger.info(f"Fetching {actual_limit} unread emails")
-        emails, total_unread = await email_service.get_unread_emails(
+        logger.info(f"Fetching {actual_limit} unread emails" + (f" (page_token=...)" if request.page_token else " (first page)"))
+        emails, total_unread, next_page_token = await email_service.get_unread_emails(
             access_token=access_token,
             refresh_token=refresh_token,
             limit=actual_limit,
             google_client_id=google_client_id,
             google_client_secret=google_client_secret,
-            query=request.query
+            query=request.query,
+            page_token=request.page_token
         )
         logger.info(f"Successfully retrieved {len(emails)} emails")
         # Generate lightweight one-sentence summaries for each email (local fallback)
@@ -1482,7 +1484,8 @@ async def get_unread_emails(
             success=True,
             count=len(summarized_emails),
             total_unread=total_unread,
-            emails=summarized_emails
+            emails=summarized_emails,
+            next_page_token=next_page_token
         )
     except Exception as e:
         error_msg = str(e)

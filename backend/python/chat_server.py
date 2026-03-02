@@ -721,8 +721,17 @@ def chat():
             else:
                 query = base_query
 
-            # Request messages to populate the chat "Recent messages" section
-            args = {'limit': 50, 'query': query}
+            # Chat tab: show up to 50 emails per response (or all if fewer).
+            # If the user asks for more and a page token exists, fetch the next page (50).
+            email_page_token = data.get('email_page_token') if isinstance(data, dict) else None
+            want_more = bool(email_page_token and re.search(
+                r"\b(more|next\s*(50\s*)?emails?|show\s+more|load\s+more|another\s+50|next\s+50)\b",
+                user_message, re.IGNORECASE
+            ))
+            limit = 50
+            args = {'limit': limit, 'query': query}
+            if want_more:
+                args['page_token'] = email_page_token
             result = call_backend_function('get_unread_emails', args, caller_credentials=caller_creds)
 
             # Handle backend errors
@@ -758,11 +767,8 @@ def chat():
             flagged = []
             previews = []
             import re as _re
-            # Show up to MAX_UNREAD_EMAILS (default 50) in the "recent messages" section
-            try:
-                preview_limit = min(len(emails), int(os.getenv('MAX_UNREAD_EMAILS', '50')))
-            except Exception:
-                preview_limit = min(len(emails), 50)
+            # Chat tab: show up to 50 emails in the response (or all if fewer)
+            preview_limit = min(len(emails), 50)
 
             for e in emails[:preview_limit]:
                 subj = (e.get('subject') or '').strip()
@@ -798,44 +804,8 @@ def chat():
                 # Use a compact, markdown-friendly numbered list
                 preview_lines.append(f"{idx}. **{subject}** — _{sender}_\n   {preview_text}")
 
-            # Prefer AI analysis when available; otherwise synthesize a summary locally
-            _key = _current_openai_key()
-            ai_enabled = bool(_key and _key != 'your_openai_api_key_here')
-            ai_result = None
-
-            # If sender-specific query, prepare compact email payloads (use full body when available)
-            try:
-                compact_for_ai = []
-                for e in emails[:10]:
-                    compact_for_ai.append({
-                        'from': e.get('from_name') or e.get('from_email'),
-                        'subject': e.get('subject'),
-                        'preview': (e.get('body') or e.get('preview') or '')[:480]
-                    })
-                if ai_enabled and compact_for_ai:
-                    ai_result = analyze_emails_with_ai(compact_for_ai, request_id=request_id, max_items=min(10, len(compact_for_ai)))
-            except Exception:
-                ai_result = None
-
-            # If AI produced a structured summary, return it verbatim (it includes total count per contract)
-            if ai_result and isinstance(ai_result, str) and ai_result.strip():
-                response_text = ai_result
-                # Also provide machine-readable emails (with truncated snippets)
-                emails_list = []
-                for e in emails:
-                    emails_list.append({
-                        'sender': e.get('from_name') or e.get('from_email'),
-                        'subject': e.get('subject'),
-                        'snippet': (e.get('body') or e.get('preview') or '')[:300],
-                        'received_at': e.get('date') or e.get('received') or None
-                    })
-                return jsonify({
-                    'response': response_text,
-                    'function_called': 'get_unread_emails',
-                    'total_unread': total_unread,
-                    'emails': emails_list,
-                    'ai_summary': ai_result
-                })
+            # NOTE: We intentionally avoid AI-generated email summaries here because they often
+            # mention the number of emails shown (e.g. 10) which can contradict the true unread count.
 
             # Local fallback: generate concise one-sentence summaries per message
             import html
@@ -858,35 +828,56 @@ def chat():
                     sentence = sentence.rstrip('.,;:') + '.'
                 return sentence
 
+            from email.utils import parsedate_to_datetime as _parsedate_to_datetime
             emails_list = []
             numbered_lines = []
+
+            def _fmt_received(raw_date: str) -> str:
+                try:
+                    dt = _parsedate_to_datetime(raw_date)
+                    if getattr(dt, "tzinfo", None):
+                        dt = dt.astimezone()
+                    return dt.strftime("%Y-%m-%d %H:%M")
+                except Exception:
+                    return (raw_date or "").strip()
+
             for idx, e in enumerate(emails[:preview_limit], start=1):
                 sender = e.get('from_name') or e.get('from_email') or 'Unknown'
-                subject = e.get('subject') or ''
+                subject = e.get('subject') or '(no subject)'
                 body = e.get('body') or e.get('preview') or ''
                 summary = _local_one_sentence(subject, body, sender)
-                # Machine-readable entry
+                received_raw = e.get('date') or e.get('received') or ''
+                received = _fmt_received(str(received_raw))
+
                 emails_list.append({
                     'sender': sender,
                     'subject': subject,
                     'snippet': (body or '')[:300],
                     'summary': summary,
-                    'received_at': e.get('date') or e.get('received') or None
+                    'received_at': received_raw or None
                 })
-                # Human-readable numbered lines (exact format requested)
-                numbered_lines.append(f"{idx}. {sender}:")
-                numbered_lines.append(summary)
 
-            header = f"You have received {total_unread} new emails."
-            body_text = "\n".join(numbered_lines) if numbered_lines else "No new messages found."
+                numbered_lines.append(f"{idx}. [{received}] {subject} - {sender}")
+                if summary:
+                    numbered_lines.append(f"   {summary}")
+
+            if total_unread > preview_limit:
+                numbered_lines.append("...")
+
+            header = f"📧 You have {total_unread} unread emails in Primary."
+            body_text = "\n".join(numbered_lines) if numbered_lines else "No unread emails found."
             response_text = header + "\n\n" + body_text
+            if total_unread > preview_limit:
+                remaining = max(0, total_unread - preview_limit)
+                response_text += f"\n\nShowing {preview_limit} of {total_unread}. You still have {remaining} more unread emails. Say 'show more' to see the next {min(50, remaining)}."
 
             return jsonify({
                 'response': response_text,
                 'function_called': 'get_unread_emails',
                 'total_unread': total_unread,
                 'emails': emails_list,
-                'ai_summary': None
+                'ai_summary': None,
+                'next_page_token': result.get('next_page_token')
             })
     except Exception as _e:
         logger.exception(f"Fast-path email check failed: {_e}")
