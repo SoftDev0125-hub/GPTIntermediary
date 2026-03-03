@@ -728,9 +728,15 @@
                 <!-- WhatsApp Sidebar (Address Book) -->
                 <div class="whatsapp-sidebar">
                     <div class="whatsapp-sidebar-header">
-                        <h2>Chats</h2>
-                        <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
-                            <button id="whatsappShowButton" class="whatsapp-refresh-btn">Refresh</button>
+                        <div class="whatsapp-me-avatar-wrap" id="whatsappMeAvatarWrap" title="Your WhatsApp profile">
+                            <img id="whatsappMeAvatar" class="whatsapp-avatar-img whatsapp-me-avatar" src="" alt="My profile" style="display: none;">
+                            <div id="whatsappMeAvatarFallback" class="whatsapp-me-avatar-fallback">?</div>
+                        </div>
+                        <div class="whatsapp-sidebar-header-right">
+                            <h2>Chats</h2>
+                            <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                                <button id="whatsappShowButton" class="whatsapp-refresh-btn">Refresh</button>
+                            </div>
                         </div>
                     </div>
                     <div class="whatsapp-sidebar-content" id="whatsappChatsList">
@@ -1139,6 +1145,8 @@
         const TELEGRAM_API_URL = getNodeServerUrl(3001, '/telegram');
         // Always use chat server (same origin) for WhatsApp REST API - chat server proxies to Node on 3000 (avoids CORS and connection issues)
         const WHATSAPP_API_URL = CHAT_SERVER_URL;
+        const WHATSAPP_DEFAULT_AVATAR_SVG = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="rgba(255,255,255,0.85)"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 4-6 8-6s8 2 8 6"/></svg>');
+        function getWhatsAppMeAvatarUrl() { return `${WHATSAPP_API_URL}/api/whatsapp/avatar/me`; }
         const WHATSAPP_SOCKET_URL = getNodeServerUrl(3000, '/whatsapp'); // Socket.IO connects to Node server (port 3000)
         const SLACK_API_URL = getNodeServerUrl(3002, '/slack');
         
@@ -3749,12 +3757,23 @@
         let whatsappMessagesByChat = {};
         let currentWhatsAppChatId = null;
         let currentWhatsAppContactName = null;
+        let currentWhatsAppMyContactId = null;
+        let currentWhatsAppMyName = null;
         let whatsappAuthCheckInterval = null;
         let whatsappQrRefreshInterval = null;
         let whatsappIsAuthenticated = false;
         let whatsappIsReady = false;
         let whatsappHasLoadedChats = false;
         let whatsappIsLoadingChats = false;
+        let whatsappContactsRetryTimer = null;
+        let whatsappContactsRetryCount = 0;
+        const WHATSAPP_CONTACTS_AUTO_RETRY_MAX = 4;
+        const WHATSAPP_CONTACTS_AUTO_RETRY_DELAY_MS = 15000;
+        let whatsappMessagesRetryTimer = null;
+        let whatsappMessagesRetryCount = 0;
+        const WHATSAPP_MESSAGES_AUTO_RETRY_MAX = 4;
+        const WHATSAPP_MESSAGES_AUTO_RETRY_DELAY_MS = 12000;
+        const WHATSAPP_FIRST_LOAD_DELAY_MS = 15000;
         let whatsappJustScannedQR = false; // Track if QR was just scanned (vs. existing session on launch)
         let whatsappSocket = null;
         let whatsappRealtimePollTimer = null; // Fallback polling when WebSocket is not connected
@@ -3771,6 +3790,34 @@
         let whatsappContactsLoadingMore = false;
         let whatsappMessagePaging = {}; // contactId -> { oldestId, oldestTimestamp, reachedStart, loadingOlder }
 
+        function updateWhatsAppMeAvatar(myContactId, myName) {
+            const img = document.getElementById('whatsappMeAvatar');
+            const fallback = document.getElementById('whatsappMeAvatarFallback');
+            if (!img || !fallback) return;
+            img.alt = myName ? `Profile: ${myName}` : 'My profile';
+            img.onerror = function () {
+                // Retry once with refresh=true to bypass server/browser cache (e.g. previously cached 404 or stale cache)
+                if (!img.dataset.avatarRetried) {
+                    img.dataset.avatarRetried = '1';
+                    img.src = `${WHATSAPP_API_URL}/api/whatsapp/avatar/me?refresh=true`;
+                    return;
+                }
+                img.src = WHATSAPP_DEFAULT_AVATAR_SVG;
+                img.onerror = null;
+                img.style.display = '';
+                fallback.style.display = 'none';
+            };
+            img.onload = function () {
+                img.style.display = '';
+                fallback.style.display = 'none';
+            };
+            // Use dedicated /avatar/me endpoint so the server resolves the current user's photo (no contact_id needed)
+            delete img.dataset.avatarRetried;
+            img.src = `${WHATSAPP_API_URL}/api/whatsapp/avatar/me`;
+            img.style.display = 'none';
+            fallback.style.display = '';
+        }
+
         /**
          * @param {Object} options
          * @param {boolean} [options.showQRIfNoSession=true] - If false, do not display QR when no session (e.g. on tab switch; QR only after user clicks Refresh).
@@ -3779,6 +3826,15 @@
             const showQRIfNoSession = options.showQRIfNoSession !== false;
             // Return true only when WhatsApp is fully ready (contacts/messages endpoints work)
             if (whatsappIsAuthenticated && whatsappIsReady) {
+                if (!currentWhatsAppMyContactId) {
+                    fetch(`${WHATSAPP_API_URL}/api/whatsapp/status`).then(r => r.json()).then(data => {
+                        if (data.success && data.is_ready && data.my_contact_id) {
+                            currentWhatsAppMyContactId = data.my_contact_id;
+                            currentWhatsAppMyName = data.my_name || null;
+                            updateWhatsAppMeAvatar(data.my_contact_id, data.my_name);
+                        }
+                    }).catch(() => {});
+                }
                 return true;
             }
             try {
@@ -3802,6 +3858,11 @@
                     console.log('[*] WhatsApp ready! Hiding QR code.');
                     whatsappIsAuthenticated = true;
                     whatsappIsReady = true;
+                    if (data.my_contact_id) {
+                        currentWhatsAppMyContactId = data.my_contact_id;
+                        currentWhatsAppMyName = data.my_name || null;
+                        updateWhatsAppMeAvatar(data.my_contact_id, data.my_name);
+                    }
                     
                     // Stop all intervals
                     if (whatsappAuthCheckInterval) {
@@ -3853,15 +3914,17 @@
                     
                     console.log('[*] WhatsApp UI updated to connected state');
 
-                    // Auto-load chats when we become ready and haven't loaded yet (QR scan or restored session)
+                    // Auto-load chats when we become ready (delay so backend has time to stabilize)
                     if (!whatsappHasLoadedChats && !whatsappIsLoadingChats) {
-                        whatsappIsLoadingChats = true;
-                        try {
-                            await loadWhatsAppMessages();
-                            whatsappHasLoadedChats = true;
-                        } finally {
-                            whatsappIsLoadingChats = false;
+                        const delayMs = WHATSAPP_FIRST_LOAD_DELAY_MS;
+                        if (whatsappChatsList) {
+                            whatsappChatsList.innerHTML = '<div class="whatsapp-sidebar-loading">Preparing to load chats…<br><small>Starting in ' + (delayMs / 1000) + ' seconds.</small></div>';
                         }
+                        setTimeout(() => {
+                            if (whatsappHasLoadedChats || whatsappIsLoadingChats) return;
+                            whatsappIsLoadingChats = true;
+                            loadWhatsAppMessages().finally(() => { whatsappIsLoadingChats = false; });
+                        }, delayMs);
                     }
                     return true;
                 }
@@ -4137,7 +4200,6 @@
                         whatsappIsLoadingChats = true;
                         try {
                             await loadWhatsAppMessages();
-                            whatsappHasLoadedChats = true;
                         } finally {
                             whatsappIsLoadingChats = false;
                         }
@@ -4159,7 +4221,10 @@
 
         async function loadWhatsAppMessages() {
             if (!whatsappShowButton) return;
-            
+            if (whatsappContactsRetryTimer) {
+                clearTimeout(whatsappContactsRetryTimer);
+                whatsappContactsRetryTimer = null;
+            }
             whatsappShowButton.disabled = true;
             whatsappShowButton.textContent = 'Loading...';
             allWhatsAppMessages = [];
@@ -4196,6 +4261,8 @@
                 console.log('[*] WhatsApp contacts (first page):', contactsData);
 
                 if (contactsData.success && contactsData.contacts && contactsData.contacts.length > 0) {
+                    whatsappContactsRetryCount = 0;
+                    whatsappHasLoadedChats = true;
                     allWhatsAppContacts = contactsData.contacts.slice();
                     whatsappContactsOffset = contactsData.contacts.length;
                     whatsappContactsHasMore = !!contactsData.has_more;
@@ -4220,10 +4287,23 @@
                     allWhatsAppContacts = [];
                     whatsappContactsOffset = 0;
                     whatsappContactsHasMore = false;
+                    const isRetryableWarning = contactsData.warning && /could not be loaded yet|still loading|initializing/i.test(String(contactsData.warning));
                     if (whatsappChatsList) {
                         const emptyMsg = (contactsData.warning) ? contactsData.warning : 'No chats found';
                         const escaped = emptyMsg.replace(/</g, '&lt;').replace(/\n/g, '<br>');
-                        whatsappChatsList.innerHTML = '<div class="whatsapp-sidebar-empty">' + escaped + '<br><br>Then click <strong>Refresh</strong> above.</div>';
+                        let retryHint = '<br><br>Then click <strong>Refresh</strong> above.';
+                        if (isRetryableWarning && whatsappContactsRetryCount < WHATSAPP_CONTACTS_AUTO_RETRY_MAX) {
+                            const sec = WHATSAPP_CONTACTS_AUTO_RETRY_DELAY_MS / 1000;
+                            retryHint = `<br><br><strong>Will retry automatically in ${sec} seconds…</strong>`;
+                        }
+                        whatsappChatsList.innerHTML = '<div class="whatsapp-sidebar-empty">' + escaped + retryHint + '</div>';
+                    }
+                    if (isRetryableWarning && whatsappContactsRetryCount < WHATSAPP_CONTACTS_AUTO_RETRY_MAX) {
+                        whatsappContactsRetryCount += 1;
+                        whatsappContactsRetryTimer = setTimeout(() => {
+                            whatsappContactsRetryTimer = null;
+                            if (whatsappShowButton && !whatsappIsLoadingChats) loadWhatsAppMessages();
+                        }, WHATSAPP_CONTACTS_AUTO_RETRY_DELAY_MS);
                     }
                 } else {
                     if (whatsappChatsList) {
@@ -4232,13 +4312,22 @@
                 }
             } catch (error) {
                 console.error('[!] WhatsApp error:', error);
+                const isTimeoutOrRetryable = (error && (error.name === 'AbortError' || error.name === 'TimeoutError')) || /timeout|aborted|still connecting|try again|loading/i.test(String(error.message || ''));
+                const canRetryContacts = isTimeoutOrRetryable && whatsappContactsRetryCount < WHATSAPP_CONTACTS_AUTO_RETRY_MAX;
                 if (whatsappChatsList) {
-                    const isTimeout = (error && (error.name === 'AbortError' || error.name === 'TimeoutError')) || /timeout|aborted/i.test(String(error.message || ''));
-                    const msg = isTimeout
-                        ? 'Loading contacts took too long. With many chats it can take several minutes. Please try again.'
-                        : (error && error.message) ? error.message : 'Error loading chats';
+                    const msg = (error && error.message) ? error.message : 'Error loading chats';
                     const escaped = msg.replace(/</g, '&lt;').replace(/\n/g, '<br>');
-                    whatsappChatsList.innerHTML = '<div class="whatsapp-sidebar-empty">' + escaped + '<br><br>Click <strong>Refresh</strong> to try again.</div>';
+                    const retryHint = canRetryContacts
+                        ? '<br><br><strong>Will retry automatically in ' + (WHATSAPP_CONTACTS_AUTO_RETRY_DELAY_MS / 1000) + ' seconds…</strong>'
+                        : '<br><br>Click <strong>Refresh</strong> to try again.';
+                    whatsappChatsList.innerHTML = '<div class="whatsapp-sidebar-empty">' + escaped + retryHint + '</div>';
+                }
+                if (canRetryContacts) {
+                    whatsappContactsRetryCount += 1;
+                    whatsappContactsRetryTimer = setTimeout(() => {
+                        whatsappContactsRetryTimer = null;
+                        if (whatsappShowButton && !whatsappIsLoadingChats) loadWhatsAppMessages();
+                    }, WHATSAPP_CONTACTS_AUTO_RETRY_DELAY_MS);
                 }
             } finally {
                 if (whatsappShowButton) {
@@ -4256,17 +4345,29 @@
                 chatItem.dataset.contactId = contact.contact_id || contact.name;
                 const avatar = document.createElement('div');
                 avatar.className = 'whatsapp-chat-avatar';
-                const initials = (contact.name || '?').split(' ').map(n => n[0]).join('').toUpperCase().substring(0, 2);
+                const img = document.createElement('img');
+                img.alt = contact.name || 'Avatar';
+                img.className = 'whatsapp-avatar-img';
+                img.loading = 'lazy';
+                const meAvatarUrl = getWhatsAppMeAvatarUrl();
+                img.onerror = function () {
+                    if (img.dataset.usingMe === '1') {
+                        img.src = WHATSAPP_DEFAULT_AVATAR_SVG;
+                        img.onerror = null;
+                        delete img.dataset.usingMe;
+                    } else {
+                        img.dataset.usingMe = '1';
+                        img.src = meAvatarUrl;
+                    }
+                };
                 if (contact.avatar_url) {
-                    const img = document.createElement('img');
                     img.src = contact.avatar_url;
-                    img.alt = contact.name || 'Avatar';
-                    img.className = 'whatsapp-avatar-img';
-                    avatar.textContent = '';
-                    avatar.appendChild(img);
                 } else {
-                    avatar.textContent = initials;
+                    img.dataset.usingMe = '1';
+                    img.src = meAvatarUrl;
+                    img.dataset.avatarUrl = `${WHATSAPP_API_URL}/api/whatsapp/avatar/image?contact_id=${encodeURIComponent(contact.contact_id || '')}`;
                 }
+                avatar.appendChild(img);
                 const info = document.createElement('div');
                 info.className = 'whatsapp-chat-info';
                 const name = document.createElement('div');
@@ -4290,30 +4391,33 @@
             if (!whatsappChatsList) return;
             if (whatsappAvatarLoadTimer) clearTimeout(whatsappAvatarLoadTimer);
             whatsappAvatarLoadTimer = setTimeout(() => {
-                const list = allWhatsAppContacts.filter(c => c && c.contact_id && !c.avatar_url).slice(0, 40);
-                const concurrency = 5;
-                (async function () {
-                    for (let i = 0; i < list.length; i += concurrency) {
-                        const batch = list.slice(i, i + concurrency);
-                        await Promise.all(batch.map(async (c) => {
-                            try {
-                                const r = await fetch(`${WHATSAPP_API_URL}/api/whatsapp/avatar?contact_id=${encodeURIComponent(c.contact_id)}`, { signal: AbortSignal.timeout(20000) });
-                                if (!r.ok) return;
-                                const data = await r.json();
-                                if (!data || !data.success || !data.avatar_url) return;
-                                c.avatar_url = data.avatar_url;
-                                const el = whatsappChatsList.querySelector(`.whatsapp-chat-item[data-contact-id="${CSS.escape(c.contact_id)}"] .whatsapp-chat-avatar`);
-                                if (!el) return;
-                                el.textContent = '';
-                                const img = document.createElement('img');
-                                img.src = c.avatar_url;
-                                img.alt = c.name || 'Avatar';
-                                img.className = 'whatsapp-avatar-img';
-                                el.appendChild(img);
-                            } catch (e) { /* ignore */ }
-                        }));
-                    }
-                })();
+                const items = whatsappChatsList.querySelectorAll('.whatsapp-chat-item');
+                let loaded = 0;
+                const maxToLoad = 40;
+                for (const item of items) {
+                    if (loaded >= maxToLoad) break;
+                    const img = item.querySelector('.whatsapp-chat-avatar img.whatsapp-avatar-img[data-avatar-url]');
+                    if (!img || !img.dataset.avatarUrl) continue;
+                    loaded++;
+                    const url = img.dataset.avatarUrl;
+                    delete img.dataset.avatarUrl;
+                    delete img.dataset.usingMe;
+                    const meAvatarUrl = getWhatsAppMeAvatarUrl();
+                    img.onerror = function () {
+                        if (img.dataset.usingMe === '1') {
+                            img.src = WHATSAPP_DEFAULT_AVATAR_SVG;
+                            img.onerror = null;
+                            delete img.dataset.usingMe;
+                        } else {
+                            img.dataset.usingMe = '1';
+                            img.src = meAvatarUrl;
+                        }
+                    };
+                    img.src = url;
+                    const contactId = item.dataset.contactId || item.getAttribute('data-contact-id');
+                    const c = allWhatsAppContacts.find(x => (x && x.contact_id) === contactId);
+                    if (c) c.avatar_url = url;
+                }
             }, 150);
         }
 
@@ -4431,6 +4535,13 @@
                     }
                     if (data.is_ready !== undefined) {
                         whatsappIsReady = data.is_ready;
+                    }
+                    if (data.my_contact_id) {
+                        currentWhatsAppMyContactId = data.my_contact_id;
+                        currentWhatsAppMyName = data.my_name || null;
+                    }
+                    if (data.is_ready) {
+                        updateWhatsAppMeAvatar(currentWhatsAppMyContactId || data.my_contact_id, currentWhatsAppMyName || data.my_name || null);
                     }
                     // When ready (from real event or backend fallback), trigger status check to update UI and load chats
                     if (data.is_ready && !whatsappHasLoadedChats) {
@@ -4874,6 +4985,7 @@
         async function selectWhatsAppContact(contactId, contactName) {
             currentWhatsAppChatId = contactId;
             currentWhatsAppContactName = contactName;
+            whatsappMessagesRetryCount = 0;
             
             // Update UI to show selected contact
             if (whatsappCurrentChat) {
@@ -4911,6 +5023,10 @@
          * Load messages for a specific WhatsApp contact
          */
         async function loadWhatsAppContactMessages(contactId, contactName) {
+            if (whatsappMessagesRetryTimer) {
+                clearTimeout(whatsappMessagesRetryTimer);
+                whatsappMessagesRetryTimer = null;
+            }
             try {
                 console.log(`[*] Loading messages for contact: ${contactName} (${contactId})`);
                 
@@ -4933,7 +5049,8 @@
                 const data = await response.json();
                 console.log('[*] WhatsApp messages response:', data);
 
-                if (data.success && data.messages) {
+                if (data.success && data.messages && data.messages.length > 0) {
+                    whatsappMessagesRetryCount = 0;
                     currentChatMessages = data.messages;
                     const paging = whatsappMessagePaging[contactId] || (whatsappMessagePaging[contactId] = { loadingOlder: false, reachedStart: false, oldestId: null, oldestTimestamp: null });
                     paging.oldestId = data.oldest_id || (currentChatMessages[0] ? currentChatMessages[0].id : null);
@@ -4944,27 +5061,50 @@
                     displayWhatsAppMessages(currentChatMessages, contactName);
                     setupWhatsAppMessagesScrollLoadOlder();
                     startWhatsAppRealtimePolling();
+                } else if (data.success && (!data.messages || data.messages.length === 0) && data.warning && /still loading|please wait|try again/i.test(String(data.warning))) {
+                    throw new Error(data.warning);
+                } else if (data.success) {
+                    whatsappMessagesRetryCount = 0;
+                    currentChatMessages = data.messages || [];
+                    if (whatsappStatus) whatsappStatus.textContent = '0 messages';
+                    if (whatsappCount) whatsappCount.textContent = '0 messages';
+                    displayWhatsAppMessages(currentChatMessages, contactName);
+                    setupWhatsAppMessagesScrollLoadOlder();
                 } else {
-                    throw new Error(data.error || 'Failed to load messages');
+                    throw new Error(data.error || data.warning || 'Failed to load messages');
                 }
             } catch (error) {
                 console.error('[!] Error loading WhatsApp messages:', error);
                 const listEl = whatsappMessagesList || whatsappMessagesContainer;
+                const errMsg = (error && error.message) ? String(error.message) : 'Error loading messages';
+                const isTimeout = error && (error.name === 'AbortError' || error.name === 'TimeoutError');
+                const isRetryable = isTimeout || /still loading|still connecting|wait|try again|loading|initializing|please wait/i.test(errMsg);
+                const canAutoRetry = isRetryable && whatsappMessagesRetryCount < WHATSAPP_MESSAGES_AUTO_RETRY_MAX && contactId === currentWhatsAppChatId;
                 if (listEl) {
                     if (whatsappEmptyState) whatsappEmptyState.style.display = 'none';
                     if (whatsappQrContainer) whatsappQrContainer.style.display = 'none';
                     if (whatsappMessagesList) whatsappMessagesList.style.display = 'flex';
+                    const retrySec = WHATSAPP_MESSAGES_AUTO_RETRY_DELAY_MS / 1000;
+                    const retryHint = canAutoRetry
+                        ? `<br><br><strong>Will retry automatically in ${retrySec} seconds…</strong>`
+                        : '';
                     listEl.innerHTML = `
                         <div class="whatsapp-empty-state">
                             <div class="whatsapp-empty-icon">⚠️</div>
                             <h3>Error Loading Messages</h3>
-                            <p>${escapeHtml(error.message)}</p>
-                            <button type="button" class="whatsapp-refresh-btn" style="margin-top: 12px;" onclick="document.getElementById('whatsappShowButton')?.click()">Refresh chats</button>
+                            <p>${escapeHtml(errMsg)}${retryHint}</p>
+                            <button type="button" class="whatsapp-refresh-btn" style="margin-top: 12px;" onclick="whatsappMessagesRetryCount=0; loadWhatsAppContactMessages(currentWhatsAppChatId, document.getElementById('whatsappCurrentChat')?.textContent || 'Contact')">Retry</button>
+                            <button type="button" class="whatsapp-refresh-btn" style="margin-top: 8px; margin-left: 8px;" onclick="document.getElementById('whatsappShowButton')?.click()">Refresh chats</button>
                         </div>
                     `;
                 }
-                if (whatsappStatus) {
-                    whatsappStatus.textContent = 'Error';
+                if (whatsappStatus) whatsappStatus.textContent = 'Error';
+                if (canAutoRetry) {
+                    whatsappMessagesRetryCount += 1;
+                    whatsappMessagesRetryTimer = setTimeout(() => {
+                        whatsappMessagesRetryTimer = null;
+                        if (currentWhatsAppChatId === contactId) loadWhatsAppContactMessages(contactId, contactName);
+                    }, WHATSAPP_MESSAGES_AUTO_RETRY_DELAY_MS);
                 }
             }
         }
@@ -5308,6 +5448,7 @@
 
         if (whatsappShowButton) {
             whatsappShowButton.addEventListener('click', async () => {
+                whatsappContactsRetryCount = 0;
                 const isAuth = await checkWhatsAppStatus();
                 if (isAuth) {
                     await loadWhatsAppMessages();

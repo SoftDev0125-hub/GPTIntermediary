@@ -50,7 +50,7 @@ let readyAt = 0;
 // Timeout for fallback when 'ready' never fires (whatsapp-web.js known issue)
 let readyFallbackTimeout = null;
 // Warmup delay: wait this many ms after 'ready' before allowing getChats/getChatById (WhatsApp Web needs time to initialize)
-const CHATS_WARMUP_MS = 15000;
+const CHATS_WARMUP_MS = 30000;
 // Cache getChats() result for pagination (avoid repeated heavy getChats() calls)
 const CHATS_CACHE_MS = 120000; // 2 minutes
 let chatsCache = null;
@@ -78,6 +78,29 @@ function buildContentDisposition(filename, download) {
     const encoded = encodeURIComponent(original);
     const type = download ? 'attachment' : 'inline';
     return `${type}; filename=\"${safeAscii}\"; filename*=UTF-8''${encoded}`;
+}
+
+/** Safe filename for avatar cache (no path chars, no control chars). */
+function sanitizeAvatarCacheKey(contactId) {
+    let s = String(contactId || '').replace(/[\0-\x1F\x7F\\/:*?"<>|]/g, '_').trim();
+    if (!s) s = 'unknown';
+    if (s.length > 200) s = s.slice(0, 200);
+    return s;
+}
+
+/** Get current user's contact ID string for profile picture (robust extraction from client.info.wid). */
+function getMyContactId() {
+    try {
+        if (!client || !client.info || !client.info.wid) return null;
+        const wid = client.info.wid;
+        if (typeof wid === 'string') return wid;
+        if (wid._serialized) return wid._serialized;
+        if (wid.id && typeof wid.id === 'string') return wid.id;
+        if (wid.user) return `${wid.user}@${wid.server || 'c.us'}`;
+        return null;
+    } catch (e) {
+        return null;
+    }
 }
 
 function cacheWhatsAppMessage(msg) {
@@ -190,8 +213,8 @@ function initializeWhatsApp() {
     }
 
     // Create client with LocalAuth for session persistence
-    // Library pinned to 1.34.2: 1.34.3+ regressed with "auth timeout" (live WhatsApp Web no longer
-    // exposes window.Debug.VERSION in time). See pedroslopez/whatsapp-web.js#5680.
+    // Use 1.34.6 for getChats fix (GroupMetadata undefined → PR #5779). If you see "auth timeout" on QR
+    // login, try downgrading to 1.34.2 temporarily; then upgrade again when a fix is released.
     client = new Client({
         authStrategy: new LocalAuth({
             dataPath: SESSION_DIR
@@ -253,12 +276,20 @@ function initializeWhatsApp() {
         }
         
         // Emit ready event to all connected clients
-        io.emit('whatsapp_status', {
+        const readyPayload = {
             is_connected: true,
             is_authenticated: true,
             is_ready: true,
             message: 'Connected to WhatsApp'
-        });
+        };
+        try {
+            const myId = getMyContactId();
+            if (myId) {
+                readyPayload.my_contact_id = myId;
+                readyPayload.my_name = (client.info && client.info.pushname) || null;
+            }
+        } catch (e) { /* ignore */ }
+        io.emit('whatsapp_status', readyPayload);
     });
     
     // Message event - fired when a message is received
@@ -424,12 +455,20 @@ function initializeWhatsApp() {
                 console.log('[WhatsApp] Using authenticated fallback (ready event did not fire)');
                 isReady = true;
                 readyAt = Date.now();
-                io.emit('whatsapp_status', {
+                const fallbackPayload = {
                     is_connected: true,
                     is_authenticated: true,
                     is_ready: true,
                     message: 'Connected to WhatsApp'
-                });
+                };
+                try {
+                    const myId = getMyContactId();
+                    if (myId) {
+                        fallbackPayload.my_contact_id = myId;
+                        fallbackPayload.my_name = (client.info && client.info.pushname) || null;
+                    }
+                } catch (e) { /* ignore */ }
+                io.emit('whatsapp_status', fallbackPayload);
             }
         }, 3000);
     });
@@ -625,14 +664,22 @@ app.get('/api/whatsapp/status', async (req, res) => {
 
         // Check if client exists and is ready
         if (isAuthenticated && isReady && client) {
-            return res.json({
+            const payload = {
                 success: true,
                 is_connected: true,
                 is_authenticated: true,
                 is_ready: true,
                 has_session: hasSession,
                 message: 'Connected to WhatsApp'
-            });
+            };
+        try {
+            const myId = getMyContactId();
+            if (myId) {
+                payload.my_contact_id = myId;
+                payload.my_name = (client.info && client.info.pushname) || null;
+            }
+        } catch (e) { /* ignore */ }
+            return res.json(payload);
         }
 
         // Authenticated but not ready yet (client still initializing; chats API may not work yet)
@@ -761,8 +808,8 @@ app.post('/api/whatsapp/contacts', async (req, res) => {
         if (chatsCache && (now - chatsCacheAt) < CHATS_CACHE_MS) {
             chats = chatsCache;
         } else {
-            const maxTries = 6;
-            const retryDelayMs = 5000;
+            const maxTries = 18;
+            const retryDelayMs = 8000;
             for (let attempt = 1; attempt <= maxTries; attempt++) {
                 try {
                     chats = await client.getChats();
@@ -811,7 +858,7 @@ app.post('/api/whatsapp/contacts', async (req, res) => {
                 success: true,
                 count: 0,
                 contacts: [],
-                warning: 'Chats could not be loaded yet. Run "npm install" (to get the latest WhatsApp library fix), restart the WhatsApp server, then click Refresh. If it still fails, log out and scan the QR code again.'
+                warning: 'Chats could not be loaded yet. Ensure whatsapp-web.js is 1.34.6+ (npm install), restart the WhatsApp server, then click Refresh. If it still fails, log out and scan the QR code again.'
             });
         }
         res.status(500).json({
@@ -838,8 +885,8 @@ app.get('/api/whatsapp/avatar', async (req, res) => {
         if (!contactId) {
             return res.status(400).json({ success: false, error: 'contact_id is required' });
         }
-        
-        const cacheFile = path.join(AVATAR_DIR, `${contactId}.json`);
+        const cacheKey = sanitizeAvatarCacheKey(contactId);
+        const cacheFile = path.join(AVATAR_DIR, `${cacheKey}.json`);
         if (!refresh && fs.existsSync(cacheFile)) {
             try {
                 const cached = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
@@ -856,13 +903,18 @@ app.get('/api/whatsapp/avatar', async (req, res) => {
             return res.json({ success: true, avatar_url: null });
         }
         
-        // Proxy to base64 to avoid CORS/hotlinking issues
-        const resp = await fetch(url);
+        // Proxy to base64 to avoid CORS/hotlinking issues (browser-like headers so CDN allows the request)
+        const resp = await fetch(url, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'image/webp,image/apng,image/*,*/*;q=0.8'
+            }
+        });
         if (!resp.ok) {
             return res.json({ success: true, avatar_url: null });
         }
         const buf = Buffer.from(await resp.arrayBuffer());
-        const contentType = resp.headers.get('content-type') || 'image/jpeg';
+        const contentType = (resp.headers.get('content-type') || 'image/jpeg').split(';')[0].trim();
         const base64 = buf.toString('base64');
         const avatarUrl = `data:${contentType};base64,${base64}`;
         
@@ -876,6 +928,226 @@ app.get('/api/whatsapp/avatar', async (req, res) => {
     } catch (error) {
         console.error('[WhatsApp] Error fetching avatar:', error);
         res.status(500).json({ success: false, error: error.message || String(error) });
+    }
+});
+
+/**
+ * Fallback: get profile pic as base64 using ProfilePicThumb (avoids broken ProfilePic.profilePicFind/requestProfilePicFromServer isNewsletter path).
+ * Returns base64 string or null. Uses client.pupPage.evaluate with window.WWebJS.getProfilePicThumbToBase64.
+ */
+async function getProfilePicThumbBase64(contactId) {
+    if (!client || !client.pupPage) return null;
+    try {
+        const base64 = await client.pupPage.evaluate(async (contactId) => {
+            if (typeof window.Store === 'undefined' || !window.Store.WidFactory || !window.WWebJS || typeof window.WWebJS.getProfilePicThumbToBase64 !== 'function') return null;
+            const chatWid = window.Store.WidFactory.createWid(contactId);
+            return await window.WWebJS.getProfilePicThumbToBase64(chatWid);
+        }, contactId);
+        return base64 && typeof base64 === 'string' ? base64 : null;
+    } catch (e) {
+        return null;
+    }
+}
+
+/**
+ * GET /api/whatsapp/avatar/me
+ * Serve the logged-in WhatsApp account's profile picture (no contact_id needed).
+ */
+app.get('/api/whatsapp/avatar/me', async (req, res) => {
+    try {
+        if (!isReady || !client) {
+            return res.status(400).send();
+        }
+        const contactId = getMyContactId();
+        if (!contactId) {
+            console.warn('[WhatsApp] Avatar/me: getMyContactId() returned null (client.info.wid not set?)');
+            return res.status(404).send();
+        }
+        const refresh = String(req.query.refresh || '').toLowerCase() === 'true';
+        const cacheKey = sanitizeAvatarCacheKey(contactId);
+        const cacheFile = path.join(AVATAR_DIR, `${cacheKey}.json`);
+        let avatarUrl = null;
+        if (!refresh && fs.existsSync(cacheFile)) {
+            try {
+                const cached = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
+                avatarUrl = cached && cached.avatar_url ? cached.avatar_url : null;
+            } catch (e) { /* ignore */ }
+        }
+        if (!avatarUrl) {
+            let url = null;
+            try {
+                url = await client.getProfilePicUrl(contactId);
+            } catch (e) {
+                // WhatsApp Web API can throw (e.g. "Cannot read properties of undefined (reading 'isNewsletter')") when their internal API changes
+                console.warn('[WhatsApp] Avatar/me: getProfilePicUrl threw, trying contact fallback:', e && e.message);
+                try {
+                    const contact = await client.getContactById(contactId);
+                    if (contact) url = await contact.getProfilePicUrl();
+                } catch (e2) { /* ignore */ }
+            }
+            if (!url) {
+                try {
+                    const contact = await client.getContactById(contactId);
+                    if (contact) url = await contact.getProfilePicUrl();
+                } catch (e) { /* ignore */ }
+            }
+            if (!url) {
+                // Fallback: use ProfilePicThumb (getProfilePicThumbToBase64) - avoids broken ProfilePic isNewsletter path
+                const thumbBase64 = await getProfilePicThumbBase64(contactId);
+                if (thumbBase64) {
+                    avatarUrl = `data:image/jpeg;base64,${thumbBase64}`;
+                    try {
+                        fs.writeFileSync(cacheFile, JSON.stringify({ avatar_url: avatarUrl }), 'utf8');
+                    } catch (e) { /* ignore */ }
+                    const buf = Buffer.from(thumbBase64, 'base64');
+                    res.set('Cache-Control', 'private, max-age=86400');
+                    res.type('image/jpeg');
+                    return res.send(buf);
+                }
+                console.warn('[WhatsApp] Avatar/me: no profile pic URL for contactId=', contactId, '(privacy or WhatsApp Web API may block profile pics)');
+                return res.status(404).send();
+            }
+            const resp = await fetch(url, {
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Accept': 'image/webp,image/apng,image/*,*/*;q=0.8'
+                }
+            });
+            if (!resp.ok) {
+                console.warn('[WhatsApp] Avatar/me: fetch profile pic failed status=', resp.status, 'for contactId=', contactId);
+                return res.status(404).send();
+            }
+            const buf = Buffer.from(await resp.arrayBuffer());
+            const contentType = (resp.headers.get('content-type') || 'image/jpeg').split(';')[0].trim();
+            const base64 = buf.toString('base64');
+            avatarUrl = `data:${contentType};base64,${base64}`;
+            try {
+                fs.writeFileSync(cacheFile, JSON.stringify({ avatar_url: avatarUrl }), 'utf8');
+            } catch (e) { /* ignore */ }
+            res.set('Cache-Control', 'private, max-age=86400');
+            res.type(contentType);
+            return res.send(buf);
+        }
+        const match = /^data:([^;,]+)(?:;base64)?,(.+)$/.exec(avatarUrl);
+        if (!match) {
+            try { fs.unlinkSync(cacheFile); } catch (e) { /* ignore */ }
+            return res.status(404).send();
+        }
+        let buf;
+        try {
+            buf = Buffer.from(match[2], 'base64');
+        } catch (e) {
+            console.warn('[WhatsApp] Avatar/me: invalid base64 in cache, clearing cache file');
+            try { fs.unlinkSync(cacheFile); } catch (e2) { /* ignore */ }
+            return res.status(404).send();
+        }
+        const contentType = match[1].trim().split(';')[0] || 'image/jpeg';
+        res.set('Cache-Control', 'private, max-age=86400');
+        res.type(contentType);
+        return res.send(buf);
+    } catch (error) {
+        console.error('[WhatsApp] Error serving me avatar:', error);
+        res.status(500).send();
+    }
+});
+
+/**
+ * GET /api/whatsapp/avatar/image
+ * Serve avatar as raw image (avoids huge base64 in JSON / data URL display issues).
+ * Query params: contact_id (required), refresh (optional)
+ */
+app.get('/api/whatsapp/avatar/image', async (req, res) => {
+    try {
+        if (!isReady || !client) {
+            return res.status(400).send();
+        }
+        const contactId = (req.query.contact_id || '').toString().trim();
+        const refresh = String(req.query.refresh || '').toLowerCase() === 'true';
+        if (!contactId) {
+            return res.status(400).send();
+        }
+        const cacheKey = sanitizeAvatarCacheKey(contactId);
+        const cacheFile = path.join(AVATAR_DIR, `${cacheKey}.json`);
+        let avatarUrl = null;
+        if (!refresh && fs.existsSync(cacheFile)) {
+            try {
+                const cached = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
+                avatarUrl = cached && cached.avatar_url ? cached.avatar_url : null;
+            } catch (e) { /* ignore */ }
+        }
+        if (!avatarUrl) {
+            let url = null;
+            try {
+                url = await client.getProfilePicUrl(contactId);
+            } catch (e) {
+                console.warn('[WhatsApp] Avatar/image: getProfilePicUrl threw, trying contact fallback:', e && e.message);
+                try {
+                    const contact = await client.getContactById(contactId);
+                    if (contact) url = await contact.getProfilePicUrl();
+                } catch (e2) { /* ignore */ }
+            }
+            if (!url) {
+                try {
+                    const contact = await client.getContactById(contactId);
+                    if (contact) url = await contact.getProfilePicUrl();
+                } catch (e) { /* ignore */ }
+            }
+            if (!url) {
+                const thumbBase64 = await getProfilePicThumbBase64(contactId);
+                if (thumbBase64) {
+                    avatarUrl = `data:image/jpeg;base64,${thumbBase64}`;
+                    try {
+                        fs.writeFileSync(cacheFile, JSON.stringify({ avatar_url: avatarUrl }), 'utf8');
+                    } catch (e) { /* ignore */ }
+                    const buf = Buffer.from(thumbBase64, 'base64');
+                    res.set('Cache-Control', 'private, max-age=86400');
+                    res.type('image/jpeg');
+                    return res.send(buf);
+                }
+                console.warn('[WhatsApp] Avatar/image: no profile pic URL for contactId=', contactId);
+                return res.status(404).send();
+            }
+            const resp = await fetch(url, {
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Accept': 'image/webp,image/apng,image/*,*/*;q=0.8'
+                }
+            });
+            if (!resp.ok) {
+                console.warn('[WhatsApp] Avatar/image: fetch failed status=', resp.status, 'contactId=', contactId);
+                return res.status(404).send();
+            }
+            const buf = Buffer.from(await resp.arrayBuffer());
+            const contentType = (resp.headers.get('content-type') || 'image/jpeg').split(';')[0].trim();
+            const base64 = buf.toString('base64');
+            avatarUrl = `data:${contentType};base64,${base64}`;
+            try {
+                fs.writeFileSync(cacheFile, JSON.stringify({ avatar_url: avatarUrl }), 'utf8');
+            } catch (e) { /* ignore */ }
+            res.set('Cache-Control', 'private, max-age=86400');
+            res.type(contentType);
+            return res.send(buf);
+        }
+        // Parse data URL and serve as raw image (so browser gets a normal image response)
+        const match = /^data:([^;,]+)(?:;base64)?,(.+)$/.exec(avatarUrl);
+        if (!match) {
+            try { fs.unlinkSync(cacheFile); } catch (e) { /* ignore */ }
+            return res.status(404).send();
+        }
+        let buf;
+        try {
+            buf = Buffer.from(match[2], 'base64');
+        } catch (e) {
+            try { fs.unlinkSync(cacheFile); } catch (e2) { /* ignore */ }
+            return res.status(404).send();
+        }
+        const contentType = match[1].trim().split(';')[0] || 'image/jpeg';
+        res.set('Cache-Control', 'private, max-age=86400');
+        res.type(contentType);
+        return res.send(buf);
+    } catch (error) {
+        console.error('[WhatsApp] Error serving avatar image:', error);
+        res.status(500).send();
     }
 });
 
@@ -917,8 +1189,8 @@ app.post('/api/whatsapp/messages', async (req, res) => {
             });
         }
 
-        const maxTries = 6;
-        const retryDelayMs = 5000;
+        const maxTries = 18;
+        const retryDelayMs = 8000;
         let chat;
         let messages;
         for (let attempt = 1; attempt <= maxTries; attempt++) {
@@ -1029,11 +1301,23 @@ app.post('/api/whatsapp/messages', async (req, res) => {
         console.error('[WhatsApp] Error getting messages:', error);
         const msg = error.message || String(error);
         const isPageNotReady = /undefined|update|getChatModel|Evaluation failed/i.test(msg);
+        if (isPageNotReady) {
+            console.log('[WhatsApp] Returning empty messages so client can retry; chat may still be loading.');
+            return res.status(200).json({
+                success: true,
+                contact_id: req.body.contact_id,
+                contact_name: 'Unknown',
+                count: 0,
+                messages: [],
+                warning: 'Chat is still loading. Please wait or try again.',
+                reached_start: true,
+                oldest_id: null,
+                oldest_timestamp: null
+            });
+        }
         res.status(500).json({
             success: false,
-            error: isPageNotReady
-                ? 'WhatsApp is still loading. Please wait a few seconds and try again.'
-                : msg
+            error: msg
         });
     }
 });
@@ -1338,14 +1622,21 @@ io.on('connection', (socket) => {
     
     // Send current status when client connects
     const hasSession = hasAuthenticatedSession();
-    
-    socket.emit('whatsapp_status', {
+    const payload = {
         is_connected: isReady && isAuthenticated,
         is_authenticated: isAuthenticated,
         is_ready: isReady && isAuthenticated,
         has_session: hasSession,
         message: isReady ? 'Connected to WhatsApp' : (hasSession ? 'Session found - connecting...' : 'QR code authentication required')
-    });
+    };
+    try {
+        const myId = getMyContactId();
+        if (myId) {
+            payload.my_contact_id = myId;
+            payload.my_name = (client.info && client.info.pushname) || null;
+        }
+    } catch (e) { /* ignore */ }
+    socket.emit('whatsapp_status', payload);
     
     socket.on('disconnect', () => {
         console.log('[WhatsApp] Client disconnected from WebSocket:', socket.id);
