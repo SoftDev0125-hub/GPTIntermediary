@@ -4349,22 +4349,14 @@
                 img.alt = contact.name || 'Avatar';
                 img.className = 'whatsapp-avatar-img';
                 img.loading = 'lazy';
-                const meAvatarUrl = getWhatsAppMeAvatarUrl();
                 img.onerror = function () {
-                    if (img.dataset.usingMe === '1') {
-                        img.src = WHATSAPP_DEFAULT_AVATAR_SVG;
-                        img.onerror = null;
-                        delete img.dataset.usingMe;
-                    } else {
-                        img.dataset.usingMe = '1';
-                        img.src = meAvatarUrl;
-                    }
+                    img.src = WHATSAPP_DEFAULT_AVATAR_SVG;
+                    img.onerror = null;
                 };
                 if (contact.avatar_url) {
                     img.src = contact.avatar_url;
                 } else {
-                    img.dataset.usingMe = '1';
-                    img.src = meAvatarUrl;
+                    img.src = WHATSAPP_DEFAULT_AVATAR_SVG;
                     img.dataset.avatarUrl = `${WHATSAPP_API_URL}/api/whatsapp/avatar/image?contact_id=${encodeURIComponent(contact.contact_id || '')}`;
                 }
                 avatar.appendChild(img);
@@ -4401,17 +4393,9 @@
                     loaded++;
                     const url = img.dataset.avatarUrl;
                     delete img.dataset.avatarUrl;
-                    delete img.dataset.usingMe;
-                    const meAvatarUrl = getWhatsAppMeAvatarUrl();
                     img.onerror = function () {
-                        if (img.dataset.usingMe === '1') {
-                            img.src = WHATSAPP_DEFAULT_AVATAR_SVG;
-                            img.onerror = null;
-                            delete img.dataset.usingMe;
-                        } else {
-                            img.dataset.usingMe = '1';
-                            img.src = meAvatarUrl;
-                        }
+                        img.src = WHATSAPP_DEFAULT_AVATAR_SVG;
+                        img.onerror = null;
                     };
                     img.src = url;
                     const contactId = item.dataset.contactId || item.getAttribute('data-contact-id');
