@@ -4603,6 +4603,32 @@
             const existingIndex = currentChatMessages.findIndex(msg => msg.id === message.id);
             const messageExists = existingIndex !== -1;
             
+            // If this is our own sent message (fromMe) and we have an optimistic temp message with same body, replace it instead of appending (WebSocket often arrives before send API returns)
+            const optimisticIndex = (message.fromMe && isInstant && isForCurrentChat && !messageExists)
+                ? currentChatMessages.findIndex(msg => String(msg.id).startsWith('temp_') && msg.fromMe && (msg.body || '') === (message.body || ''))
+                : -1;
+            if (optimisticIndex !== -1) {
+                const tempId = currentChatMessages[optimisticIndex].id;
+                const msgData = {
+                    id: message.id,
+                    body: message.body,
+                    from: message.from,
+                    fromMe: message.fromMe,
+                    timestamp: message.timestamp,
+                    type: message.type,
+                    hasMedia: message.hasMedia,
+                    mediaUrl: message.mediaUrl || null,
+                    mediaMimetype: message.mediaMimetype || null,
+                    mediaFilename: message.mediaFilename || null
+                };
+                currentChatMessages[optimisticIndex] = msgData;
+                const listEl = whatsappMessagesList || whatsappMessagesContainer;
+                const tempElement = listEl?.querySelector(`[data-message-id="${tempId}"]`);
+                if (tempElement) tempElement.setAttribute('data-message-id', message.id);
+                updateContactPreview(message);
+                return;
+            }
+            
             if (isForCurrentChat) {
                 if (!messageExists && isInstant) {
                     // Add new message immediately
