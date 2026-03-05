@@ -282,16 +282,18 @@ from pydantic import BaseModel
 
 class GetUnreadEmailsRequest(BaseModel):
     """Request model for getting unread emails"""
-    user_credentials: Optional[UserCredentials] = None  # optional for auth via JWT/DB
+    user_credentials: Optional[UserCredentials] = None
     limit: int = 50
     query: Optional[str] = None
     page_token: Optional[str] = None
+    use_second_gmail: bool = False  # when True, use GOOGLE_CLIENT_ID_2 / _SECRET_2 and USER_ACCESS_TOKEN_2 / _REFRESH_TOKEN_2 from .env
 
 
 class MarkEmailReadRequest(BaseModel):
     """Request model for marking an email as read"""
-    user_credentials: UserCredentials
+    user_credentials: Optional[UserCredentials] = None
     message_id: str
+    use_second_gmail: bool = False
 
 
 class DeleteAllEmailsRequest(BaseModel):
@@ -1020,7 +1022,7 @@ async def send_email(
         refresh_token = None
         google_client_id = None
         google_client_secret = None
-        
+
         if user_id and DATABASE_AVAILABLE:
             from config_helpers import get_gmail_config
             from user_service_helpers import get_user_gmail_credentials
@@ -1394,42 +1396,50 @@ async def get_unread_emails(
         List of unread emails
     """
     try:
-        # Try to get user's Gmail credentials from database first (if authenticated)
         access_token = None
         refresh_token = None
         google_client_id = None
         google_client_secret = None
-        
-        if user_id and DATABASE_AVAILABLE:
-            from config_helpers import get_gmail_config
-            from user_service_helpers import get_user_gmail_credentials
-            gmail_config = get_gmail_config(db, user_id)
-            user_creds = get_user_gmail_credentials(db, user_id)
-            if gmail_config:
-                google_client_id = gmail_config.get('google_client_id')
-                google_client_secret = gmail_config.get('google_client_secret')
-            if user_creds and user_creds.get('access_token'):
-                access_token = user_creds['access_token']
-                refresh_token = user_creds.get('refresh_token')
-                logger.info(f"Using per-user Gmail credentials for user {user_id}")
-        
-        # Fallback to credentials from request body (backward compatibility)
-        if not access_token and request.user_credentials and request.user_credentials.access_token:
-            access_token = request.user_credentials.access_token
-            refresh_token = request.user_credentials.refresh_token
-            logger.info("Using credentials from request body (backward compatibility)")
-        if not access_token:
-            access_token = (os.getenv('USER_ACCESS_TOKEN') or '').strip()
-            refresh_token = (os.getenv('USER_REFRESH_TOKEN') or '').strip()
+
+        if getattr(request, 'use_second_gmail', False):
+            google_client_id = (os.getenv('GOOGLE_CLIENT_ID_2') or '').strip() or None
+            google_client_secret = (os.getenv('GOOGLE_CLIENT_SECRET_2') or '').strip() or None
+            access_token = (os.getenv('USER_ACCESS_TOKEN_2') or '').strip()
+            refresh_token = (os.getenv('USER_REFRESH_TOKEN_2') or '').strip()
             if access_token and refresh_token:
-                logger.info("Using Gmail credentials from .env (USER_ACCESS_TOKEN, USER_REFRESH_TOKEN)")
-                if not google_client_id:
-                    google_client_id = (os.getenv('GOOGLE_CLIENT_ID') or '').strip() or None
-                if not google_client_secret:
-                    google_client_secret = (os.getenv('GOOGLE_CLIENT_SECRET') or '').strip() or None
-        if not access_token:
-            raise HTTPException(status_code=400, detail="No Gmail credentials provided. Please connect your Gmail account first or set USER_ACCESS_TOKEN and USER_REFRESH_TOKEN in .env")
-        
+                logger.info("Using second Gmail account credentials from .env (_2)")
+            else:
+                raise HTTPException(status_code=400, detail="Second Gmail account not configured. Set USER_ACCESS_TOKEN_2 and USER_REFRESH_TOKEN_2 in Settings (Second Gmail) or in .env")
+        else:
+            if user_id and DATABASE_AVAILABLE:
+                from config_helpers import get_gmail_config
+                from user_service_helpers import get_user_gmail_credentials
+                gmail_config = get_gmail_config(db, user_id)
+                user_creds = get_user_gmail_credentials(db, user_id)
+                if gmail_config:
+                    google_client_id = gmail_config.get('google_client_id')
+                    google_client_secret = gmail_config.get('google_client_secret')
+                if user_creds and user_creds.get('access_token'):
+                    access_token = user_creds['access_token']
+                    refresh_token = user_creds.get('refresh_token')
+                    logger.info(f"Using per-user Gmail credentials for user {user_id}")
+
+            if not access_token and request.user_credentials and request.user_credentials.access_token:
+                access_token = request.user_credentials.access_token
+                refresh_token = request.user_credentials.refresh_token
+                logger.info("Using credentials from request body (backward compatibility)")
+            if not access_token:
+                access_token = (os.getenv('USER_ACCESS_TOKEN') or '').strip()
+                refresh_token = (os.getenv('USER_REFRESH_TOKEN') or '').strip()
+                if access_token and refresh_token:
+                    logger.info("Using Gmail credentials from .env (USER_ACCESS_TOKEN, USER_REFRESH_TOKEN)")
+                    if not google_client_id:
+                        google_client_id = (os.getenv('GOOGLE_CLIENT_ID') or '').strip() or None
+                    if not google_client_secret:
+                        google_client_secret = (os.getenv('GOOGLE_CLIENT_SECRET') or '').strip() or None
+            if not access_token:
+                raise HTTPException(status_code=400, detail="No Gmail credentials provided. Please connect your Gmail account first or set USER_ACCESS_TOKEN and USER_REFRESH_TOKEN in .env")
+
         # For pagination: when page_token is set, fetch one page (50). Otherwise cap at 50 for first page.
         actual_limit = min(request.limit, 50)
         if request.limit > 50 and not request.page_token:
@@ -1597,42 +1607,47 @@ async def mark_email_read(
         Operation status
     """
     try:
-        # Try to get user's Gmail credentials from database first (if authenticated)
         access_token = None
         refresh_token = None
         google_client_id = None
         google_client_secret = None
-        
-        if user_id and DATABASE_AVAILABLE:
-            from config_helpers import get_gmail_config
-            from user_service_helpers import get_user_gmail_credentials
-            gmail_config = get_gmail_config(db, user_id)
-            user_creds = get_user_gmail_credentials(db, user_id)
-            if gmail_config:
-                google_client_id = gmail_config.get('google_client_id')
-                google_client_secret = gmail_config.get('google_client_secret')
-            if user_creds and user_creds.get('access_token'):
-                access_token = user_creds['access_token']
-                refresh_token = user_creds.get('refresh_token')
-                logger.info(f"Using per-user Gmail credentials for user {user_id}")
-        
-        # Fallback to credentials from request body (backward compatibility)
-        if not access_token and request.user_credentials and request.user_credentials.access_token:
-            access_token = request.user_credentials.access_token
-            refresh_token = request.user_credentials.refresh_token
-            logger.info("Using credentials from request body (backward compatibility)")
-        if not access_token:
-            access_token = (os.getenv('USER_ACCESS_TOKEN') or '').strip()
-            refresh_token = (os.getenv('USER_REFRESH_TOKEN') or '').strip()
-            if access_token and refresh_token:
-                logger.info("Using Gmail credentials from .env (USER_ACCESS_TOKEN, USER_REFRESH_TOKEN)")
-                if not google_client_id:
-                    google_client_id = (os.getenv('GOOGLE_CLIENT_ID') or '').strip() or None
-                if not google_client_secret:
-                    google_client_secret = (os.getenv('GOOGLE_CLIENT_SECRET') or '').strip() or None
-        if not access_token:
-            raise HTTPException(status_code=400, detail="No Gmail credentials provided. Please connect your Gmail account first or set USER_ACCESS_TOKEN and USER_REFRESH_TOKEN in .env")
-        
+
+        if getattr(request, 'use_second_gmail', False):
+            google_client_id = (os.getenv('GOOGLE_CLIENT_ID_2') or '').strip() or None
+            google_client_secret = (os.getenv('GOOGLE_CLIENT_SECRET_2') or '').strip() or None
+            access_token = (os.getenv('USER_ACCESS_TOKEN_2') or '').strip()
+            refresh_token = (os.getenv('USER_REFRESH_TOKEN_2') or '').strip()
+            if not access_token or not refresh_token:
+                raise HTTPException(status_code=400, detail="Second Gmail account not configured. Set USER_ACCESS_TOKEN_2 and USER_REFRESH_TOKEN_2 in Settings or .env")
+            logger.info("Using second Gmail account for mark-read")
+        else:
+            if user_id and DATABASE_AVAILABLE:
+                from config_helpers import get_gmail_config
+                from user_service_helpers import get_user_gmail_credentials
+                gmail_config = get_gmail_config(db, user_id)
+                user_creds = get_user_gmail_credentials(db, user_id)
+                if gmail_config:
+                    google_client_id = gmail_config.get('google_client_id')
+                    google_client_secret = gmail_config.get('google_client_secret')
+                if user_creds and user_creds.get('access_token'):
+                    access_token = user_creds['access_token']
+                    refresh_token = user_creds.get('refresh_token')
+                    logger.info(f"Using per-user Gmail credentials for user {user_id}")
+
+            if not access_token and request.user_credentials and request.user_credentials.access_token:
+                access_token = request.user_credentials.access_token
+                refresh_token = request.user_credentials.refresh_token
+            if not access_token:
+                access_token = (os.getenv('USER_ACCESS_TOKEN') or '').strip()
+                refresh_token = (os.getenv('USER_REFRESH_TOKEN') or '').strip()
+                if access_token and refresh_token:
+                    if not google_client_id:
+                        google_client_id = (os.getenv('GOOGLE_CLIENT_ID') or '').strip() or None
+                    if not google_client_secret:
+                        google_client_secret = (os.getenv('GOOGLE_CLIENT_SECRET') or '').strip() or None
+            if not access_token:
+                raise HTTPException(status_code=400, detail="No Gmail credentials provided. Please connect your Gmail account first or set USER_ACCESS_TOKEN and USER_REFRESH_TOKEN in .env")
+
         logger.info(f"Marking email {request.message_id} as read")
         await email_service.mark_email_as_read(
             access_token=access_token,
@@ -3211,10 +3226,13 @@ class EnvVariablesRequest(BaseModel):
     slack_user_token: Optional[str] = None
     google_client_id: Optional[str] = None
     google_client_secret: Optional[str] = None
+    google_client_id_2: Optional[str] = None
+    google_client_secret_2: Optional[str] = None
     openai_api_key: Optional[str] = None
-    user_access_token: Optional[str] = None
-    user_refresh_token: Optional[str] = None
     user_email: Optional[str] = None
+    user_email_2: Optional[str] = None
+    user_access_token_2: Optional[str] = None
+    user_refresh_token_2: Optional[str] = None
     bing_search_api_key: Optional[str] = None
     people_api_key: Optional[str] = None
 
@@ -3225,7 +3243,9 @@ class EnvVariablesRequest(BaseModel):
 # Bing: we accept BING_API_KEY or BING_SEARCH_API_KEY; Settings uses BING_API_KEY for read/write
 SETTINGS_ENV_KEYS = [
     "OPENAI_API_KEY", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET",
-    "USER_EMAIL", "USER_ACCESS_TOKEN", "USER_REFRESH_TOKEN",
+    "GOOGLE_CLIENT_ID_2", "GOOGLE_CLIENT_SECRET_2",
+    "USER_EMAIL", "USER_EMAIL_2",
+    "USER_ACCESS_TOKEN_2", "USER_REFRESH_TOKEN_2",
     "TELEGRAM_API_ID", "TELEGRAM_API_HASH", "TELEGRAM_PHONE_NUMBER",
     "SLACK_USER_TOKEN", "BING_API_KEY", "BING_SEARCH_API_KEY", "PEOPLE_API_KEY",
 ]
@@ -3271,9 +3291,12 @@ _REQUEST_TO_ENV_KEY = {
     "openai_api_key": "OPENAI_API_KEY",
     "google_client_id": "GOOGLE_CLIENT_ID",
     "google_client_secret": "GOOGLE_CLIENT_SECRET",
+    "google_client_id_2": "GOOGLE_CLIENT_ID_2",
+    "google_client_secret_2": "GOOGLE_CLIENT_SECRET_2",
     "user_email": "USER_EMAIL",
-    "user_access_token": "USER_ACCESS_TOKEN",
-    "user_refresh_token": "USER_REFRESH_TOKEN",
+    "user_email_2": "USER_EMAIL_2",
+    "user_access_token_2": "USER_ACCESS_TOKEN_2",
+    "user_refresh_token_2": "USER_REFRESH_TOKEN_2",
     "telegram_api_id": "TELEGRAM_API_ID",
     "telegram_api_hash": "TELEGRAM_API_HASH",
     "telegram_phone_number": "TELEGRAM_PHONE_NUMBER",
@@ -3328,10 +3351,6 @@ async def update_env_variables(
                 gmail_updates["google_client_id"] = (req_dict["google_client_id"] or "").strip() or None
             if "google_client_secret" in req_dict:
                 gmail_updates["google_client_secret"] = (req_dict["google_client_secret"] or "").strip() or None
-            if "user_access_token" in req_dict:
-                gmail_updates["user_access_token"] = (req_dict["user_access_token"] or "").strip() or None
-            if "user_refresh_token" in req_dict:
-                gmail_updates["user_refresh_token"] = (req_dict["user_refresh_token"] or "").strip() or None
             if "user_email" in req_dict:
                 gmail_updates["user_email"] = (req_dict["user_email"] or "").strip() or None
             if gmail_updates and not update_gmail_config(db, user_id, **gmail_updates):
@@ -3471,49 +3490,37 @@ async def find_email_by_name(
 
 @app.post("/api/settings/gmail-token")
 async def generate_gmail_token(background_tasks: BackgroundTasks):
-    """
-    Run get_gmail_token.py script to generate Gmail OAuth tokens
-    
-    Returns:
-        Success status and instructions
-    """
+    """Run get_gmail_token.py script to generate Gmail OAuth tokens (saved to .env)."""
     try:
         import subprocess
         import sys
         from pathlib import Path
         
-        # Get the path to get_gmail_token.py
         script_path = Path(__file__).parent / "get_gmail_token.py"
-        
         if not script_path.exists():
             raise HTTPException(status_code=404, detail="get_gmail_token.py not found")
         
-        # Run the script in background
         def run_gmail_token_script():
             try:
                 result = subprocess.run(
                     [sys.executable, str(script_path)],
                     capture_output=True,
                     text=True,
-                    timeout=300  # 5 minute timeout
+                    timeout=300,
+                    env=os.environ.copy(),
+                    cwd=str(Path(__file__).resolve().parent),
                 )
                 logger.info(f"Gmail token script output: {result.stdout}")
                 if result.stderr:
                     logger.error(f"Gmail token script errors: {result.stderr}")
-                
-                logger.info("Gmail token generation completed. Please restart the application manually for changes to take effect.")
+                logger.info("Gmail token generation completed. Restart the app for changes to take effect.")
             except subprocess.TimeoutExpired:
                 logger.error("Gmail token script timed out")
             except Exception as e:
                 logger.error(f"Error running Gmail token script: {e}")
         
-        # Run in background
         background_tasks.add_task(run_gmail_token_script)
-        
-        return {
-            "success": True,
-            "message": "Gmail token generation started. Please check the console for OAuth flow. Please restart the application manually after completion."
-        }
+        return {"success": True, "message": "Gmail token generation started. Check the console for OAuth flow. Restart the app after completion."}
     except Exception as e:
         logger.error(f"Error starting Gmail token generation: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to start Gmail token generation: {str(e)}")

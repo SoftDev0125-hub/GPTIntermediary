@@ -30,7 +30,8 @@
     <div class="container">
         <div class="tab-bar">
             <button class="tab-button active" data-tab="chat">Chat</button>
-            <button class="tab-button" data-tab="email">Email</button>
+            <button class="tab-button" data-tab="email1">EMAIL1</button>
+            <button class="tab-button" data-tab="email2">EMAIL2</button>
             <button class="tab-button" data-tab="word">Word</button>
             <button class="tab-button" data-tab="excel">Excel</button>
             <button class="tab-button" data-tab="telegram">Telegram</button>
@@ -179,10 +180,10 @@
             </div>
         </div>
 
-        <div id="email" class="tab-content">
+        <div id="email1" class="tab-content">
             <div class="header">
                 <div class="header-content">
-                    <h1>Email Management</h1>
+                    <h1>Email Management (EMAIL1)</h1>
                     <div class="status-badge">Ready</div>
                 </div>
             </div>
@@ -196,7 +197,6 @@
                         <button id="refreshButton" class="btn btn-secondary">Refresh</button>
                     </div>
                 </div>
-
 
                 <div class="email-scroll-area">
                     <div class="pagination-controls pagination-top" id="paginationControlsTop" style="display: none;">
@@ -216,8 +216,49 @@
                         <button id="nextButton" class="btn btn-pagination">Next →</button>
                     </div>
                 </div>
+            </div>
+        </div>
 
-                <!-- Email Detail Modal - Beautiful Dialog -->
+        <div id="email2" class="tab-content">
+            <div class="header">
+                <div class="header-content">
+                    <h1>Email Management (EMAIL2)</h1>
+                    <div class="status-badge">Ready</div>
+                </div>
+            </div>
+
+            <div class="email-container">
+                <div class="email-header">
+                    <h2>Inbox</h2>
+                    <div class="email-count" id="emailCount2">Unread: --</div>
+                    <div class="button-group">
+                        <button id="unreadButton2" class="btn">Unread Mail</button>
+                        <button id="refreshButton2" class="btn btn-secondary">Refresh</button>
+                    </div>
+                </div>
+
+                <div class="email-scroll-area">
+                    <div class="pagination-controls pagination-top" id="paginationControlsTop2" style="display: none;">
+                        <button id="prevButtonTop2" class="btn btn-pagination">← Previous</button>
+                        <div class="page-numbers" id="pageNumbers2"></div>
+                        <button id="nextButtonTop2" class="btn btn-pagination">Next →</button>
+                    </div>
+                    <div id="emailList2" class="email-list">
+                        <div class="empty-state">
+                            <div class="empty-state-text">Mail</div>
+                            <p>Click "Unread Mail" to load your emails</p>
+                        </div>
+                    </div>
+                    <div class="pagination-controls" id="paginationControls2" style="display: none;">
+                        <button id="prevButton2" class="btn btn-pagination">← Previous</button>
+                        <div class="page-numbers" id="pageNumbersBottom2"></div>
+                        <button id="nextButton2" class="btn btn-pagination">Next →</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+                <!-- Email Detail Modal (shared by EMAIL1 and EMAIL2) -->
                 <div class="email-detail-modal" id="emailDetailModal" style="display: none;">
                     <div class="email-detail-overlay"></div>
                     <div class="email-detail-container">
@@ -251,8 +292,6 @@
                         </div>
                     </div>
                 </div>
-            </div>
-        </div>
 
     
 
@@ -880,6 +919,86 @@
                                 </div>
                             </div>
                         </div>
+                        <div class="settings-subsection" style="margin-top: 1.25rem;">
+                            <h3 class="settings-subsection-title">Second Gmail account (optional)</h3>
+                            <div class="settings-field-group">
+                                <div class="settings-field">
+                                    <label for="user_email_2">
+                                        Gmail Address (2)
+                                        <button type="button" class="help-button" onclick="showHelp('user_email_2')">?</button>
+                                    </label>
+                                    <div class="input-with-edit">
+                                        <input type="email" id="user_email_2" name="user_email_2" placeholder="second.account@gmail.com" readonly>
+                                        <button type="button" class="edit-button" onclick="toggleEdit('user_email_2')" title="Edit">
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                                                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                                            </svg>
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="settings-field">
+                                    <label for="google_client_id_2">
+                                        Google Client ID (2)
+                                        <button type="button" class="help-button" onclick="showHelp('google_client_id_2')">?</button>
+                                    </label>
+                                    <div class="input-with-edit">
+                                        <input type="text" id="google_client_id_2" name="google_client_id_2" placeholder="Optional second account" readonly>
+                                        <button type="button" class="edit-button" onclick="toggleEdit('google_client_id_2')" title="Edit">
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                                                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                                            </svg>
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="settings-field">
+                                    <label for="google_client_secret_2">
+                                        Google Client Secret (2)
+                                        <button type="button" class="help-button" onclick="showHelp('google_client_secret_2')">?</button>
+                                    </label>
+                                    <div class="input-with-edit">
+                                        <input type="text" id="google_client_secret_2" name="google_client_secret_2" placeholder="Optional second account" readonly>
+                                        <button type="button" class="edit-button" onclick="toggleEdit('google_client_secret_2')" title="Edit">
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                                                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                                            </svg>
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="settings-field">
+                                    <label for="user_access_token_2">
+                                        Access Token (2)
+                                        <button type="button" class="help-button" onclick="showHelp('user_access_token_2')">?</button>
+                                    </label>
+                                    <div class="input-with-edit">
+                                        <input type="text" id="user_access_token_2" name="user_access_token_2" placeholder="For EMAIL2 tab" readonly>
+                                        <button type="button" class="edit-button" onclick="toggleEdit('user_access_token_2')" title="Edit">
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                                                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                                            </svg>
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="settings-field">
+                                    <label for="user_refresh_token_2">
+                                        Refresh Token (2)
+                                        <button type="button" class="help-button" onclick="showHelp('user_refresh_token_2')">?</button>
+                                    </label>
+                                    <div class="input-with-edit">
+                                        <input type="text" id="user_refresh_token_2" name="user_refresh_token_2" placeholder="For EMAIL2 tab" readonly>
+                                        <button type="button" class="edit-button" onclick="toggleEdit('user_refresh_token_2')" title="Edit">
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                                                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                                            </svg>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                         
                         <div class="gmail-token-section">
                             <div class="gmail-token-header">
@@ -888,39 +1007,7 @@
                                     🔑 Generate Tokens
                                 </button>
                             </div>
-                            <p class="gmail-token-description">Set Client ID and Secret above, then click "Generate Tokens" to open OAuth authentication.</p>
-                            <div class="settings-field-group">
-                                <div class="settings-field">
-                                    <label for="user_access_token">
-                                        Access Token
-                                        <button type="button" class="help-button" onclick="showHelp('user_access_token')">?</button>
-                                    </label>
-                                    <div class="input-with-edit">
-                                        <input type="text" id="user_access_token" name="user_access_token" placeholder="Auto-generated" readonly>
-                                        <button type="button" class="edit-button" onclick="toggleEdit('user_access_token')" title="Edit">
-                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
-                                                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
-                                            </svg>
-                                        </button>
-                                    </div>
-                                </div>
-                                <div class="settings-field">
-                                    <label for="user_refresh_token">
-                                        Refresh Token
-                                        <button type="button" class="help-button" onclick="showHelp('user_refresh_token')">?</button>
-                                    </label>
-                                    <div class="input-with-edit">
-                                        <input type="text" id="user_refresh_token" name="user_refresh_token" placeholder="Auto-generated" readonly>
-                                        <button type="button" class="edit-button" onclick="toggleEdit('user_refresh_token')" title="Edit">
-                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
-                                                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
-                                            </svg>
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
+                            <p class="gmail-token-description">Set Client ID and Secret above, then click "Generate Tokens" to open OAuth authentication. Tokens are saved to .env and are not shown here.</p>
                         </div>
                     </div>
 
@@ -1823,27 +1910,51 @@
         const refreshButton = document.getElementById('refreshButton');
         const emailList = document.getElementById('emailList');
         const emailCount = document.getElementById('emailCount');
+        const unreadButton2 = document.getElementById('unreadButton2');
+        const refreshButton2 = document.getElementById('refreshButton2');
+        const emailList2 = document.getElementById('emailList2');
+        const emailCount2 = document.getElementById('emailCount2');
 
-        let allEmails = [];
-        let totalUnread = 0;
-        let currentPage = 1;
-        const emailsPerPage = 50; // Server returns 50 per page
-        /** Tokens to request each page: pageTokens[1] = null (first page), pageTokens[2] = token from page 1, ... */
-        let pageTokens = [null];
+        const emailsPerPage = 50;
+        /** Per-panel state: 1 = EMAIL1, 2 = EMAIL2 */
+        const emailState = {
+            1: { allEmails: [], totalUnread: 0, currentPage: 1, pageTokens: [null] },
+            2: { allEmails: [], totalUnread: 0, currentPage: 1, pageTokens: [null] }
+        };
 
-        function getTotalPages() {
-            return totalUnread <= 0 ? 0 : Math.ceil(totalUnread / emailsPerPage);
+        function getEmailElements(panel) {
+            const s = panel === 2 ? '2' : '';
+            return {
+                emailList: document.getElementById('emailList' + s),
+                emailCount: document.getElementById('emailCount' + s),
+                unreadButton: document.getElementById('unreadButton' + s),
+                paginationControlsTop: document.getElementById('paginationControlsTop' + s),
+                paginationControls: document.getElementById('paginationControls' + s),
+                prevButton: document.getElementById('prevButton' + s),
+                nextButton: document.getElementById('nextButton' + s),
+                prevButtonTop: document.getElementById('prevButtonTop' + s),
+                nextButtonTop: document.getElementById('nextButtonTop' + s),
+                pageNumbers: document.getElementById('pageNumbers' + (s ? s : '')),
+                pageNumbersBottom: document.getElementById('pageNumbersBottom' + (s ? s : ''))
+            };
         }
 
-        function updateEmailCount() {
-            if (!emailCount) return;
-            if (totalUnread === 0) {
-                emailCount.textContent = 'Showing 0 / 0 unread';
+        function getTotalPages(panel) {
+            const s = emailState[panel];
+            return !s || s.totalUnread <= 0 ? 0 : Math.ceil(s.totalUnread / emailsPerPage);
+        }
+
+        function updateEmailCount(panel) {
+            const el = getEmailElements(panel);
+            const s = emailState[panel];
+            if (!el.emailCount || !s) return;
+            if (s.totalUnread === 0) {
+                el.emailCount.textContent = 'Showing 0 / 0 unread';
                 return;
             }
-            const start = (currentPage - 1) * emailsPerPage + 1;
-            const end = Math.min(currentPage * emailsPerPage, totalUnread);
-            emailCount.textContent = `Showing ${start}-${end} of ${totalUnread} unread`;
+            const start = (s.currentPage - 1) * emailsPerPage + 1;
+            const end = Math.min(s.currentPage * emailsPerPage, s.totalUnread);
+            el.emailCount.textContent = `Showing ${start}-${end} of ${s.totalUnread} unread`;
         }
 
         // Get credentials from environment (exposed by backend)
@@ -1873,15 +1984,18 @@
             return s;
         }
 
-        function renderEmails() {
-            const totalPages = getTotalPages();
-            const emailItems = allEmails.map((email, index) => {
+        function renderEmails(panel) {
+            const el = getEmailElements(panel);
+            const s = emailState[panel];
+            if (!el.emailList || !s) return;
+            const totalPages = getTotalPages(panel);
+            const emailItems = s.allEmails.map((email, index) => {
                 const from = escapeHtml(String(email.from_email || 'Unknown'));
                 const subject = escapeHtml(String(email.subject || '(No Subject)'));
                 const rawSummary = email.summary ? String(email.summary) : (email.body || '');
                 const summary = escapeHtml(emailBodyToPlainSummary(rawSummary, 120));
                 const date = escapeHtml(String(email.date || new Date().toLocaleDateString()));
-                return `<div class="email-item" data-email-index="${index}">
+                return `<div class="email-item" data-email-index="${index}" data-email-panel="${panel}">
                     <div class="email-from">From: ${from}</div>
                     <div class="email-subject">${subject}</div>
                     <div class="email-summary">${summary}</div>
@@ -1889,63 +2003,46 @@
                 </div>`;
             }).join('');
 
-            emailList.innerHTML = emailItems;
-            updateEmailCount();
+            el.emailList.innerHTML = emailItems;
+            updateEmailCount(panel);
 
-            document.querySelectorAll('.email-item').forEach(item => {
+            el.emailList.querySelectorAll('.email-item').forEach(item => {
                 item.addEventListener('click', () => {
                     const emailIndex = parseInt(item.dataset.emailIndex);
-                    showEmailDetail(allEmails[emailIndex]);
+                    showEmailDetail(s.allEmails[emailIndex], panel);
                 });
             });
 
-            updatePaginationControls(totalPages);
+            updatePaginationControls(totalPages, panel);
         }
 
-        function showEmailDetail(email) {
+        function showEmailDetail(email, panel) {
             const modal = document.getElementById('emailDetailModal');
             const detailSubject = document.getElementById('detailSubject');
             const detailFrom = document.getElementById('detailFrom');
             const detailDate = document.getElementById('detailDate');
             const detailBody = document.getElementById('detailBody');
 
-            // Populate modal with email data
             detailSubject.textContent = email.subject || '(No Subject)';
             detailFrom.textContent = email.from_email || email.from || 'Unknown';
             detailDate.textContent = email.date || new Date().toLocaleDateString();
-            
-            // Format body content with better readability
             const bodyContent = email.body || 'No content available';
-            
-            // Clear previous content
             detailBody.innerHTML = '';
             detailBody.className = 'email-detail-body';
-            
-            // Check if body contains HTML
             if (bodyContent.includes('<') && bodyContent.includes('>')) {
-                // Render as HTML (with sanitization) - like Gmail
                 detailBody.innerHTML = sanitizeHtml(bodyContent);
                 detailBody.className = 'email-detail-body email-detail-body-html';
             } else {
-                // Render as plain text with better formatting
                 const formattedText = bodyContent
-                    .replace(/\n\n+/g, '\n\n') // Normalize multiple line breaks
-                    .replace(/\n/g, '<br>'); // Convert line breaks to HTML
+                    .replace(/\n\n+/g, '\n\n')
+                    .replace(/\n/g, '<br>');
                 detailBody.innerHTML = `<div class="email-text-content">${formattedText}</div>`;
                 detailBody.className = 'email-detail-body email-detail-body-text';
             }
-
-            // Show modal with animation
             modal.style.display = 'flex';
-            setTimeout(() => {
-                modal.classList.add('email-modal-visible');
-            }, 10);
-            
-            // Prevent body scroll when modal is open
+            setTimeout(() => modal.classList.add('email-modal-visible'), 10);
             document.body.style.overflow = 'hidden';
-            
-            // Mark email as read in Gmail
-            markEmailAsRead(email);
+            markEmailAsRead(email, panel);
         }
 
         function closeEmailDetail() {
@@ -1957,25 +2054,21 @@
             }, 300);
         }
 
-        async function markEmailAsRead(email) {
+        async function markEmailAsRead(email, panel) {
             try {
-                // Get credentials
                 const creds = await getUserCredentials();
-                if (!creds || !creds.access_token) {
+                const headers = { 'Content-Type': 'application/json' };
+                const authToken = localStorage.getItem('auth_token');
+                if (authToken) headers['Authorization'] = 'Bearer ' + authToken;
+                if ((!creds || !creds.access_token) && !authToken) {
                     console.warn('Cannot mark email as read: credentials missing');
                     return;
                 }
-                
-                // Call API to mark email as read
+                const markReadBody = { user_credentials: creds || null, message_id: email.message_id, use_second_gmail: panel === 2 };
                 const response = await fetch(`${API_BASE}/api/email/mark-read`, {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        user_credentials: creds,
-                        message_id: email.message_id
-                    })
+                    headers: headers,
+                    body: JSON.stringify(markReadBody)
                 });
                 
                 if (response.ok) {
@@ -2018,39 +2111,39 @@
             return temp.innerHTML;
         }
 
-        function updatePaginationControls(totalPages) {
-            const paginationControlsTop = document.getElementById('paginationControlsTop');
-            const paginationControls = document.getElementById('paginationControls');
-            const prevButton = document.getElementById('prevButton');
-            const nextButton = document.getElementById('nextButton');
-            const prevButtonTop = document.getElementById('prevButtonTop');
-            const nextButtonTop = document.getElementById('nextButtonTop');
-            const pageNumbers = document.getElementById('pageNumbers');
-            const pageNumbersBottom = document.getElementById('pageNumbersBottom');
-
+        function updatePaginationControls(totalPages, panel) {
+            const el = getEmailElements(panel);
+            const s = emailState[panel];
+            if (!el.paginationControlsTop || !s) return;
             if (totalPages > 1) {
-                paginationControlsTop.style.display = 'flex';
-                paginationControls.style.display = 'flex';
-                prevButton.disabled = currentPage === 1;
-                nextButton.disabled = currentPage >= totalPages;
-                prevButtonTop.disabled = currentPage === 1;
-                nextButtonTop.disabled = currentPage >= totalPages;
-                if (pageNumbers) pageNumbers.textContent = `Page ${currentPage} of ${totalPages}`;
-                if (pageNumbersBottom) pageNumbersBottom.textContent = `Page ${currentPage} of ${totalPages}`;
+                el.paginationControlsTop.style.display = 'flex';
+                el.paginationControls.style.display = 'flex';
+                if (el.prevButton) el.prevButton.disabled = s.currentPage === 1;
+                if (el.nextButton) el.nextButton.disabled = s.currentPage >= totalPages;
+                if (el.prevButtonTop) el.prevButtonTop.disabled = s.currentPage === 1;
+                if (el.nextButtonTop) el.nextButtonTop.disabled = s.currentPage >= totalPages;
+                if (el.pageNumbers) el.pageNumbers.textContent = `Page ${s.currentPage} of ${totalPages}`;
+                if (el.pageNumbersBottom) el.pageNumbersBottom.textContent = `Page ${s.currentPage} of ${totalPages}`;
             } else {
-                paginationControlsTop.style.display = 'none';
-                paginationControls.style.display = 'none';
+                el.paginationControlsTop.style.display = 'none';
+                el.paginationControls.style.display = 'none';
             }
         }
 
-        async function fetchEmailPage(pageToken) {
+        async function fetchEmailPage(pageToken, panel) {
             const creds = await getUserCredentials();
-            if (!creds || !creds.access_token) return { success: false, error: 'Gmail credentials not found' };
-            const body = { user_credentials: creds, limit: 50 };
+            const headers = { 'Content-Type': 'application/json' };
+            const authToken = localStorage.getItem('auth_token');
+            if (authToken) headers['Authorization'] = 'Bearer ' + authToken;
+            const useSecond = panel === 2;
+            if (!useSecond && (!creds || !creds.access_token) && !authToken) {
+                return { success: false, error: 'Gmail credentials not found. Log in or set credentials in Settings.' };
+            }
+            const body = { user_credentials: creds || null, limit: 50, use_second_gmail: useSecond };
             if (pageToken) body.page_token = pageToken;
             const response = await fetch(`${API_BASE}/api/email/unread`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: headers,
                 body: JSON.stringify(body)
             });
             const data = await response.json();
@@ -2058,94 +2151,104 @@
             return data;
         }
 
-        async function loadUnreadEmails() {
-            unreadButton.disabled = true;
-            unreadButton.textContent = 'Loading...';
-            allEmails = [];
-            totalUnread = 0;
-            currentPage = 1;
-            pageTokens = [null];
+        async function loadUnreadEmails(panel) {
+            const el = getEmailElements(panel);
+            const s = emailState[panel];
+            if (!el.unreadButton || !el.emailList || !s) return;
+            el.unreadButton.disabled = true;
+            el.unreadButton.textContent = 'Loading...';
+            s.allEmails = [];
+            s.totalUnread = 0;
+            s.currentPage = 1;
+            s.pageTokens = [null];
 
             try {
                 const creds = await getUserCredentials();
+                const authToken = localStorage.getItem('auth_token');
                 if (!creds || !creds.access_token) {
-                    emailList.innerHTML = '<div class="empty-state"><div class="empty-state-text">Error</div><p>Gmail credentials not found. Please restart the app.</p></div>';
-                    if (emailCount) emailCount.textContent = 'Showing 0 / 0 unread';
-                    unreadButton.disabled = false;
-                    unreadButton.textContent = 'Unread Mail';
-                    return;
+                    if (!authToken) {
+                        el.emailList.innerHTML = '<div class="empty-state"><div class="empty-state-text">Error</div><p>Gmail credentials not found. Log in and set Gmail in Settings, or ensure the chat server has credentials.</p></div>';
+                        if (el.emailCount) el.emailCount.textContent = 'Showing 0 / 0 unread';
+                        el.unreadButton.disabled = false;
+                        el.unreadButton.textContent = 'Unread Mail';
+                        return;
+                    }
                 }
 
-                const data = await fetchEmailPage(null);
+                const data = await fetchEmailPage(null, panel);
                 if (!data.success) {
-                    emailList.innerHTML = `<div class="empty-state"><div class="empty-state-text">Error</div><p>${data.error || 'Failed to load'}</p></div>`;
-                    if (emailCount) emailCount.textContent = 'Showing 0 / 0 unread';
-                    unreadButton.disabled = false;
-                    unreadButton.textContent = 'Unread Mail';
+                    el.emailList.innerHTML = `<div class="empty-state"><div class="empty-state-text">Error</div><p>${data.error || 'Failed to load'}</p></div>`;
+                    if (el.emailCount) el.emailCount.textContent = 'Showing 0 / 0 unread';
+                    el.unreadButton.disabled = false;
+                    el.unreadButton.textContent = 'Unread Mail';
                     return;
                 }
 
-                allEmails = data.emails || [];
-                totalUnread = typeof data.total_unread === 'number' ? data.total_unread : allEmails.length;
-                if (data.next_page_token) pageTokens[1] = data.next_page_token;
+                s.allEmails = data.emails || [];
+                s.totalUnread = typeof data.total_unread === 'number' ? data.total_unread : s.allEmails.length;
+                if (data.next_page_token) s.pageTokens[1] = data.next_page_token;
 
-                if (allEmails.length === 0) {
-                    emailList.innerHTML = '<div class="empty-state"><div class="empty-state-text">OK</div><p>No unread emails</p></div>';
-                    updateEmailCount();
+                if (s.allEmails.length === 0) {
+                    el.emailList.innerHTML = '<div class="empty-state"><div class="empty-state-text">OK</div><p>No unread emails</p></div>';
+                    updateEmailCount(panel);
                 } else {
-                    renderEmails();
+                    renderEmails(panel);
                 }
             } catch (error) {
-                emailList.innerHTML = `<div class="empty-state"><div class="empty-state-text">Error</div><p>Exception: ${error.message}</p></div>`;
-                if (emailCount) emailCount.textContent = 'Showing 0 / 0 unread';
+                el.emailList.innerHTML = `<div class="empty-state"><div class="empty-state-text">Error</div><p>Exception: ${error.message}</p></div>`;
+                if (el.emailCount) el.emailCount.textContent = 'Showing 0 / 0 unread';
             }
-            unreadButton.disabled = false;
-            unreadButton.textContent = 'Unread Mail';
+            el.unreadButton.disabled = false;
+            el.unreadButton.textContent = 'Unread Mail';
         }
 
-        async function loadPage(pageNum) {
-            const totalPages = getTotalPages();
+        async function loadPage(pageNum, panel) {
+            const totalPages = getTotalPages(panel);
             if (pageNum < 1 || pageNum > totalPages) return;
-            const token = pageTokens[pageNum - 1] !== undefined ? pageTokens[pageNum - 1] : null;
-            document.getElementById('prevButton').disabled = true;
-            document.getElementById('nextButton').disabled = true;
-            document.getElementById('prevButtonTop').disabled = true;
-            document.getElementById('nextButtonTop').disabled = true;
-            emailList.innerHTML = '<div class="empty-state"><div class="empty-state-text">Loading...</div><p>Fetching emails...</p></div>';
+            const el = getEmailElements(panel);
+            const s = emailState[panel];
+            if (!el.emailList || !s) return;
+            const token = s.pageTokens[pageNum - 1] !== undefined ? s.pageTokens[pageNum - 1] : null;
+            if (el.prevButton) el.prevButton.disabled = true;
+            if (el.nextButton) el.nextButton.disabled = true;
+            if (el.prevButtonTop) el.prevButtonTop.disabled = true;
+            if (el.nextButtonTop) el.nextButtonTop.disabled = true;
+            el.emailList.innerHTML = '<div class="empty-state"><div class="empty-state-text">Loading...</div><p>Fetching emails...</p></div>';
 
             try {
-                const data = await fetchEmailPage(token);
+                const data = await fetchEmailPage(token, panel);
                 if (!data.success) {
-                    emailList.innerHTML = `<div class="empty-state"><div class="empty-state-text">Error</div><p>${data.error || 'Failed to load'}</p></div>`;
-                    updatePaginationControls(getTotalPages());
+                    el.emailList.innerHTML = `<div class="empty-state"><div class="empty-state-text">Error</div><p>${data.error || 'Failed to load'}</p></div>`;
+                    updatePaginationControls(getTotalPages(panel), panel);
                     return;
                 }
-                allEmails = data.emails || [];
-                if (typeof data.total_unread === 'number') totalUnread = data.total_unread;
-                currentPage = pageNum;
-                if (data.next_page_token) pageTokens[pageNum] = data.next_page_token;
-                renderEmails();
+                s.allEmails = data.emails || [];
+                if (typeof data.total_unread === 'number') s.totalUnread = data.total_unread;
+                s.currentPage = pageNum;
+                if (data.next_page_token) s.pageTokens[pageNum] = data.next_page_token;
+                renderEmails(panel);
             } catch (error) {
-                emailList.innerHTML = `<div class="empty-state"><div class="empty-state-text">Error</div><p>${error.message}</p></div>`;
-                updatePaginationControls(getTotalPages());
+                el.emailList.innerHTML = `<div class="empty-state"><div class="empty-state-text">Error</div><p>${error.message}</p></div>`;
+                updatePaginationControls(getTotalPages(panel), panel);
             }
         }
 
-        unreadButton.addEventListener('click', loadUnreadEmails);
-        refreshButton.addEventListener('click', loadUnreadEmails);
+        unreadButton.addEventListener('click', () => loadUnreadEmails(1));
+        refreshButton.addEventListener('click', () => loadUnreadEmails(1));
+        if (unreadButton2) unreadButton2.addEventListener('click', () => loadUnreadEmails(2));
+        if (refreshButton2) refreshButton2.addEventListener('click', () => loadUnreadEmails(2));
 
-        document.getElementById('prevButton').addEventListener('click', () => {
-            if (currentPage > 1) loadPage(currentPage - 1);
-        });
-        document.getElementById('nextButton').addEventListener('click', () => {
-            if (currentPage < getTotalPages()) loadPage(currentPage + 1);
-        });
-        document.getElementById('prevButtonTop').addEventListener('click', () => {
-            if (currentPage > 1) loadPage(currentPage - 1);
-        });
-        document.getElementById('nextButtonTop').addEventListener('click', () => {
-            if (currentPage < getTotalPages()) loadPage(currentPage + 1);
-        });
+        function bindPagination(panel) {
+            const el = getEmailElements(panel);
+            const s = emailState[panel];
+            if (!s) return;
+            if (el.prevButton) el.prevButton.addEventListener('click', () => { if (s.currentPage > 1) loadPage(s.currentPage - 1, panel); });
+            if (el.nextButton) el.nextButton.addEventListener('click', () => { if (s.currentPage < getTotalPages(panel)) loadPage(s.currentPage + 1, panel); });
+            if (el.prevButtonTop) el.prevButtonTop.addEventListener('click', () => { if (s.currentPage > 1) loadPage(s.currentPage - 1, panel); });
+            if (el.nextButtonTop) el.nextButtonTop.addEventListener('click', () => { if (s.currentPage < getTotalPages(panel)) loadPage(s.currentPage + 1, panel); });
+        }
+        bindPagination(1);
+        bindPagination(2);
 
         // Close email detail modal
         document.getElementById('closeEmailBtn').addEventListener('click', closeEmailDetail);
@@ -10467,6 +10570,22 @@ Note: This is shown only once when you create the credentials.`,
 - Example: yourname@gmail.com
 - This email will be used for sending/receiving emails`,
             
+            google_client_id_2: `Optional second Gmail account - Google Client ID:
+- Same steps as the primary Google Client ID
+- Use a different OAuth client (or same project, different client) for the second account`,
+            
+            google_client_secret_2: `Optional second Gmail account - Google Client Secret:
+- Shown when you create the OAuth client for the second account`,
+            
+            user_email_2: `Optional second Gmail address:
+- The email for the second Gmail account (e.g. second.account@gmail.com)`,
+            
+            user_access_token_2: `Second Gmail Access Token (for EMAIL2 tab):
+- OAuth access token for the second account. Set with Client ID/Secret (2) and an OAuth flow, or paste here.`,
+            
+            user_refresh_token_2: `Second Gmail Refresh Token (for EMAIL2 tab):
+- OAuth refresh token for the second account. Required for EMAIL2 tab to load emails.`,
+            
             user_access_token: `Gmail Access Token:
 - This is automatically generated when you click "Generate Gmail Token"
 - The token allows the app to access your Gmail account
@@ -10562,9 +10681,12 @@ Used with company/domain to find professional email addresses. Works best when y
                     document.getElementById('openai_api_key').value = vars.OPENAI_API_KEY ?? '';
                     document.getElementById('google_client_id').value = vars.GOOGLE_CLIENT_ID ?? '';
                     document.getElementById('google_client_secret').value = vars.GOOGLE_CLIENT_SECRET ?? '';
+                    document.getElementById('google_client_id_2').value = vars.GOOGLE_CLIENT_ID_2 ?? '';
+                    document.getElementById('google_client_secret_2').value = vars.GOOGLE_CLIENT_SECRET_2 ?? '';
                     document.getElementById('user_email').value = vars.USER_EMAIL ?? '';
-                    document.getElementById('user_access_token').value = vars.USER_ACCESS_TOKEN ?? '';
-                    document.getElementById('user_refresh_token').value = vars.USER_REFRESH_TOKEN ?? '';
+                    document.getElementById('user_email_2').value = vars.USER_EMAIL_2 ?? '';
+                    document.getElementById('user_access_token_2').value = vars.USER_ACCESS_TOKEN_2 ?? '';
+                    document.getElementById('user_refresh_token_2').value = vars.USER_REFRESH_TOKEN_2 ?? '';
                     document.getElementById('telegram_api_id').value = vars.TELEGRAM_API_ID ?? '';
                     document.getElementById('telegram_api_hash').value = vars.TELEGRAM_API_HASH ?? '';
                     document.getElementById('telegram_phone_number').value = vars.TELEGRAM_PHONE_NUMBER ?? '';
@@ -10615,9 +10737,12 @@ Used with company/domain to find professional email addresses. Works best when y
                 openai_api_key: document.getElementById('openai_api_key').value.trim(),
                 google_client_id: document.getElementById('google_client_id').value.trim(),
                 google_client_secret: document.getElementById('google_client_secret').value.trim(),
+                google_client_id_2: document.getElementById('google_client_id_2').value.trim(),
+                google_client_secret_2: document.getElementById('google_client_secret_2').value.trim(),
                 user_email: document.getElementById('user_email').value.trim(),
-                user_access_token: document.getElementById('user_access_token').value.trim(),
-                user_refresh_token: document.getElementById('user_refresh_token').value.trim(),
+                user_email_2: document.getElementById('user_email_2').value.trim(),
+                user_access_token_2: document.getElementById('user_access_token_2').value.trim(),
+                user_refresh_token_2: document.getElementById('user_refresh_token_2').value.trim(),
                 telegram_api_id: document.getElementById('telegram_api_id').value.trim(),
                 telegram_api_hash: document.getElementById('telegram_api_hash').value.trim(),
                 telegram_phone_number: document.getElementById('telegram_phone_number').value.trim(),
@@ -10682,28 +10807,30 @@ Used with company/domain to find professional email addresses. Works best when y
             }
         }
 
-        // Generate Gmail token
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
         async function generateGmailToken() {
             if (!confirm('This will open a browser window for Gmail OAuth authentication. Make sure GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are set first. Continue?')) {
                 return;
             }
-            
             try {
                 showMessage('Starting Gmail token generation... Please check the console/terminal for OAuth flow.', 'info');
-                
+                const authToken = localStorage.getItem('auth_token');
+                const headers = { 'Content-Type': 'application/json' };
+                if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
                 const response = await fetch(`${API_BASE}/api/settings/gmail-token`, {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    }
+                    headers
                 });
-                
                 const data = await response.json();
-                
                 if (data.success) {
                     showMessage('✅ Gmail token generation started! Check the console/terminal for OAuth flow. ⚠️ IMPORTANT: After the token is verified, please restart the application for changes to take effect.', 'success');
                 } else {
-                    showMessage('Failed to start Gmail token generation: ' + (data.error || 'Unknown error'), 'error');
+                    showMessage('Failed to start Gmail token generation: ' + (data.detail || data.error || 'Unknown error'), 'error');
                 }
             } catch (error) {
                 console.error('Error generating Gmail token:', error);
@@ -10744,7 +10871,6 @@ Used with company/domain to find professional email addresses. Works best when y
                     setTimeout(loadSettings, 100);
                 });
             }
-            
             // Also load settings if Settings tab is already active on page load
             const settingsContent = document.getElementById('settings');
             if (settingsContent && settingsContent.classList.contains('active')) {

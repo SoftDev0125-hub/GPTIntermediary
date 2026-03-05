@@ -38,15 +38,18 @@ def get_user_gmail_credentials(
     user_id: int
 ) -> Optional[Dict[str, str]]:
     """
-    Get Gmail credentials for a user
-    
-    Args:
-        db: Database session
-        user_id: User ID
-    
-    Returns:
-        Dict with 'access_token' and 'refresh_token', or None if not found
+    Get Gmail credentials for a user from GmailInfo or UserServiceCredential.
     """
+    try:
+        from config_helpers import get_gmail_config
+        gmail_config = get_gmail_config(db, user_id)
+        if gmail_config and gmail_config.get('user_access_token'):
+            return {
+                'access_token': gmail_config.get('user_access_token'),
+                'refresh_token': gmail_config.get('user_refresh_token')
+            }
+    except Exception:
+        pass
     credential = get_user_service_credentials(db, user_id, 'gmail')
     if credential and credential.credentials_data:
         cred_data = credential.credentials_data

@@ -39,13 +39,26 @@ SCOPES = [
     'https://mail.google.com/',  # Full access, required for "delete all emails" / permanent deletion
 ]
 
-def get_gmail_credentials():
-    """Get Gmail OAuth credentials"""
-    client_id = (os.getenv('GOOGLE_CLIENT_ID') or '').strip()
-    client_secret = (os.getenv('GOOGLE_CLIENT_SECRET') or '').strip()
+def get_gmail_credentials(use_second_account=False, start_port=None):
+    """Get Gmail OAuth credentials. If use_second_account is True, use _2 client vars and save to _2 token vars.
+    start_port: first port to try (e.g. 8086 for second account when running both, to avoid CSRF state mix-up)."""
+    if use_second_account:
+        client_id = (os.getenv('GOOGLE_CLIENT_ID_2') or '').strip()
+        client_secret = (os.getenv('GOOGLE_CLIENT_SECRET_2') or '').strip()
+        token_key_access = 'USER_ACCESS_TOKEN_2'
+        token_key_refresh = 'USER_REFRESH_TOKEN_2'
+        account_label = "second (EMAIL2)"
+    else:
+        client_id = (os.getenv('GOOGLE_CLIENT_ID') or '').strip()
+        client_secret = (os.getenv('GOOGLE_CLIENT_SECRET') or '').strip()
+        token_key_access = 'USER_ACCESS_TOKEN'
+        token_key_refresh = 'USER_REFRESH_TOKEN'
+        account_label = "primary"
 
     if not client_id or not client_secret:
-        print("\n❌ GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET is missing in .env")
+        key_id = 'GOOGLE_CLIENT_ID_2' if use_second_account else 'GOOGLE_CLIENT_ID'
+        key_sec = 'GOOGLE_CLIENT_SECRET_2' if use_second_account else 'GOOGLE_CLIENT_SECRET'
+        print(f"\n❌ {key_id} or {key_sec} is missing in .env")
         print("   Add them from Google Cloud Console: https://console.cloud.google.com/apis/credentials")
         print("   Create an OAuth 2.0 Client ID (Desktop app or Web application).")
         sys.exit(1)
@@ -54,8 +67,12 @@ def get_gmail_credentials():
         print("   https://console.cloud.google.com/apis/credentials")
         sys.exit(1)
 
-    # Ports to try (8085 may be in use by another app)
-    PORTS_TO_TRY = [8085, 8086, 8087, 8088, 8089]
+    # Ports to try (use start_port when running both accounts so second flow uses a different port and avoids CSRF state mix-up)
+    all_ports = [8085, 8086, 8087, 8088, 8089]
+    if start_port and start_port in all_ports:
+        PORTS_TO_TRY = [start_port] + [p for p in all_ports if p != start_port]
+    else:
+        PORTS_TO_TRY = all_ports
 
     for port in PORTS_TO_TRY:
         redirect_uris = [
@@ -81,7 +98,7 @@ def get_gmail_credentials():
             print("    Then press Enter here to open the browser.\n")
             input("    Press Enter to continue... ")
         print("\n🔐 Opening browser for Gmail authorization...")
-        print("📧 Please log in with the Gmail account you want to use")
+        print(f"📧 Please log in with the {account_label} Gmail account")
         print("⚠️  IMPORTANT: You may see a 'Grant access again' prompt - this is normal!")
         print("    This ensures the app has ALL required permissions.\n")
         try:
@@ -130,39 +147,56 @@ def get_gmail_credentials():
     env_path = ENV_PATH
     with open(env_path, 'r') as f:
         lines = f.readlines()
-    
+
     replaced_access = False
     replaced_refresh = False
     with open(env_path, 'w') as f:
         for line in lines:
-            if line.startswith('USER_ACCESS_TOKEN='):
-                f.write(f'USER_ACCESS_TOKEN={creds.token}\n')
+            if line.startswith(token_key_access + '='):
+                f.write(f'{token_key_access}={creds.token}\n')
                 replaced_access = True
-            elif line.startswith('USER_REFRESH_TOKEN='):
+            elif line.startswith(token_key_refresh + '='):
                 if creds.refresh_token:
-                    f.write(f'USER_REFRESH_TOKEN={creds.refresh_token}\n')
+                    f.write(f'{token_key_refresh}={creds.refresh_token}\n')
                     replaced_refresh = True
                 else:
                     f.write(line)
             else:
                 f.write(line)
-        # If .env had no lines for these, append them so tokens are never lost
         if not replaced_access:
-            f.write(f'\n# User OAuth Tokens (from get_gmail_token.py)\nUSER_ACCESS_TOKEN={creds.token}\n')
+            f.write(f'\n# OAuth tokens for {account_label} account (from get_gmail_token.py)\n{token_key_access}={creds.token}\n')
         if not replaced_refresh and creds.refresh_token:
-            f.write(f'USER_REFRESH_TOKEN={creds.refresh_token}\n')
+            f.write(f'{token_key_refresh}={creds.refresh_token}\n')
         elif not replaced_refresh:
-            f.write('USER_REFRESH_TOKEN=\n')
-    
-    print(f"\n✅ Tokens saved to .env file!")
-    print("\n🚀 Now restart your chat server to use the new tokens")
-    print("   Then try: 'send \"hi\" to test@example.com'")
+            f.write(f'{token_key_refresh}=\n')
+
+    print(f"\n✅ Tokens saved to .env ({token_key_access}, {token_key_refresh})!")
+    print("\n🚀 Restart your app, then use the EMAIL2 tab to read this account's inbox." if use_second_account else "\n🚀 Now restart your chat server to use the new tokens\n   Then try: 'send \"hi\" to test@example.com'")
     
     return creds
 
 if __name__ == '__main__':
+    # Modes: no arg or "1" = primary only; "2" = second only; "all" or "both" = both accounts in one run
+    arg = (sys.argv[1] if len(sys.argv) > 1 else '').strip().lower()
+    run_both = arg in ('all', 'both')
+    use_second = arg == '2' or (os.getenv('GMAIL_ACCOUNT') or '').strip() == '2'
+
+    if run_both:
+        print("📧 Obtaining tokens for BOTH Gmail accounts (primary, then second). You will sign in twice.\n")
+    elif use_second:
+        print("📧 Second Gmail account (EMAIL2) – using GOOGLE_CLIENT_ID_2 / GOOGLE_CLIENT_SECRET_2")
+
     try:
-        get_gmail_credentials()
+        if run_both:
+            print("——— 1/2 Primary account ———")
+            get_gmail_credentials(use_second_account=False)
+            print("\n——— 2/2 Second account (EMAIL2) ———")
+            print("Using port 8086 for this flow. Ensure http://localhost:8086/ is in the redirect URIs for your second OAuth client (GOOGLE_CLIENT_ID_2) in Google Cloud Console.\n")
+            # Use port 8086 for second flow to avoid CSRF "mismatching_state" when both use 8085
+            get_gmail_credentials(use_second_account=True, start_port=8086)
+            print("\n✅ Done. Both token sets saved to .env. Restart your app.")
+        else:
+            get_gmail_credentials(use_second_account=use_second)
     except Exception as e:
         print(f"\n❌ Error: {e}")
         err_str = str(e).lower()

@@ -6,20 +6,16 @@ from typing import Optional, Dict
 from sqlalchemy.orm import Session
 from db_models import GmailInfo, TelegramSession, SlackInfo, APIKey
 
+import logging
+logger = logging.getLogger(__name__)
+
 
 def get_gmail_config(db: Session, user_id: int) -> Optional[Dict[str, Optional[str]]]:
-    """
-    Get Gmail configuration for a user from database
-    
-    Returns:
-        Dict with keys: google_client_id, google_client_secret, user_access_token, 
-        user_refresh_token, user_email, or None if not found
-    """
+    """Get Gmail configuration for a user from database (one account per user)."""
     try:
         gmail_info = db.query(GmailInfo).filter(GmailInfo.user_id == user_id).first()
         if not gmail_info:
             return None
-        
         return {
             'google_client_id': gmail_info.google_client_id,
             'google_client_secret': gmail_info.google_client_secret,
@@ -28,8 +24,6 @@ def get_gmail_config(db: Session, user_id: int) -> Optional[Dict[str, Optional[s
             'user_email': gmail_info.user_email
         }
     except Exception as e:
-        import logging
-        logger = logging.getLogger(__name__)
         logger.error(f"Error getting Gmail config for user {user_id}: {e}")
         return None
 
@@ -109,27 +103,12 @@ def get_slack_config(db: Session, user_id: int) -> Optional[Dict[str, Optional[s
 
 
 def update_gmail_config(db: Session, user_id: int, **kwargs) -> bool:
-    """
-    Update Gmail configuration for a user in database
-    
-    Args:
-        db: Database session
-        user_id: User ID
-        **kwargs: Fields to update (google_client_id, google_client_secret, 
-                 user_access_token, user_refresh_token, user_email)
-    
-    Returns:
-        True if successful, False otherwise
-    """
+    """Update Gmail configuration for a user in database (one account per user)."""
     try:
         gmail_info = db.query(GmailInfo).filter(GmailInfo.user_id == user_id).first()
-        
         if not gmail_info:
-            # Create new record
             gmail_info = GmailInfo(user_id=user_id)
             db.add(gmail_info)
-        
-        # Update fields
         if 'google_client_id' in kwargs:
             gmail_info.google_client_id = kwargs['google_client_id']
         if 'google_client_secret' in kwargs:
@@ -140,14 +119,11 @@ def update_gmail_config(db: Session, user_id: int, **kwargs) -> bool:
             gmail_info.user_refresh_token = kwargs['user_refresh_token']
         if 'user_email' in kwargs:
             gmail_info.user_email = kwargs['user_email']
-        
         db.commit()
         db.refresh(gmail_info)
         return True
     except Exception as e:
         db.rollback()
-        import logging
-        logger = logging.getLogger(__name__)
         logger.error(f"Error updating Gmail config for user {user_id}: {e}")
         return False
 

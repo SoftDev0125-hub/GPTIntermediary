@@ -16,7 +16,7 @@ class UserCredentials(BaseModel):
 
 class SendEmailRequest(BaseModel):
     """Request model for sending emails"""
-    user_credentials: UserCredentials = Field(..., description="User's OAuth credentials from ChatGPT")
+    user_credentials: Optional[UserCredentials] = Field(None, description="User's OAuth credentials from ChatGPT (optional when using DB/auth)")
     to: str = Field(..., description="Recipient email address")
     subject: str = Field(..., description="Email subject")
     body: str = Field(..., description="Email body (plain text)")
@@ -26,7 +26,7 @@ class SendEmailRequest(BaseModel):
 
 class EmailReplyRequest(BaseModel):
     """Request model for replying to emails"""
-    user_credentials: UserCredentials = Field(..., description="User's OAuth credentials from ChatGPT")
+    user_credentials: Optional[UserCredentials] = Field(None, description="User's OAuth credentials from ChatGPT (optional when using DB/auth)")
     message_id: Optional[str] = Field(None, description="Message ID to reply to")
     sender_email: Optional[str] = Field(None, description="Sender email address to find and reply to")
     body: str = Field(..., description="Reply body (plain text)")
