@@ -1458,8 +1458,19 @@ async def get_unread_emails(
         # Generate lightweight one-sentence summaries for each email (local fallback)
         try:
             import re as _lr
+            import html as _html
+            def _strip_html_body(raw):
+                if not raw:
+                    return ''
+                s = _lr.sub(r'<style\b[^>]*>[\s\S]*?</style>', ' ', str(raw), flags=_lr.IGNORECASE | _lr.DOTALL)
+                s = _lr.sub(r'<script\b[^>]*>[\s\S]*?</script>', ' ', s, flags=_lr.IGNORECASE | _lr.DOTALL)
+                s = _lr.sub(r'<[^>]+>', ' ', s)
+                s = _html.unescape(s)
+                s = _lr.sub(r'\s+', ' ', s).strip()
+                return s
             def _local_summary(subject, body, sender, max_words=25):
-                src = ' '.join(filter(None, [subject or '', (body or '')[:600]]))
+                body_plain = _strip_html_body((body or '')[:600])
+                src = ' '.join(filter(None, [subject or '', body_plain]))
                 src = _lr.sub(r'[^\w\s\.,:;\-@\(\)\'"/]', ' ', src)
                 src = _lr.sub(r'\s+', ' ', src).strip()
                 if not src:
@@ -1479,11 +1490,15 @@ async def get_unread_emails(
 
             summarized_emails = []
             for e in emails:
+                # Support both Pydantic EmailMessage and dict (e.g. after JSON round-trip)
+                if hasattr(e, 'model_dump'):
+                    e = e.model_dump()
+                elif not isinstance(e, dict):
+                    e = dict(e) if hasattr(e, '__iter__') and not isinstance(e, (str, bytes)) else {}
                 sender = (e.get('from_name') or e.get('from_email') or 'Unknown')
                 subject = e.get('subject') or ''
                 body = e.get('body') or ''
                 summary = _local_summary(subject, body, sender)
-                # ensure we don't mutate original objects badly - copy dict
                 new_e = dict(e)
                 new_e['summary'] = summary
                 summarized_emails.append(new_e)

@@ -1567,6 +1567,15 @@
             console.log('[CHAT] User ID:', userIdInt);
             
             try {
+                // So Chat tab can fetch emails: send credentials and JWT (same as EMAIL1 tab)
+                let userCredentials = null;
+                try {
+                    userCredentials = await getUserCredentials();
+                    if (userCredentials && !userCredentials.access_token) userCredentials = null;
+                } catch (e) {
+                    console.warn('[CHAT] Could not get user credentials:', e);
+                }
+                const authToken = localStorage.getItem('auth_token');
                 const response = await fetch(`${CHAT_SERVER_URL}/chat`, {
                     method: 'POST',
                     headers: {
@@ -1576,7 +1585,9 @@
                         message: message,
                         user_id: userIdInt,
                         history: conversationHistory,
-                        email_page_token: lastEmailPageToken || undefined
+                        email_page_token: lastEmailPageToken || undefined,
+                        user_credentials: userCredentials || undefined,
+                        auth_token: authToken || undefined
                     }),
                     signal: controller.signal
                 });
@@ -1970,16 +1981,20 @@
         }
 
         /** Strip HTML/DOCTYPE and return plain text for list preview (no raw markup). */
+        /** Strip HTML/CSS to plain text (decode entities, remove style/script and all tags). */
+        function htmlToPlainText(htmlOrText) {
+            if (!htmlOrText) return '';
+            const div = document.createElement('div');
+            div.innerHTML = String(htmlOrText);
+            const scripts = div.querySelectorAll('script, style');
+            scripts.forEach(el => el.remove());
+            let s = div.textContent || div.innerText || '';
+            s = s.replace(/\s+/g, ' ').trim();
+            return s;
+        }
         function emailBodyToPlainSummary(htmlOrText, maxLen) {
             if (!htmlOrText) return '';
-            let s = String(htmlOrText)
-                .replace(/<!DOCTYPE[^>]*>/gi, '')
-                .replace(/<\?xml[^>]*\?>/gi, '')
-                .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
-                .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '')
-                .replace(/<[^>]+>/g, ' ')
-                .replace(/\s+/g, ' ')
-                .trim();
+            let s = htmlToPlainText(htmlOrText);
             if (maxLen && s.length > maxLen) s = s.substring(0, maxLen) + '...';
             return s;
         }
@@ -2026,19 +2041,13 @@
             detailSubject.textContent = email.subject || '(No Subject)';
             detailFrom.textContent = email.from_email || email.from || 'Unknown';
             detailDate.textContent = email.date || new Date().toLocaleDateString();
-            const bodyContent = email.body || 'No content available';
+            const bodyRaw = email.body || 'No content available';
+            const bodyPlain = htmlToPlainText(bodyRaw);
+            const displayText = (bodyPlain || bodyRaw.replace(/<[^>]+>/g, ' ').trim()) || 'No content available';
+            const formattedText = escapeHtml(displayText).replace(/\n/g, '<br>');
             detailBody.innerHTML = '';
-            detailBody.className = 'email-detail-body';
-            if (bodyContent.includes('<') && bodyContent.includes('>')) {
-                detailBody.innerHTML = sanitizeHtml(bodyContent);
-                detailBody.className = 'email-detail-body email-detail-body-html';
-            } else {
-                const formattedText = bodyContent
-                    .replace(/\n\n+/g, '\n\n')
-                    .replace(/\n/g, '<br>');
-                detailBody.innerHTML = `<div class="email-text-content">${formattedText}</div>`;
-                detailBody.className = 'email-detail-body email-detail-body-text';
-            }
+            detailBody.className = 'email-detail-body email-detail-body-text';
+            detailBody.innerHTML = `<div class="email-text-content">${formattedText}</div>`;
             modal.style.display = 'flex';
             setTimeout(() => modal.classList.add('email-modal-visible'), 10);
             document.body.style.overflow = 'hidden';
