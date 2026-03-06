@@ -670,11 +670,15 @@ def chat():
 
     # Quick command: handle direct "Send <message> to <recipient>" by generating
     # an AI-written subject/body and sending via backend /api/email/send
+    # Skip when user clearly means WhatsApp so the WhatsApp block can handle it
     try:
-        # Match "send X to Y" at start, or "Can you / Please / I want to send X to Y"
-        m_cmd = re.match(r"^\s*send\s+(.+?)\s+to\s+(.+)$", user_message, re.IGNORECASE)
-        if not m_cmd:
-            m_cmd = re.match(r"^\s*(?:can you|please|could you|would you|i want to|i'd like to)\s+send\s+(.+?)\s+to\s+(.+)$", user_message, re.IGNORECASE)
+        want_whatsapp = bool(re.search(r"\b(whats\s*app|whatsapp|on\s+whatsapp|via\s+whatsapp)\b", user_message, re.IGNORECASE))
+        m_cmd = None
+        if not want_whatsapp:
+            # Match "send X to Y" at start, or "Can you / Please / I want to send X to Y"
+            m_cmd = re.match(r"^\s*send\s+(.+?)\s+to\s+(.+)$", user_message, re.IGNORECASE)
+            if not m_cmd:
+                m_cmd = re.match(r"^\s*(?:can you|please|could you|would you|i want to|i'd like to)\s+send\s+(.+?)\s+to\s+(.+)$", user_message, re.IGNORECASE)
         if m_cmd:
             original_text = m_cmd.group(1).strip()
             recipient = m_cmd.group(2).strip()
@@ -823,6 +827,229 @@ def chat():
     except Exception as e_cmd:
         # Fall through to normal processing if direct command handling fails
         print(f"Direct send command handling failed: {e_cmd}")
+
+    # Fast-path: WhatsApp commands in Chat tab (unread/news, per-contact unread, show history, send message, reply)
+    try:
+        wa_trigger = bool(re.search(r"\b(whats\s*app|whatsapp)\b", user_message, re.IGNORECASE))
+        if wa_trigger:
+            def _wa_call(method: str, subpath: str, payload: dict = None, timeout_sec: int = 45):
+                base = WHATSAPP_NODE_URL.rstrip('/')
+                url = f"{base}/api/whatsapp/{subpath.lstrip('/')}"
+                try:
+                    if method == 'GET':
+                        r = requests.get(url, timeout=timeout_sec)
+                    else:
+                        r = requests.post(url, json=(payload or {}), timeout=timeout_sec)
+                    return r.json() if r.content else {}
+                except requests.exceptions.RequestException as e:
+                    return {'success': False, 'error': str(e) or 'Request failed'}
+                except (ValueError, TypeError) as e:
+                    return {'success': False, 'error': 'Invalid response from WhatsApp server'}
+
+            def _fmt_ts(ts):
+                try:
+                    if ts is None:
+                        return ''
+                    # WhatsApp timestamps are seconds since epoch
+                    import datetime as _dt
+                    return _dt.datetime.fromtimestamp(int(ts)).strftime("%Y-%m-%d %H:%M")
+                except Exception:
+                    return str(ts or '')
+
+            # 0) Reply to [contact] on WhatsApp — analyze last message, synthesize reply, send
+            m_reply = re.search(
+                r"\breply\s+to\s+(.+?)\s+on\s+(?:my\s+)?(?:whats\s*app|whatsapp)\s*(?:account)?\s*$",
+                user_message, re.IGNORECASE
+            )
+            if not m_reply:
+                m_reply = re.search(
+                    r"\breply\s+on\s+(?:my\s+)?(?:whats\s*app|whatsapp)\s+to\s+(.+?)\s*$",
+                    user_message, re.IGNORECASE
+                )
+            if m_reply:
+                who = m_reply.group(1).strip().strip('"\'.')
+                resolved = _wa_call('POST', 'resolve', {'query': who, 'include_groups': True, 'max_candidates': 5}, timeout_sec=60)
+                if not isinstance(resolved, dict) or not resolved.get('success') or not resolved.get('match'):
+                    err = (resolved or {}).get('error') or 'Could not resolve contact'
+                    return jsonify({'response': f"WhatsApp: {err}.", 'error': True})
+                contact_id = resolved['match'].get('contact_id')
+                contact_name = resolved['match'].get('name') or who
+                msgs_res = _wa_call('POST', 'messages', {'contact_id': contact_id, 'limit': 30}, timeout_sec=90)
+                if not isinstance(msgs_res, dict) or not msgs_res.get('success'):
+                    err = (msgs_res or {}).get('error') or 'Failed to load messages'
+                    return jsonify({'response': f"WhatsApp: {err}.", 'error': True}), 500
+                messages = msgs_res.get('messages') or []
+                last_from_them = None
+                for m in reversed(messages):
+                    if not m.get('fromMe'):
+                        last_from_them = m
+                        break
+                if not last_from_them:
+                    return jsonify({'response': f"WhatsApp: No message from **{contact_name}** to reply to.", 'function_called': 'whatsapp_reply'})
+                incoming_body = (last_from_them.get('body') or '').strip()
+                if not incoming_body and last_from_them.get('hasMedia'):
+                    incoming_body = f"[Media: {last_from_them.get('type') or 'attachment'}]"
+                # Synthesize reply with OpenAI
+                reply_text = None
+                try:
+                    client_ai = get_openai_client()
+                    sys_content = (
+                        "You are a helpful assistant that drafts short, natural WhatsApp replies. "
+                        "Return only the reply text (no quotes, no 'Reply:' or attribution). Keep it concise (1-3 sentences). "
+                        "Match the tone of the original message when appropriate."
+                    )
+                    user_content = f"Draft a reply to this WhatsApp message from {contact_name}.\n\nMessage: {incoming_body}\n\nReply (text only):"
+                    gen = client_ai.chat.completions.create(
+                        model="gpt-3.5-turbo",
+                        messages=[{"role": "system", "content": sys_content}, {"role": "user", "content": user_content}],
+                        max_tokens=300,
+                        temperature=0.4,
+                        stream=False,
+                    )
+                    if gen and gen.choices:
+                        reply_text = (gen.choices[0].message.content or "").strip()
+                except Exception as ai_err:
+                    logger.warning(f"WhatsApp reply AI draft failed: {ai_err}")
+                if not reply_text:
+                    reply_text = "Thanks for your message. I'll get back to you soon."
+                send_res = _wa_call('POST', 'send', {'contact_id': contact_id, 'text': reply_text}, timeout_sec=60)
+                if isinstance(send_res, dict) and send_res.get('success'):
+                    return jsonify({'response': f"✅ Replied to **{contact_name}** on WhatsApp: _{reply_text}_", 'function_called': 'whatsapp_reply'})
+                err = (send_res or {}).get('error') or (send_res or {}).get('message') or 'Failed to send'
+                return jsonify({'response': f"WhatsApp: Could not send reply to {contact_name}: {err}", 'error': True, 'function_called': 'whatsapp_reply'}), 500
+
+            # 1) Send message — match multiple phrasings (we're already in wa_trigger)
+            recipient = None
+            text = None
+            # "send message to John: Hello" or "send message to John - Hello"
+            m_send_a = re.search(
+                r"\bsend\s+(?:a\s+)?(?:whats\s*app\s+)?message\s+to\s+(.+?)[\:\-]\s*(.+)$",
+                user_message, re.IGNORECASE
+            )
+            if m_send_a:
+                recipient = str(m_send_a.group(1)).strip().strip('"\'.')
+                text = str(m_send_a.group(2)).strip()
+            if not (recipient and text):
+                # "send Hello to John on whatsapp" or "send Hello to John"
+                m_send_b = re.search(
+                    r"\bsend\s+(.+?)\s+to\s+(.+?)\s*$",
+                    user_message, re.IGNORECASE | re.DOTALL
+                )
+                if m_send_b:
+                    text = str(m_send_b.group(1)).strip().strip('"\'.')
+                    recipient = str(m_send_b.group(2)).strip().strip('"\'.')
+                    # Remove trailing " on/whatsapp" / " via whatsapp" from recipient
+                    recipient = re.sub(r"\s+(?:on|via)\s+(?:my\s+)?(?:whats\s*app|whatsapp)\s*$", "", recipient, flags=re.IGNORECASE).strip()
+            if not (recipient and text):
+                # "on whatsapp send Hello to John" or "via whatsapp send Hello to John"
+                m_send_c = re.search(
+                    r"(?:on\s+|via\s+)(?:my\s+)?(?:whats\s*app|whatsapp)\s+send\s+(.+?)\s+to\s+(.+?)\s*$",
+                    user_message, re.IGNORECASE | re.DOTALL
+                )
+                if m_send_c:
+                    text = str(m_send_c.group(1)).strip().strip('"\'.')
+                    recipient = str(m_send_c.group(2)).strip().strip('"\'.')
+                    recipient = re.sub(r"\s+(?:on|via)\s+(?:my\s+)?(?:whats\s*app|whatsapp)\s*$", "", recipient, flags=re.IGNORECASE).strip()
+
+            if recipient and text:
+                resolved = _wa_call('POST', 'resolve', {'query': recipient, 'include_groups': True, 'max_candidates': 5}, timeout_sec=60)
+                if not isinstance(resolved, dict) or not resolved.get('success') or not resolved.get('match'):
+                    err = (resolved or {}).get('error') or 'Could not resolve contact'
+                    return jsonify({'response': f"WhatsApp: {err}.", 'error': True})
+
+                contact_id = (resolved.get('match') or {}).get('contact_id')
+                contact_name = (resolved.get('match') or {}).get('name') or recipient
+                if not contact_id:
+                    return jsonify({'response': f"WhatsApp: Could not resolve contact for '{recipient}'.", 'error': True})
+
+                send_res = _wa_call('POST', 'send', {'contact_id': contact_id, 'text': text}, timeout_sec=60)
+                if isinstance(send_res, dict) and send_res.get('success'):
+                    return jsonify({'response': f"✅ Sent WhatsApp message to **{contact_name}**.", 'function_called': 'whatsapp_send'})
+                err = (send_res or {}).get('error') or (send_res or {}).get('message') or 'Failed to send'
+                return jsonify({'response': f"❌ Could not send WhatsApp message to {contact_name}: {err}", 'error': True, 'function_called': 'whatsapp_send'}), 500
+
+            # 2) Show conversation/history with a contact: up to 20 messages
+            m_hist = re.search(
+                r"\b(?:show|display|open|get)\b.*\b(?:conversation|chat|messages|communications)\b.*\bwith\s+(.+?)(?:\s+on\s+(?:whats\s*app|whatsapp))?\b",
+                user_message, re.IGNORECASE
+            )
+            if m_hist:
+                who = m_hist.group(1).strip().strip('"\'.')
+                resolved = _wa_call('POST', 'resolve', {'query': who, 'include_groups': True, 'max_candidates': 5}, timeout_sec=60)
+                if not isinstance(resolved, dict) or not resolved.get('success') or not resolved.get('match'):
+                    err = (resolved or {}).get('error') or 'Could not resolve contact'
+                    return jsonify({'response': f"WhatsApp: {err}.", 'error': True})
+
+                contact_id = resolved['match'].get('contact_id')
+                contact_name = resolved['match'].get('name') or who
+                msgs = _wa_call('POST', 'messages', {'contact_id': contact_id, 'limit': 20}, timeout_sec=90)
+                if not isinstance(msgs, dict) or not msgs.get('success'):
+                    err = (msgs or {}).get('error') or 'Failed to load messages'
+                    return jsonify({'response': f"WhatsApp: couldn't load messages for {contact_name}: {err}", 'error': True}), 500
+
+                lines = [f"WhatsApp conversation with **{contact_name}** (showing up to 20 messages):"]
+                for m in (msgs.get('messages') or [])[-20:]:
+                    direction = "Me" if m.get('fromMe') else (contact_name or "Them")
+                    body = (m.get('body') or '').strip()
+                    if not body and m.get('hasMedia'):
+                        body = f"[Media: {m.get('type') or 'attachment'}]"
+                    ts = _fmt_ts(m.get('timestamp'))
+                    prefix = f"- [{ts}] **{direction}**:" if ts else f"- **{direction}**:"
+                    lines.append(f"{prefix} {body}")
+                return jsonify({'response': "\n".join(lines), 'function_called': 'whatsapp_history'})
+
+            # 3) New messages from a specific contact
+            m_from = re.search(
+                r"\b(?:any\s+)?new\s+(?:messages?|news)\s+from\s+(.+?)\s+on\s+(?:whats\s*app|whatsapp)\b",
+                user_message, re.IGNORECASE
+            )
+            if not m_from:
+                m_from = re.search(r"\bnew\s+(?:messages?|news)\s+from\s+(.+?)\s*(?:on\s+)?(?:whats\s*app|whatsapp)\b", user_message, re.IGNORECASE)
+
+            if m_from:
+                who = m_from.group(1).strip().strip('"\'.')
+                chk = _wa_call('POST', 'unread/last', {'query': who}, timeout_sec=60)
+                if not isinstance(chk, dict) or not chk.get('success'):
+                    err = (chk or {}).get('error') or 'Failed to check unread'
+                    return jsonify({'response': f"WhatsApp: {err}.", 'error': True}), 500
+                contact = (chk.get('contact') or {})
+                contact_name = contact.get('name') or who
+                if not chk.get('has_new'):
+                    return jsonify({'response': f"WhatsApp: **no new messages** from **{contact_name}**.", 'function_called': 'whatsapp_unread_from'})
+                msg = chk.get('message') or {}
+                ts = _fmt_ts(msg.get('timestamp'))
+                body = (msg.get('body') or '').strip()
+                if not body and msg.get('has_media'):
+                    body = f"[Media: {msg.get('type') or 'attachment'}]"
+                header = f"WhatsApp: new message from **{contact_name}**"
+                if ts:
+                    header += f" at {ts}"
+                return jsonify({'response': f"{header}\n\n{body}", 'function_called': 'whatsapp_unread_from'})
+
+            # 4) New messages across all contacts
+            m_any = re.search(r"\b(any|are there|check|show|list|get)\b.*\b(new|unread)\b.*\b(messages?|news)\b", user_message, re.IGNORECASE) \
+                or re.search(r"\b(new|unread)\b.*\b(messages?|news)\b", user_message, re.IGNORECASE)
+            if m_any:
+                data_unread = _wa_call('GET', 'unread/recent', None, timeout_sec=90)
+                if not isinstance(data_unread, dict) or not data_unread.get('success'):
+                    err = (data_unread or {}).get('error') or 'Failed to fetch unread'
+                    return jsonify({'response': f"WhatsApp: {err}.", 'error': True}), 500
+                items = data_unread.get('messages') or []
+                if not items:
+                    return jsonify({'response': "WhatsApp: **no new messages**.", 'function_called': 'whatsapp_unread_all'})
+                lines = [f"WhatsApp: **{len(items)}** contact(s) have unread messages (showing latest unread per contact):"]
+                for idx, it in enumerate(items, start=1):
+                    name = it.get('name') or it.get('contact_id') or 'Unknown'
+                    ts = _fmt_ts(it.get('last_message_time'))
+                    body = (it.get('last_message') or '').strip()
+                    if not body and it.get('last_message_has_media'):
+                        body = f"[Media: {it.get('last_message_type') or 'attachment'}]"
+                    unread_count = it.get('unread_count') or 0
+                    ts_part = f" [{ts}]" if ts else ""
+                    lines.append(f"{idx}. **{name}**{ts_part} (unread: {unread_count})\n   {body}")
+                return jsonify({'response': "\n".join(lines), 'function_called': 'whatsapp_unread_all'})
+    except Exception as e_wa:
+        logger.exception(f"Fast-path WhatsApp handling failed: {e_wa}")
     
     # Fast-path: if user asks about new emails, query Gmail (one or both accounts)
     try:

@@ -828,15 +828,24 @@ app.post('/api/whatsapp/contacts', async (req, res) => {
             }
         }
         
-        const allContacts = (chats || []).map(chat => ({
-            contact_id: chat.id._serialized,
-            name: chat.name || chat.id.user || 'Unknown',
-            is_group: chat.isGroup,
-            last_message: chat.lastMessage?.body || '',
-            last_message_time: chat.lastMessage?.timestamp || null,
-            unread_count: chat.unreadCount || 0,
-            avatar_url: null
-        }));
+        const allContacts = (chats || []).map(chat => {
+            const last = chat.lastMessage || null;
+            return ({
+                contact_id: chat.id._serialized,
+                contact_user: chat.id && chat.id.user ? chat.id.user : null,
+                contact_server: chat.id && chat.id.server ? chat.id.server : null,
+                name: chat.name || (chat.id && chat.id.user) || 'Unknown',
+                is_group: !!chat.isGroup,
+                last_message_id: (last && last.id && last.id._serialized) ? String(last.id._serialized) : null,
+                last_message: (last && last.body) ? String(last.body) : '',
+                last_message_time: (last && typeof last.timestamp === 'number') ? last.timestamp : null,
+                last_message_from_me: (last && typeof last.fromMe === 'boolean') ? last.fromMe : null,
+                last_message_type: (last && last.type) ? String(last.type) : null,
+                last_message_has_media: (last && typeof last.hasMedia === 'boolean') ? last.hasMedia : null,
+                unread_count: chat.unreadCount || 0,
+                avatar_url: null
+            });
+        });
         const contacts = allContacts.slice(offset, offset + limit);
         const has_more = offset + contacts.length < allContacts.length;
 
@@ -865,6 +874,255 @@ app.post('/api/whatsapp/contacts', async (req, res) => {
             success: false,
             error: msg
         });
+    }
+});
+
+async function ensureChatsWarmupReady() {
+    // Wait for warmup period after 'ready' before allowing chat operations (WhatsApp Web needs time to initialize)
+    const timeSinceReady = readyAt ? (Date.now() - readyAt) : 0;
+    if (timeSinceReady < CHATS_WARMUP_MS) {
+        const waitMs = CHATS_WARMUP_MS - timeSinceReady;
+        console.log(`[WhatsApp] Waiting ${waitMs}ms for WhatsApp Web to fully initialize before chat operations...`);
+        await new Promise(r => setTimeout(r, waitMs));
+    }
+}
+
+async function getChatsWithRetryAndCache() {
+    const now = Date.now();
+    if (chatsCache && (now - chatsCacheAt) < CHATS_CACHE_MS) {
+        return chatsCache;
+    }
+    const maxTries = 18;
+    const retryDelayMs = 8000;
+    for (let attempt = 1; attempt <= maxTries; attempt++) {
+        try {
+            const chats = await client.getChats();
+            chatsCache = chats;
+            chatsCacheAt = Date.now();
+            return chats;
+        } catch (err) {
+            const isRetryable = /undefined|update|getChatModel|Evaluation failed/i.test(String(err.message || ''));
+            if (attempt < maxTries && isRetryable) {
+                console.log(`[WhatsApp] getChats attempt ${attempt}/${maxTries} failed, retrying in ${retryDelayMs}ms...`, err.message);
+                await new Promise(r => setTimeout(r, retryDelayMs));
+            } else {
+                throw err;
+            }
+        }
+    }
+    return [];
+}
+
+function buildChatPreview(chat) {
+    const last = chat && chat.lastMessage ? chat.lastMessage : null;
+    return {
+        contact_id: chat.id && chat.id._serialized ? String(chat.id._serialized) : null,
+        name: chat.name || (chat.id && chat.id.user) || 'Unknown',
+        is_group: !!chat.isGroup,
+        unread_count: chat.unreadCount || 0,
+        last_message_id: (last && last.id && last.id._serialized) ? String(last.id._serialized) : null,
+        last_message: (last && last.body) ? String(last.body) : '',
+        last_message_time: (last && typeof last.timestamp === 'number') ? last.timestamp : null,
+        last_message_from_me: (last && typeof last.fromMe === 'boolean') ? last.fromMe : null,
+        last_message_type: (last && last.type) ? String(last.type) : null,
+        last_message_has_media: (last && typeof last.hasMedia === 'boolean') ? last.hasMedia : null
+    };
+}
+
+/**
+ * POST /api/whatsapp/resolve
+ * Resolve a WhatsApp chat/contact ID by name/phone/id.
+ * Body: { query: string, max_candidates?: number, include_groups?: boolean }
+ */
+app.post('/api/whatsapp/resolve', async (req, res) => {
+    try {
+        await checkAndResetIfSessionDeleted();
+        if (!isReady || !client) {
+            return res.status(400).json({ success: false, error: 'WhatsApp not connected. Please authenticate first.' });
+        }
+
+        await ensureChatsWarmupReady();
+
+        const rawQuery = (req.body && req.body.query != null) ? String(req.body.query) : '';
+        const query = rawQuery.trim();
+        const includeGroups = (req.body && req.body.include_groups != null) ? !!req.body.include_groups : true;
+        const maxCandidates = Math.min(Math.max(parseInt(req.body && req.body.max_candidates, 10) || 5, 1), 20);
+
+        if (!query) {
+            return res.status(400).json({ success: false, error: 'query is required' });
+        }
+
+        // If the user passed a serialized chat id already, accept it directly.
+        if (/@(c\.us|g\.us)$/i.test(query) || /@broadcast$/i.test(query)) {
+            try {
+                const chat = await client.getChatById(query);
+                return res.json({ success: true, match: buildChatPreview(chat), candidates: [] });
+            } catch (e) {
+                // fall through to search
+            }
+        }
+
+        // Phone heuristic: if query contains enough digits, treat it as a phone number.
+        const digits = query.replace(/[^\d]/g, '');
+        if (digits && digits.length >= 7) {
+            const contactId = `${digits}@c.us`;
+            try {
+                const chat = await client.getChatById(contactId);
+                return res.json({ success: true, match: buildChatPreview(chat), candidates: [] });
+            } catch (e) {
+                // fall through to chats list search
+            }
+        }
+
+        const chats = await getChatsWithRetryAndCache();
+        const qLower = query.toLowerCase();
+        const scored = [];
+
+        for (const chat of (chats || [])) {
+            try {
+                if (!includeGroups && chat.isGroup) continue;
+                const name = (chat.name || (chat.id && chat.id.user) || '').toString();
+                const nameLower = name.toLowerCase();
+                if (!nameLower) continue;
+                let score = 0;
+                if (nameLower === qLower) score += 1000;
+                if (nameLower.startsWith(qLower)) score += 500;
+                if (nameLower.includes(qLower)) score += 200;
+                const ts = chat.lastMessage && typeof chat.lastMessage.timestamp === 'number' ? chat.lastMessage.timestamp : 0;
+                score += Math.min(ts / 1000000, 50); // tiny recency tiebreaker
+                if (score > 0) scored.push({ score, chat });
+            } catch (e) { /* ignore */ }
+        }
+
+        scored.sort((a, b) => b.score - a.score);
+        const candidates = scored.slice(0, maxCandidates).map(({ chat }) => buildChatPreview(chat));
+
+        if (!candidates.length) {
+            return res.status(404).json({ success: false, error: 'No matching contact/chat found', candidates: [] });
+        }
+
+        return res.json({ success: true, match: candidates[0], candidates });
+    } catch (error) {
+        console.error('[WhatsApp] Error resolving contact:', error);
+        return res.status(500).json({ success: false, error: error.message || String(error) });
+    }
+});
+
+/**
+ * GET /api/whatsapp/unread/recent
+ * Return the latest unread message preview per chat (one per contact).
+ * Query params: limit (optional, default 50, max 200)
+ */
+app.get('/api/whatsapp/unread/recent', async (req, res) => {
+    try {
+        await checkAndResetIfSessionDeleted();
+        if (!isReady || !client) {
+            return res.status(400).json({ success: false, error: 'WhatsApp not connected. Please authenticate first.' });
+        }
+
+        await ensureChatsWarmupReady();
+
+        const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 50, 1), 200);
+        const chats = await getChatsWithRetryAndCache();
+
+        const items = [];
+        for (const chat of (chats || [])) {
+            try {
+                const unread = chat.unreadCount || 0;
+                const last = chat.lastMessage || null;
+                // Rule: only consider if there are unread messages, and the last message was NOT sent by me.
+                if (!unread || !last || last.fromMe) continue;
+                items.push(buildChatPreview(chat));
+            } catch (e) { /* ignore */ }
+        }
+
+        items.sort((a, b) => (b.last_message_time || 0) - (a.last_message_time || 0));
+        return res.json({ success: true, count: Math.min(items.length, limit), messages: items.slice(0, limit) });
+    } catch (error) {
+        console.error('[WhatsApp] Error getting unread recent:', error);
+        return res.status(500).json({ success: false, error: error.message || String(error) });
+    }
+});
+
+/**
+ * POST /api/whatsapp/unread/last
+ * Check if a specific contact has a new (unread) last message, and return it if so.
+ * Body: { contact_id?: string, query?: string }
+ */
+app.post('/api/whatsapp/unread/last', async (req, res) => {
+    try {
+        await checkAndResetIfSessionDeleted();
+        if (!isReady || !client) {
+            return res.status(400).json({ success: false, error: 'WhatsApp not connected. Please authenticate first.' });
+        }
+
+        await ensureChatsWarmupReady();
+
+        let contactId = (req.body && req.body.contact_id) ? String(req.body.contact_id).trim() : '';
+        const query = (req.body && req.body.query != null) ? String(req.body.query).trim() : '';
+
+        if (!contactId && query) {
+            // First try phone/id heuristics, then chat list name match.
+            if (/@(c\.us|g\.us)$/i.test(query) || /@broadcast$/i.test(query)) {
+                contactId = query;
+            } else {
+                const digits = query.replace(/[^\d]/g, '');
+                if (digits && digits.length >= 7) {
+                    contactId = `${digits}@c.us`;
+                } else {
+                    const chats = await getChatsWithRetryAndCache();
+                    const qLower = query.toLowerCase();
+                    let best = null;
+                    let bestScore = -1;
+                    for (const chat of (chats || [])) {
+                        const name = (chat.name || (chat.id && chat.id.user) || '').toString();
+                        const nameLower = name.toLowerCase();
+                        if (!nameLower) continue;
+                        let score = 0;
+                        if (nameLower === qLower) score += 1000;
+                        if (nameLower.startsWith(qLower)) score += 500;
+                        if (nameLower.includes(qLower)) score += 200;
+                        const ts = chat.lastMessage && typeof chat.lastMessage.timestamp === 'number' ? chat.lastMessage.timestamp : 0;
+                        score += Math.min(ts / 1000000, 50);
+                        if (score > bestScore) {
+                            bestScore = score;
+                            best = chat;
+                        }
+                    }
+                    if (best && best.id && best.id._serialized) {
+                        contactId = String(best.id._serialized);
+                    }
+                }
+            }
+        }
+
+        if (!contactId) {
+            return res.status(400).json({ success: false, error: 'contact_id or query is required' });
+        }
+
+        const chat = await client.getChatById(contactId);
+        const preview = buildChatPreview(chat);
+
+        // Determine "new message" according to spec:
+        // - If last message is from me => no new messages
+        // - Else if unread_count > 0 => new (unread) message exists
+        const hasNew = !!(preview && preview.unread_count > 0 && preview.last_message_from_me === false);
+
+        return res.json({
+            success: true,
+            has_new: hasNew,
+            contact: { contact_id: preview.contact_id, name: preview.name, is_group: preview.is_group },
+            message: hasNew ? {
+                id: preview.last_message_id,
+                body: preview.last_message,
+                timestamp: preview.last_message_time,
+                type: preview.last_message_type,
+                has_media: preview.last_message_has_media
+            } : null
+        });
+    } catch (error) {
+        console.error('[WhatsApp] Error getting unread last:', error);
+        return res.status(500).json({ success: false, error: error.message || String(error) });
     }
 });
 
