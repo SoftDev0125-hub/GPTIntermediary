@@ -999,6 +999,17 @@
                                 </div>
                             </div>
                         </div>
+                        <div class="settings-subsection" style="margin-top: 1.25rem;">
+                            <h3 class="settings-subsection-title">Chat tab: Send emails from</h3>
+                            <p class="field-description" style="margin-bottom: 8px;">When you ask the assistant to send an email from the Chat tab (without saying "from second account"), which account should it use?</p>
+                            <div class="settings-field">
+                                <label for="chat_send_from_account">Default account for sending</label>
+                                <select id="chat_send_from_account" name="chat_send_from_account" style="padding: 8px; border: 1px solid #e6e9ef; border-radius: 6px; min-width: 200px;">
+                                    <option value="1">EMAIL1 (first account)</option>
+                                    <option value="2">EMAIL2 (second account)</option>
+                                </select>
+                            </div>
+                        </div>
                         
                         <div class="gmail-token-section">
                             <div class="gmail-token-header">
@@ -1411,8 +1422,9 @@
 
         // Store conversation history for context
         let conversationHistory = [];
-        // When chat returns unread emails, store next_page_token so "show more" can load next 20
+        // When chat returns unread emails, store next_page_token (EMAIL1) and next_page_token_2 (EMAIL2) for "show more"
         let lastEmailPageToken = null;
+        let lastEmailPageToken2 = null;
 
         function addMessage(text, type = 'assistant') {
             const messageDiv = document.createElement('div');
@@ -1567,15 +1579,6 @@
             console.log('[CHAT] User ID:', userIdInt);
             
             try {
-                // So Chat tab can fetch emails: send credentials and JWT (same as EMAIL1 tab)
-                let userCredentials = null;
-                try {
-                    userCredentials = await getUserCredentials();
-                    if (userCredentials && !userCredentials.access_token) userCredentials = null;
-                } catch (e) {
-                    console.warn('[CHAT] Could not get user credentials:', e);
-                }
-                const authToken = localStorage.getItem('auth_token');
                 const response = await fetch(`${CHAT_SERVER_URL}/chat`, {
                     method: 'POST',
                     headers: {
@@ -1586,8 +1589,8 @@
                         user_id: userIdInt,
                         history: conversationHistory,
                         email_page_token: lastEmailPageToken || undefined,
-                        user_credentials: userCredentials || undefined,
-                        auth_token: authToken || undefined
+                        email_page_token_2: lastEmailPageToken2 || undefined,
+                        send_from_second_account: (localStorage.getItem('chat_send_from_account') === '2')
                     }),
                     signal: controller.signal
                 });
@@ -1603,7 +1606,8 @@
                     } catch (e) {
                         errorData = { error: `HTTP ${response.status}: ${response.statusText}` };
                     }
-                    addMessage(`ERROR: ${errorData.error || errorData.detail || 'Unknown error'}`, 'error');
+                    const errMsg = (typeof errorData.response === 'string' && errorData.response) ? errorData.response : (errorData.detail || (typeof errorData.error === 'string' ? errorData.error : (errorData.error === true ? 'Request failed' : errorData.error)) || 'Unknown error');
+                    addMessage(`ERROR: ${errMsg}`, 'error');
                     sendButton.disabled = false;
                     messageInput.focus();
                     return;
@@ -1616,10 +1620,12 @@
 
                 if (data.response) {
                     addMessage(data.response, 'assistant');
-                    if (data.function_called === 'get_unread_emails' && data.next_page_token) {
-                        lastEmailPageToken = data.next_page_token;
+                    if (data.function_called === 'get_unread_emails') {
+                        if (data.next_page_token !== undefined) lastEmailPageToken = data.next_page_token;
+                        if (data.next_page_token_2 !== undefined) lastEmailPageToken2 = data.next_page_token_2;
                     } else {
                         lastEmailPageToken = null;
+                        lastEmailPageToken2 = null;
                     }
 
                     // If this message was sent from voice input, speak the response
@@ -1644,7 +1650,7 @@
                         }
                     }
                 } else {
-                    const errorMsg = data.error || data.detail || 'No response received';
+                    const errorMsg = (typeof data.response === 'string' && data.response) ? data.response : (data.detail || (typeof data.error === 'string' ? data.error : (data.error === true ? 'No response received' : data.error)) || 'No response received');
                     console.error('[CHAT] Error in response:', errorMsg);
                     addMessage(`ERROR: ${errorMsg}`, 'error');
                 }
@@ -1981,20 +1987,16 @@
         }
 
         /** Strip HTML/DOCTYPE and return plain text for list preview (no raw markup). */
-        /** Strip HTML/CSS to plain text (decode entities, remove style/script and all tags). */
-        function htmlToPlainText(htmlOrText) {
-            if (!htmlOrText) return '';
-            const div = document.createElement('div');
-            div.innerHTML = String(htmlOrText);
-            const scripts = div.querySelectorAll('script, style');
-            scripts.forEach(el => el.remove());
-            let s = div.textContent || div.innerText || '';
-            s = s.replace(/\s+/g, ' ').trim();
-            return s;
-        }
         function emailBodyToPlainSummary(htmlOrText, maxLen) {
             if (!htmlOrText) return '';
-            let s = htmlToPlainText(htmlOrText);
+            let s = String(htmlOrText)
+                .replace(/<!DOCTYPE[^>]*>/gi, '')
+                .replace(/<\?xml[^>]*\?>/gi, '')
+                .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+                .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '')
+                .replace(/<[^>]+>/g, ' ')
+                .replace(/\s+/g, ' ')
+                .trim();
             if (maxLen && s.length > maxLen) s = s.substring(0, maxLen) + '...';
             return s;
         }
@@ -2042,9 +2044,13 @@
             detailFrom.textContent = email.from_email || email.from || 'Unknown';
             detailDate.textContent = email.date || new Date().toLocaleDateString();
             const bodyRaw = email.body || 'No content available';
-            const bodyPlain = htmlToPlainText(bodyRaw);
-            const displayText = (bodyPlain || bodyRaw.replace(/<[^>]+>/g, ' ').trim()) || 'No content available';
-            const formattedText = escapeHtml(displayText).replace(/\n/g, '<br>');
+            const bodyContent = (bodyRaw.includes('<') && bodyRaw.includes('>'))
+                ? stripHtmlCssToPlainText(bodyRaw)
+                : bodyRaw;
+            const formattedText = bodyContent
+                .replace(/\n\n+/g, '\n\n')
+                .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                .replace(/\n/g, '<br>');
             detailBody.innerHTML = '';
             detailBody.className = 'email-detail-body email-detail-body-text';
             detailBody.innerHTML = `<div class="email-text-content">${formattedText}</div>`;
@@ -2089,6 +2095,20 @@
             } catch (error) {
                 console.error('Exception marking email as read:', error);
             }
+        }
+
+        /** Strip HTML/CSS to plain text for readable email display. */
+        function stripHtmlCssToPlainText(html) {
+            if (!html || typeof html !== 'string') return '';
+            let s = html
+                .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, ' ')
+                .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ' ')
+                .replace(/<[^>]+>/g, ' ')
+                .replace(/\s+/g, ' ')
+                .trim();
+            const div = document.createElement('div');
+            div.innerHTML = s;
+            return (div.textContent || div.innerText || s).trim();
         }
 
         function sanitizeHtml(html) {
@@ -10871,6 +10891,11 @@ Used with company/domain to find professional email addresses. Works best when y
             const settingsForm = document.getElementById('settingsForm');
             if (settingsForm) {
                 settingsForm.addEventListener('submit', saveSettings);
+            }
+            const chatSendFromSelect = document.getElementById('chat_send_from_account');
+            if (chatSendFromSelect) {
+                chatSendFromSelect.value = localStorage.getItem('chat_send_from_account') || '1';
+                chatSendFromSelect.addEventListener('change', function() { localStorage.setItem('chat_send_from_account', this.value); });
             }
             
             // Load settings when Settings tab is clicked

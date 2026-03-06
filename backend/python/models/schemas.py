@@ -22,6 +22,7 @@ class SendEmailRequest(BaseModel):
     body: str = Field(..., description="Email body (plain text)")
     html: Optional[str] = Field(None, description="HTML version of the email body")
     confirm: Optional[bool] = Field(False, description="Set to true to allow sending to resolver-inferred addresses without interactive confirmation")
+    use_second_gmail: bool = Field(False, description="When True, send from the second Gmail account (EMAIL2)")
 
 
 class EmailReplyRequest(BaseModel):
@@ -31,6 +32,7 @@ class EmailReplyRequest(BaseModel):
     sender_email: Optional[str] = Field(None, description="Sender email address to find and reply to")
     body: str = Field(..., description="Reply body (plain text)")
     html: Optional[str] = Field(None, description="HTML version of the reply")
+    use_second_gmail: bool = Field(False, description="When True, reply from the second Gmail account (the account that received the email)")
 
 
 class LaunchAppRequest(BaseModel):

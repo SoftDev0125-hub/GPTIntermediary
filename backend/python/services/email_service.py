@@ -79,19 +79,22 @@ class EmailService:
                 try:
                     creds.refresh(Request())
                     logger.info("Gmail token refreshed successfully")
-                    # Persist new access token to project root .env so next request can use it
+                    # Persist new access token to .env: use USER_ACCESS_TOKEN_2 when this is the second account
                     try:
                         env_path = _load_env_root / '.env'
                         if env_path.exists():
+                            env_id_2 = (os.getenv('GOOGLE_CLIENT_ID_2') or '').strip()
+                            is_second_account = bool(env_id_2 and client_id and client_id.strip() == env_id_2)
+                            token_key = 'USER_ACCESS_TOKEN_2' if is_second_account else 'USER_ACCESS_TOKEN'
                             with open(env_path, 'r', encoding='utf-8') as f:
                                 lines = f.readlines()
                             with open(env_path, 'w', encoding='utf-8') as f:
                                 for line in lines:
-                                    if line.strip().startswith('USER_ACCESS_TOKEN='):
-                                        f.write(f'USER_ACCESS_TOKEN={creds.token}\n')
+                                    if line.strip().startswith(f'{token_key}='):
+                                        f.write(f'{token_key}={creds.token}\n')
                                     else:
                                         f.write(line)
-                            logger.debug("Updated USER_ACCESS_TOKEN in .env")
+                            logger.debug("Updated %s in .env", token_key)
                     except Exception as env_err:
                         logger.debug(f"Could not update .env with new token: {env_err}")
                 except Exception as refresh_error:

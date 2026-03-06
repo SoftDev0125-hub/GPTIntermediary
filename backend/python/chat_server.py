@@ -97,80 +97,6 @@ def fetch_latest_news(q=None, country='us', pageSize=10):
         logger.error(f"Failed to fetch news: {e}")
         return []
 
-
-def fetch_weather(location: str) -> dict:
-    """Fetch current weather for a location using Open-Meteo (free, no API key)."""
-    if not location or not str(location).strip():
-        return {"error": "Please specify a location (e.g. city name)."}
-    try:
-        # Geocode: city name -> lat, lon
-        geo_params = {"name": str(location).strip(), "count": 1, "language": "en"}
-        geo = requests.get("https://geocoding-api.open-meteo.com/v1/search", params=geo_params, timeout=8)
-        geo.raise_for_status()
-        geo_data = geo.json()
-        results = geo_data.get("results") or []
-        if not results:
-            return {"error": f"No location found for '{location}'."}
-        first = results[0]
-        lat = first.get("latitude")
-        lon = first.get("longitude")
-        name = first.get("name", location)
-        country = first.get("country_code", "")
-        if lat is None or lon is None:
-            return {"error": f"Could not get coordinates for '{location}'."}
-        # Current weather
-        params = {
-            "latitude": lat,
-            "longitude": lon,
-            "current": "temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m,precipitation",
-            "timezone": "auto",
-        }
-        resp = requests.get("https://api.open-meteo.com/v1/forecast", params=params, timeout=8)
-        resp.raise_for_status()
-        data = resp.json()
-        cur = data.get("current") or {}
-        # WMO weather codes: 0=Clear, 1-3=Clouds, 45/48=Fog, 51-67=Rain/Drizzle, 71-77=Snow, 80-99=Showers/Thunderstorm
-        code = cur.get("weather_code", 0)
-        if code == 0:
-            conditions = "Clear"
-        elif code in (1, 2, 3):
-            conditions = "Partly cloudy" if code == 2 else ("Mainly clear" if code == 1 else "Cloudy")
-        elif code in (45, 48):
-            conditions = "Foggy"
-        elif code in (51, 53, 55, 56, 57, 61, 63, 65, 66, 67):
-            conditions = "Rain"
-        elif code in (71, 73, 75, 77):
-            conditions = "Snow"
-        elif code in (80, 81, 82, 85, 86):
-            conditions = "Showers"
-        elif code in (95, 96, 99):
-            conditions = "Thunderstorm"
-        else:
-            conditions = "Unknown"
-        temp = cur.get("temperature_2m")
-        unit = data.get("current_units", {}).get("temperature_2m", "°C")
-        humidity = cur.get("relative_humidity_2m")
-        wind = cur.get("wind_speed_10m")
-        wind_unit = data.get("current_units", {}).get("wind_speed_10m", "km/h")
-        return {
-            "success": True,
-            "location": f"{name}, {country}" if country else name,
-            "temperature": temp,
-            "temperature_unit": unit,
-            "conditions": conditions,
-            "humidity_percent": humidity,
-            "wind_speed": wind,
-            "wind_unit": wind_unit,
-            "weather_code": code,
-        }
-    except requests.RequestException as e:
-        logger.warning(f"Weather fetch failed: {e}")
-        return {"error": f"Could not fetch weather: {e}"}
-    except Exception as e:
-        logger.warning(f"Weather error: {e}")
-        return {"error": str(e)}
-
-
 # Setup logging - use WARNING level to reduce logging overhead
 logging.basicConfig(level=logging.WARNING)  # Changed from INFO to WARNING for faster performance
 logger = logging.getLogger(__name__)
@@ -209,36 +135,6 @@ def get_openai_client():
             max_retries=0  # No retries - fail fast
         )
     return _openai_client
-
-
-def _normalize_user_message(text):
-    """Use AI to correct voice/typo/grammar errors and return the closest intended command or question. Returns original if call fails."""
-    if not text or len(text.strip()) < 2:
-        return text
-    try:
-        client = get_openai_client()
-        r = client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": "system", "content": (
-                    "You are a normalizer for a personal assistant. The user may have spoken or typed with "
-                    "pronunciation errors, typos, or grammar mistakes. Output ONLY the single corrected sentence "
-                    "that best expresses the user's intent (the exact command or question they meant). "
-                    "One line only, no quotes, no explanation. If the meaning is clear, output it verbatim or with minimal fixes."
-                )},
-                {"role": "user", "content": text.strip()}
-            ],
-            max_tokens=150,
-            temperature=0.1,
-            stream=False,
-        )
-        if r and r.choices and getattr(r.choices[0].message, 'content', None):
-            normalized = (r.choices[0].message.content or '').strip()
-            if normalized:
-                return normalized
-    except Exception as e:
-        logger.debug(f"Normalize message failed: {e}")
-    return text
 
 
 def analyze_emails_with_ai(emails, request_id=None, max_items=5):
@@ -341,7 +237,7 @@ except ImportError as e:
 FUNCTIONS = [
     {
         "name": "send_email",
-        "description": "Send an email to a recipient",
+        "description": "Send an email to a recipient. First account (EMAIL1) vs second (EMAIL2): use from_second_account=true ONLY when the user clearly says to send from the second account (e.g. 'using my second account', 'from the second account', 'from EMAIL2', 'with my second account', 'account 2'). Otherwise use the first account (from_second_account=false).",
         "parameters": {
             "type": "object",
             "properties": {
@@ -356,6 +252,11 @@ FUNCTIONS = [
                 "body": {
                     "type": "string",
                     "description": "Email body content"
+                },
+                "from_second_account": {
+                    "type": "boolean",
+                    "description": "When true, send from the second Gmail account (EMAIL2). Use when the user says 'send from second account', 'using my second account', 'with my second account', or 'from EMAIL2'.",
+                    "default": False
                 }
             },
             "required": ["to", "subject", "body"]
@@ -363,21 +264,27 @@ FUNCTIONS = [
     },
     {
         "name": "get_unread_emails",
-        "description": "Get unread emails from the user's inbox",
+        "description": "Get unread emails. The user has two accounts: EMAIL1 (first) and EMAIL2 (second). Distinguish from the user's words: account='first' when they say first account, account 1, 1st account, primary/main account, only first; account='second' when they say second account, account 2, 2nd account, only second; account='both' when they ask for new emails without specifying or say both accounts.",
         "parameters": {
             "type": "object",
             "properties": {
                 "limit": {
                     "type": "integer",
-                    "description": "Number of emails to retrieve (default 10)",
-                    "default": 10
+                    "description": "Number of emails to retrieve per account (default 25)",
+                    "default": 25
+                },
+                "account": {
+                    "type": "string",
+                    "description": "Which account(s): 'first' = EMAIL1 only (user said first account/account 1/primary); 'second' = EMAIL2 only (user said second account/account 2); 'both' = both (default). Infer from user wording.",
+                    "enum": ["first", "second", "both"],
+                    "default": "both"
                 }
             }
         }
     },
     {
         "name": "reply_to_email",
-        "description": "Reply to an email from a specific sender",
+        "description": "Reply to an email. Always reply from the account that received that email. Each listed email is labeled (EMAIL1) or (EMAIL2): set from_second_account=true when replying to an email shown as (EMAIL2); false when (EMAIL1).",
         "parameters": {
             "type": "object",
             "properties": {
@@ -388,6 +295,11 @@ FUNCTIONS = [
                 "body": {
                     "type": "string",
                     "description": "Reply message content"
+                },
+                "from_second_account": {
+                    "type": "boolean",
+                    "description": "True when the email being replied to was in the second account (EMAIL2). Check the email list labels.",
+                    "default": False
                 }
             },
             "required": ["sender_email", "body"]
@@ -395,10 +307,16 @@ FUNCTIONS = [
     },
     {
         "name": "clean_gmail",
-        "description": "Permanently delete all emails from the user's Gmail account. Use when the user asks to clean their Gmail, delete all emails, clear email history, or wipe their inbox. This cannot be undone.",
+        "description": "Permanently delete all emails from a Gmail account. Use when the user asks to clean Gmail, delete all emails, or wipe inbox. use_second_account=true when they say second account/account 2/EMAIL2; false when they say first account/account 1/EMAIL1.",
         "parameters": {
             "type": "object",
-            "properties": {}
+            "properties": {
+                "use_second_account": {
+                    "type": "boolean",
+                    "description": "True = second account (EMAIL2) only; False = first account (EMAIL1) only. Match the account the user asked to clean.",
+                    "default": False
+                }
+            }
         }
     },
     {
@@ -432,36 +350,26 @@ FUNCTIONS = [
             },
             "required": ["name"]
         }
-    },
-    {
-        "name": "get_weather",
-        "description": "Get current weather for a location (city or place). Use for any question about weather, temperature, or conditions (e.g. 'What's the weather in Paris?', 'Is it raining in Tokyo?', 'Temperature in London').",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "location": {
-                    "type": "string",
-                    "description": "City name or location (e.g. New York, London, Tokyo)"
-                }
-            },
-            "required": ["location"]
-        }
     }
 ]
 
 
-def call_backend_function(function_name, arguments, caller_credentials=None, auth_token=None):
-    """Call the backend API with function arguments. Pass auth_token so backend can use per-user credentials (JWT)."""
+def call_backend_function(function_name, arguments, caller_credentials=None):
+    """Call the backend API with function arguments"""
     
-    # Add user credentials to email functions. Prefer caller-provided credentials (only if valid)
+    # Add user credentials to email functions (first account only). When sending from second account, backend uses .env.
     if function_name in ['send_email', 'get_unread_emails', 'reply_to_email', 'clean_gmail']:
-        creds = None
-        if caller_credentials and isinstance(caller_credentials, dict) and caller_credentials.get('access_token'):
-            creds = caller_credentials
-        elif USER_CREDENTIALS and USER_CREDENTIALS.get('access_token') and 'mock' not in (USER_CREDENTIALS.get('access_token') or '').lower():
-            creds = USER_CREDENTIALS
-        if creds:
-            arguments['user_credentials'] = creds
+        use_second = arguments.get('use_second_gmail') is True or (
+            isinstance(arguments.get('use_second_gmail'), str) and str(arguments.get('use_second_gmail')).strip().lower() == 'true'
+        )
+        if not use_second:
+            creds = None
+            if caller_credentials and isinstance(caller_credentials, dict) and caller_credentials.get('access_token'):
+                creds = caller_credentials
+            elif USER_CREDENTIALS and USER_CREDENTIALS.get('access_token') and 'mock' not in (USER_CREDENTIALS.get('access_token') or '').lower():
+                creds = USER_CREDENTIALS
+            if creds:
+                arguments['user_credentials'] = creds
     
     # Map function names to endpoints
     endpoint_map = {
@@ -481,18 +389,15 @@ def call_backend_function(function_name, arguments, caller_credentials=None, aut
         url = f"{BACKEND_URL}{endpoint}"
         print(f"Calling backend: {url}")
         print(f"Arguments: {json.dumps(arguments, indent=2)}")
-        # Use longer timeout for email operations (fetching 50 or "show more" can be slow)
+        # Use longer timeout for email operations which may take longer
         timeout_sec = 5
         if function_name in ('get_unread_emails', 'reply_to_email', 'send_email'):
-            timeout_sec = 60
+            timeout_sec = 25
         if function_name == 'clean_gmail':
             timeout_sec = 300  # Delete-all can take a long time for large mailboxes
         import time as _time
         t0 = _time.time()
-        headers = {'Content-Type': 'application/json'}
-        if auth_token:
-            headers['Authorization'] = f'Bearer {auth_token}'
-        response = requests.post(url, json=arguments, headers=headers, timeout=timeout_sec)
+        response = requests.post(url, json=arguments, timeout=timeout_sec)
         duration = _time.time() - t0
         print(f"Backend call duration: {duration:.2f}s")
         try:
@@ -631,15 +536,12 @@ def chat():
     _request_counter += 1
     request_id = f"req-{_request_counter}"  # Sequential request ID for tracking
     
-    data = request.get_json(silent=True) if request.is_json else None
-    if not isinstance(data, dict):
-        data = {}
-    user_message = (data.get('message') or '').strip()
+    data = request.json
+    user_message = data.get('message', '').strip()
 
     user_id = data.get('user_id')  # Get user_id from request
     
-    msg_preview = (user_message[:50] + '...') if len(user_message) > 50 else user_message
-    logger.info(f"[CHAT-{request_id}] Request #{_request_counter} started at {request_start_time:.2f}, message='{msg_preview}'")
+    logger.info(f"[CHAT-{request_id}] Request #{_request_counter} started at {request_start_time:.2f}, message='{user_message[:50]}...'")
     
     # Validate and convert user_id
     if user_id:
@@ -665,11 +567,6 @@ def chat():
             'error': True
         })
 
-    # Normalize voice/typo for short commands; skip for clear questions (?) or long messages to preserve intent
-    if not (user_message.strip().endswith('?') or len(user_message) > 80):
-        user_message = _normalize_user_message(user_message) or user_message
-    user_message = user_message.strip()
-
     # Fast-path: "Clean my Gmail" / "Delete all emails" -> call delete-all backend directly
     try:
         clean_pattern = re.search(
@@ -679,8 +576,7 @@ def chat():
         )
         if clean_pattern:
             caller_creds = data.get('user_credentials') if isinstance(data, dict) else None
-            auth_tok = data.get('auth_token') if isinstance(data, dict) else None
-            result = call_backend_function('clean_gmail', {}, caller_credentials=caller_creds, auth_token=auth_tok)
+            result = call_backend_function('clean_gmail', {}, caller_credentials=caller_creds)
             if isinstance(result, dict) and result.get('success'):
                 count = result.get('data', {}).get('deleted_count', 0)
                 msg = result.get('message', f'Permanently deleted {count} emails from your Gmail account.')
@@ -690,15 +586,122 @@ def chat():
     except Exception as e_cmd:
         print(f"Direct clean Gmail handling failed: {e_cmd}")
 
+    # Fast-path: "Reply to xxx" — fetch that person's email, analyze with AI, create and send reply
+    try:
+        reply_match = re.search(
+            r"\b(?:please\s+)?reply\s+(?:to\s+)?(?:the\s+)?(?:email\s+from\s+)?(.+?)(?:\s*\.)?\s*$",
+            user_message,
+            re.IGNORECASE
+        )
+        if reply_match:
+            target_spec = reply_match.group(1).strip().strip('"\',.')
+            if target_spec:
+                caller_creds = data.get('user_credentials') if isinstance(data, dict) else None
+                # Fetch unread from both accounts to find an email from this sender
+                base_query = "in:inbox category:primary is:unread"
+                res1 = call_backend_function("get_unread_emails", {"limit": 30, "query": base_query}, caller_credentials=caller_creds)
+                res2 = call_backend_function("get_unread_emails", {"limit": 30, "query": base_query, "use_second_gmail": True}, caller_credentials=caller_creds)
+                emails1 = [dict(e, account="EMAIL1") for e in (res1.get("emails") or []) if isinstance(e, dict)] if isinstance(res1, dict) and res1.get("success") else []
+                emails2 = [dict(e, account="EMAIL2") for e in (res2.get("emails") or []) if isinstance(e, dict)] if isinstance(res2, dict) and res2.get("success") else []
+                combined = emails1 + emails2
+                target_spec_lower = target_spec.lower()
+                def sender_matches(em):
+                    from_email = (em.get("from_email") or em.get("from") or "").strip().lower()
+                    from_name = (em.get("from_name") or "").strip().lower()
+                    if not from_email and not from_name:
+                        return False
+                    if "@" in target_spec_lower:
+                        return target_spec_lower in from_email or from_email == target_spec_lower
+                    return target_spec_lower in from_name or target_spec_lower in from_email or (from_name and target_spec_lower in from_name)
+                target_email = next((e for e in combined if sender_matches(e)), None)
+                if not target_email:
+                    return jsonify({
+                        "response": f"No unread email found from \"{target_spec}\". Check the name or try listing your emails first.",
+                        "function_called": None
+                    })
+                from_email = (target_email.get("from_email") or target_email.get("from") or "").strip()
+                from_name = target_email.get("from_name") or ""
+                subject = target_email.get("subject") or ""
+                body_raw = target_email.get("body") or target_email.get("snippet") or ""
+                if body_raw and len(body_raw) > 1200:
+                    body_raw = body_raw[:1200] + "..."
+                use_second = target_email.get("account") == "EMAIL2"
+                # Draft reply using AI
+                try:
+                    client = get_openai_client()
+                    sys_content = (
+                        "You are a helpful assistant that drafts short, professional email replies. "
+                        "Return only the reply body text (no subject, no quotes). Keep it concise (2–5 sentences). "
+                        "Match the tone of the original message when appropriate."
+                    )
+                    user_content = (
+                        f"Draft a reply to this email.\n\n"
+                        f"From: {from_name or from_email}\nSubject: {subject}\n\n"
+                        f"Content:\n{body_raw}\n\n"
+                        "Return only the reply body text."
+                    )
+                    gen = client.chat.completions.create(
+                        model="gpt-3.5-turbo",
+                        messages=[{"role": "system", "content": sys_content}, {"role": "user", "content": user_content}],
+                        max_tokens=400,
+                        temperature=0.4,
+                        stream=False,
+                    )
+                    draft = (gen.choices[0].message.content or "").strip() if gen and gen.choices else ""
+                except Exception as ai_err:
+                    print(f"AI reply draft failed: {ai_err}")
+                    draft = "Thank you for your message. I will get back to you soon.\n\nBest regards."
+                if not draft:
+                    draft = "Thank you for your message. I will get back to you soon.\n\nBest regards."
+                reply_args = {"sender_email": from_email, "body": draft}
+                if use_second:
+                    reply_args["use_second_gmail"] = True
+                result = call_backend_function("reply_to_email", reply_args, caller_credentials=caller_creds if not use_second else None)
+                if isinstance(result, dict) and result.get("success"):
+                    display_name = from_name or from_email
+                    return jsonify({
+                        "response": f"Reply sent to {display_name}.",
+                        "function_called": "reply_to_email"
+                    })
+                err = result.get("error") or result.get("detail") or result.get("message") or str(result) if isinstance(result, dict) else str(result)
+                return jsonify({"response": f"Could not send reply: {err}", "error": True, "function_called": "reply_to_email"}), 500
+    except Exception as e_reply:
+        print(f"Direct reply-to handling failed: {e_reply}")
+
     # Quick command: handle direct "Send <message> to <recipient>" by generating
     # an AI-written subject/body and sending via backend /api/email/send
     try:
+        # Match "send X to Y" at start, or "Can you / Please / I want to send X to Y"
         m_cmd = re.match(r"^\s*send\s+(.+?)\s+to\s+(.+)$", user_message, re.IGNORECASE)
+        if not m_cmd:
+            m_cmd = re.match(r"^\s*(?:can you|please|could you|would you|i want to|i'd like to)\s+send\s+(.+?)\s+to\s+(.+)$", user_message, re.IGNORECASE)
         if m_cmd:
             original_text = m_cmd.group(1).strip()
             recipient = m_cmd.group(2).strip()
 
+            # Detect second-account send and strip that phrase from recipient BEFORE composing,
+            # so we create the email the same way as for the first account (clean recipient + same content).
+            second_account_pattern = re.compile(
+                r"\b(from\s+the\s+second\s+account|from\s+second\s+account|from\s+EMAIL2|from\s+account\s+2"
+                r"|using\s+(?:my\s+)?(?:the\s+)?second\s+account|with\s+(?:my\s+)?(?:the\s+)?second\s+account"
+                r"|(?:using|with)\s+my\s+second\s+account|my\s+second\s+account)\b",
+                re.IGNORECASE
+            )
+            send_from_second = data.get('send_from_second_account', False) if isinstance(data, dict) else False
+            if second_account_pattern.search(user_message):
+                send_from_second = True
+            recipient_stripped = re.sub(
+                r"\s+(?:from\s+the\s+second\s+account|from\s+second\s+account|from\s+EMAIL2|from\s+account\s+2"
+                r"|using\s+(?:my\s+)?(?:the\s+)?second\s+account|with\s+(?:my\s+)?(?:the\s+)?second\s+account"
+                r"|(?:using|with)\s+my\s+second\s+account|my\s+second\s+account)\s*$",
+                "",
+                recipient,
+                flags=re.IGNORECASE
+            ).strip()
+            recipient_for_compose = recipient_stripped or recipient
+
             # Prepare a prompt for the OpenAI client to generate a friendly subject and body
+            # (same composition for first or second account: clean recipient + original_text)
             try:
                 client = get_openai_client()
                 ai_system = {
@@ -714,7 +717,7 @@ def chat():
                     "role": "user",
                     "content": (
                         f"Compose an email based on this brief description: {original_text}\n\n"
-                        f"Recipient: {recipient}\n\n"
+                        f"Recipient: {recipient_for_compose}\n\n"
                         "Return only valid JSON with 'subject' and 'body' fields."
                     )
                 }
@@ -762,14 +765,15 @@ def chat():
                 body = f"Hello,\n\n{original_text}\n\nBest regards,\nYour assistant"
 
             args = {
-                'to': recipient,
+                'to': recipient_for_compose,
                 'subject': subject,
                 'body': body
             }
+            if send_from_second:
+                args['use_second_gmail'] = True
 
-            # Use provided caller credentials if present
             caller_creds = data.get('user_credentials') if isinstance(data, dict) else None
-            result = call_backend_function('send_email', args, caller_credentials=caller_creds, auth_token=data.get('auth_token') if isinstance(data, dict) else None)
+            result = call_backend_function('send_email', args, caller_credentials=caller_creds)
 
             # Build friendly feedback for the user
             try:
@@ -820,28 +824,46 @@ def chat():
         # Fall through to normal processing if direct command handling fails
         print(f"Direct send command handling failed: {e_cmd}")
     
-    # Fast-path: if user asks about new emails, query Gmail primary inbox directly and return analyzed summary
+    # Fast-path: if user asks about new emails, query Gmail (one or both accounts)
     try:
-        # Detect queries asking about new emails or emails from a specific sender
-        # Broad match: "Are there any new emails?", "Show my unread emails," "Check my primary inbox," etc.
         email_trigger = (
             re.search(r"\b(any\s+new\s+emails?|new\s+emails?|(are\s+there|do\s+I\s+have)\s+(any\s+)?(new\s+)?emails?)\b", user_message, re.IGNORECASE)
             or re.search(r"\b(check|show|list|get|fetch|read|display)\s+(my\s+)?(unread\s+)?(primary\s+)?(emails?|inbox|mail)\b", user_message, re.IGNORECASE)
             or re.search(r"\b(my\s+)?unread\s+emails?\b", user_message, re.IGNORECASE)
             or re.search(r"\b(what(?:'s| is)\s+)?(in\s+)?my\s+(email|inbox)\b", user_message, re.IGNORECASE)
             or re.search(r"\b(emails?|mail|messages?)\b.*\bfrom\b", user_message, re.IGNORECASE)
-            or re.search(r"\b(unread\s+)?(emails?|mail|inbox)\b.*\b(primary|gmail|inbox)\b", user_message, re.IGNORECASE)
-            or re.search(r"\b(primary|gmail|inbox)\b.*\b(unread\s+)?(emails?|mail|inbox)\b", user_message, re.IGNORECASE)
         )
-        # Do NOT intercept general/how-to questions — let OpenAI answer them properly
-        if email_trigger and re.search(
-            r"^\s*(how\s+(?:do|can|does|to|might)|what\s+is|what's|why\s+(?:do|does|is)|explain|can\s+you\s+explain|tell\s+me\s+how|where\s+do\s+I|when\s+do\s+I|which\s+(?:is|are)|is\s+it\s+possible|difference\s+between)",
-            user_message, re.IGNORECASE
-        ):
-            email_trigger = False
         if email_trigger:
             caller_creds = data.get('user_credentials') if isinstance(data, dict) else None
-            # Try to detect a specific sender in the user's question ("from Alice" / "from alice@example.com")
+            # Which account(s): first only, second only, or both (EMAIL1 first then EMAIL2).
+            # Use broad patterns so we reliably distinguish "first account" vs "second account" in user instructions.
+            first_account_pattern = re.compile(
+                r"\b("
+                r"first\s+account|(?:my|the)\s+first\s+account|account\s+1|1st\s+account|"
+                r"email\s*1|EMAIL1|in\s+(?:the\s+)?first\s+account|account\s+one|"
+                r"only\s+first|first\s+only|first\s+Gmail|Gmail\s*1|"
+                r"primary\s+account|main\s+account|first\s+inbox|inbox\s+1"
+                r")\b",
+                re.IGNORECASE
+            )
+            second_account_pattern = re.compile(
+                r"\b("
+                r"second\s+account|(?:my|the)\s+second\s+account|account\s+2|2nd\s+account|"
+                r"email\s*2|EMAIL2|in\s+(?:the\s+)?second\s+account|account\s+two|"
+                r"only\s+second|second\s+only|second\s+Gmail|Gmail\s*2|"
+                r"second\s+inbox|inbox\s+2"
+                r")\b",
+                re.IGNORECASE
+            )
+            want_first_only = bool(first_account_pattern.search(user_message))
+            want_second_only = bool(second_account_pattern.search(user_message))
+            if want_first_only and want_second_only:
+                want_first_only, want_second_only = False, False
+            if not want_first_only and not want_second_only:
+                want_both = True
+            else:
+                want_both = False
+
             sender_match = None
             try:
                 m = re.search(r"\bfrom\s+([\"']?)([^\"'\?]+?)\1(?=\s|$|\?)", user_message, re.IGNORECASE)
@@ -852,60 +874,110 @@ def chat():
             except Exception:
                 sender_match = None
 
-            # Build Gmail query; restrict to Primary inbox unread by default
             base_query = 'in:inbox category:primary is:unread'
             if sender_match:
-                # If sender appears to be an email address, use it directly; otherwise quote the name
                 sender_term = sender_match
                 if '@' in sender_term:
                     sender_part = f'from:{sender_term}'
                 else:
-                    # Quote name for Gmail search
                     safe_name = sender_term.replace('"', '').strip()
                     sender_part = f'from:"{safe_name}"'
                 query = f"{base_query} {sender_part}"
             else:
                 query = base_query
 
-            # Chat tab: show up to 50 emails per response (or all if fewer).
-            # If the user asks for more and a page token exists, fetch the next page (50).
             email_page_token = data.get('email_page_token') if isinstance(data, dict) else None
-            want_more = bool(email_page_token and re.search(
-                r"\b(more|next\s*(50\s*)?emails?|show\s+more|display\s+more|load\s+more|get\s+more|another\s+50|next\s+50)\b",
+            email_page_token_2 = data.get('email_page_token_2') if isinstance(data, dict) else None
+            want_more = bool(re.search(
+                r"\b(more|next\s*(50\s*)?emails?|show\s+more|load\s+more|another\s+50|next\s+50)\b",
                 user_message, re.IGNORECASE
             ))
-            limit = 50
-            args = {'limit': limit, 'query': query}
-            if want_more:
-                args['page_token'] = email_page_token
-            auth_tok = data.get('auth_token') if isinstance(data, dict) else None
-            result = call_backend_function('get_unread_emails', args, caller_credentials=caller_creds, auth_token=auth_tok)
+            # Single-account view: show 50; both accounts: 25 per account (50 total)
+            limit_per = 50 if (want_second_only or want_first_only) else 25
 
-            # Handle backend errors
-            if not isinstance(result, dict):
-                return jsonify({'response': 'Could not contact email backend.', 'error': True}), 500
+            def fetch_one(use_second, page_tok):
+                a = {'limit': limit_per, 'query': query}
+                if page_tok:
+                    a['page_token'] = page_tok
+                if use_second:
+                    a['use_second_gmail'] = True
+                return call_backend_function('get_unread_emails', a, caller_credentials=caller_creds)
 
-            if result.get('_http_status') == 401 or result.get('error') == 'auth_error':
-                return jsonify({'response': 'Email access requires authentication. Please connect your Gmail account.', 'error': 'auth_error'}), 401
+            if want_second_only:
+                result1 = None
+                result2 = fetch_one(True, email_page_token_2 if want_more else None)
+                if not isinstance(result2, dict) or not result2.get('success'):
+                    result = result2
+                    emails = []
+                    total_unread = 0
+                    next_page_token = None
+                    next_page_token_2 = None
+                    account_label = "EMAIL2"
+                else:
+                    emails = [dict(e, account='EMAIL2') for e in (result2.get('emails') or []) if isinstance(e, dict)]
+                    total_unread = result2.get('total_unread', len(emails))
+                    next_page_token = None
+                    next_page_token_2 = result2.get('next_page_token')
+                    result = result2
+                    account_label = "EMAIL2"
+            elif want_first_only:
+                result1 = fetch_one(False, email_page_token if want_more else None)
+                result2 = None
+                if not isinstance(result1, dict) or not result1.get('success'):
+                    result = result1
+                    emails = []
+                    total_unread = 0
+                    next_page_token = None
+                    next_page_token_2 = None
+                    account_label = "EMAIL1"
+                else:
+                    emails = [dict(e, account='EMAIL1') for e in (result1.get('emails') or []) if isinstance(e, dict)]
+                    total_unread = result1.get('total_unread', len(emails))
+                    next_page_token = result1.get('next_page_token')
+                    next_page_token_2 = None
+                    result = result1
+                    account_label = "EMAIL1"
+            else:
+                result1 = fetch_one(False, email_page_token if want_more else None)
+                result2 = fetch_one(True, email_page_token_2 if want_more else None)
+                if not isinstance(result1, dict) or not result1.get('success'):
+                    result = result1
+                    emails = []
+                    total_unread = 0
+                    next_page_token = None
+                    next_page_token_2 = None
+                    account_label = "EMAIL1 + EMAIL2"
+                else:
+                    emails1 = [dict(e, account='EMAIL1') for e in (result1.get('emails') or []) if isinstance(e, dict)]
+                    emails2 = [dict(e, account='EMAIL2') for e in (result2.get('emails') or []) if isinstance(e, dict)] if isinstance(result2, dict) and result2.get('success') else []
+                    emails = emails1 + emails2
+                    total_unread = result1.get('total_unread', len(emails1)) + (result2.get('total_unread', len(emails2)) if isinstance(result2, dict) and result2.get('success') else 0)
+                    next_page_token = result1.get('next_page_token')
+                    next_page_token_2 = result2.get('next_page_token') if isinstance(result2, dict) and result2.get('success') else None
+                    result = result1
+                account_label = "EMAIL1 + EMAIL2"
 
-            if result.get('_http_status') == 429 or result.get('error') == 'insufficient_quota':
-                return jsonify({'response': 'Email service is currently rate limited. Please try again later.', 'error': 'rate_limit'}), 429
-
-            if not result.get('success'):
-                # Return backend message (FastAPI often uses 'detail'; backend may use 'message' or 'error')
+            if want_second_only and result and not result.get('success'):
+                if result.get('_http_status') == 401 or result.get('error') == 'auth_error':
+                    return jsonify({'response': 'Email access requires authentication. Please connect your Gmail account.', 'error': 'auth_error'}), 401
+                if result.get('_http_status') == 429 or result.get('error') == 'insufficient_quota':
+                    return jsonify({'response': 'Email service is currently rate limited. Please try again later.', 'error': 'rate_limit'}), 429
                 err = result.get('detail') or result.get('message') or result.get('error') or str(result)
-                if isinstance(err, list):
-                    err = err[0] if err else 'Unknown error'
-                if isinstance(err, dict):
-                    err = err.get('msg', err.get('message', str(err)))
-                return jsonify({'response': f'📧 Failed to fetch emails: {err}', 'error': True}), 500
-
-            emails_raw = result.get('emails', []) or []
-            emails = [e for e in emails_raw if isinstance(e, dict)]
-            if len(emails) < len(emails_raw):
-                logger.warning(f"[CHAT] get_unread_emails: dropped {len(emails_raw) - len(emails)} non-dict email entries")
-            total_unread = result.get('total_unread', len(emails))
-            next_page_token = result.get('next_page_token')
+                return jsonify({'response': f'📧 Failed to fetch emails: {err}', 'error': err}), 500
+            if want_first_only and result1 and not result1.get('success'):
+                if result1.get('_http_status') == 401 or result1.get('error') == 'auth_error':
+                    return jsonify({'response': 'Email access requires authentication. Please connect your Gmail account.', 'error': 'auth_error'}), 401
+                if result1.get('_http_status') == 429 or result1.get('error') == 'insufficient_quota':
+                    return jsonify({'response': 'Email service is currently rate limited. Please try again later.', 'error': 'rate_limit'}), 429
+                err = result1.get('detail') or result1.get('message') or result1.get('error') or str(result1)
+                return jsonify({'response': f'📧 Failed to fetch emails: {err}', 'error': err}), 500
+            if want_both and result1 and not result1.get('success'):
+                if result1.get('_http_status') == 401 or result1.get('error') == 'auth_error':
+                    return jsonify({'response': 'Email access requires authentication. Please connect your Gmail account.', 'error': 'auth_error'}), 401
+                if result1.get('_http_status') == 429 or result1.get('error') == 'insufficient_quota':
+                    return jsonify({'response': 'Email service is currently rate limited. Please try again later.', 'error': 'rate_limit'}), 429
+                err = result1.get('detail') or result1.get('message') or result1.get('error') or str(result1)
+                return jsonify({'response': f'📧 Failed to fetch emails: {err}', 'error': err}), 500
 
             # Analyze emails: top senders, urgency, previews
             from collections import Counter
@@ -913,16 +985,12 @@ def chat():
             urgency_keywords = ['urgent', 'asap', 'immediately', 'action required', 'deadline', 'due', 'important']
 
             if not emails:
-                # When user said "show more" but there are no more, tell them we've reached the end
-                if want_more:
-                    return jsonify({
-                        'response': f"📧 No more unread emails to show. You've reached the end of your Primary inbox. (Total unread: {total_unread})",
-                        'function_called': 'get_unread_emails',
-                        'next_page_token': None
-                    })
-                if sender_match:
-                    return jsonify({'response': f"📧 No unread emails from {sender_match} in Primary.", 'function_called': 'get_unread_emails', 'next_page_token': None})
-                return jsonify({'response': f"📧 No new emails in Primary tab. (total unread: {total_unread})", 'function_called': 'get_unread_emails', 'next_page_token': None})
+                return jsonify({
+                    'response': f"📧 No new emails in {account_label}. (total unread: {total_unread})",
+                    'function_called': 'get_unread_emails',
+                    'next_page_token': next_page_token,
+                    'next_page_token_2': next_page_token_2
+                })
 
             senders = [((e.get('from_name') or e.get('from_email') or '').strip()) for e in emails]
             sender_counts = Counter(senders)
@@ -931,19 +999,28 @@ def chat():
             flagged = []
             previews = []
             import re as _re
+
+            def _strip_html_css(raw):
+                """Convert HTML/CSS email body to plain text for display."""
+                if not raw:
+                    return ''
+                s = str(raw)
+                s = _re.sub(r'<style\b[^>]*>[\s\S]*?</style>', ' ', s, flags=_re.IGNORECASE | _re.DOTALL)
+                s = _re.sub(r'<script\b[^>]*>[\s\S]*?</script>', ' ', s, flags=_re.IGNORECASE | _re.DOTALL)
+                s = _re.sub(r'<[^>]+>', ' ', s)
+                s = html.unescape(s)
+                s = _re.sub(r'\s+', ' ', s).strip()
+                return s
+
             # Chat tab: show up to 50 emails in the response (or all if fewer)
             preview_limit = min(len(emails), 50)
 
             for e in emails[:preview_limit]:
                 subj = (e.get('subject') or '').strip()
                 body = (e.get('body') or '')
-                snippet = _re.sub(r'<style\b[^>]*>[\s\S]*?</style>', ' ', body or '', flags=_re.IGNORECASE | _re.DOTALL)
-                snippet = _re.sub(r'<script\b[^>]*>[\s\S]*?</script>', ' ', snippet, flags=_re.IGNORECASE | _re.DOTALL)
-                snippet = _re.sub(r'<[^>]+>', ' ', snippet)
-                snippet = html.unescape(snippet)
-                snippet = _re.sub(r'\s+', ' ', snippet).strip()
+                snippet = _strip_html_css(body)
                 preview = (snippet[:140] + '...') if len(snippet) > 140 else snippet
-                previews.append({'from': e.get('from_name') or e.get('from_email'), 'subject': subj, 'preview': preview})
+                previews.append({'from': e.get('from_name') or e.get('from_email'), 'subject': subj, 'preview': preview, 'account': e.get('account')})
 
                 low = (subj + ' ' + (snippet or '')).lower()
                 if any(k in low for k in urgency_keywords):
@@ -967,30 +1044,18 @@ def chat():
                 # truncate to a conservative single-line preview
                 if len(preview_text) > 120:
                     preview_text = preview_text[:117].rsplit(' ', 1)[0] + '...'
-                # Use a compact, markdown-friendly numbered list
-                preview_lines.append(f"{idx}. **{subject}** — _{sender}_\n   {preview_text}")
+                account_tag = p.get('account', '')
+                account_str = f" [{account_tag}]" if account_tag else ""
+                preview_lines.append(f"{idx}. **{subject}** — _{sender}_{account_str}\n   {preview_text}")
 
             # NOTE: We intentionally avoid AI-generated email summaries here because they often
             # mention the number of emails shown (e.g. 10) which can contradict the true unread count.
 
             # Local fallback: generate concise one-sentence summaries per message
-            import html
-            import re as _rs
-            def _strip_html(raw):
-                """Remove HTML/CSS and return plain text."""
-                if not raw:
-                    return ''
-                s = str(raw)
-                s = _rs.sub(r'<style\b[^>]*>[\s\S]*?</style>', ' ', s, flags=_rs.IGNORECASE | _rs.DOTALL)
-                s = _rs.sub(r'<script\b[^>]*>[\s\S]*?</script>', ' ', s, flags=_rs.IGNORECASE | _rs.DOTALL)
-                s = _rs.sub(r'<[^>]+>', ' ', s)
-                s = html.unescape(s)
-                s = _rs.sub(r'\s+', ' ', s).strip()
-                return s
             def _local_one_sentence(subject, body, sender, max_words=25):
-                body_plain = _strip_html(body)
-                text = (subject or '') + ' ' + body_plain
-                text = _rs.sub(r'\s+', ' ', text).strip()
+                body_plain = _strip_html_css(body or '')
+                text = ((subject or '') + ' ' + body_plain).strip()
+                text = _re.sub(r'\s+', ' ', text)
                 if not text:
                     return f"A short message from {sender}."
                 low = text.lower()
@@ -1025,48 +1090,33 @@ def chat():
                 received_raw = e.get('date') or e.get('received') or ''
                 received = _fmt_received(str(received_raw))
 
-                body_plain = _strip_html(body)
+                body_plain = _strip_html_css(body)
                 emails_list.append({
                     'sender': sender,
                     'subject': subject,
                     'snippet': (body_plain or '')[:300],
                     'summary': summary,
-                    'received_at': received_raw or None
+                    'received_at': received_raw or None,
+                    'account': e.get('account')
                 })
 
-                numbered_lines.append(f"{idx}. [{received}] {subject} - {sender}")
+                acc = e.get('account', '')
+                acc_suffix = f" ({acc})" if acc else ""
+                numbered_lines.append(f"{idx}. [{received}] {subject} - {sender}{acc_suffix}")
                 if summary:
                     numbered_lines.append(f"   {summary}")
 
             if total_unread > preview_limit:
-                numbered_lines.append("...")
+                numbered_lines.append("\n...")
 
-            # When user asked "emails from X", show count of those (not global total_unread)
-            count_from_query = len(emails)
-            if sender_match:
-                if next_page_token:
-                    count_label = f"at least {count_from_query} unread emails from {sender_match}"
-                else:
-                    count_label = f"{count_from_query} unread email{'s' if count_from_query != 1 else ''} from {sender_match}"
-            else:
-                count_label = f"{total_unread} unread emails in Primary"
-            # First page vs "show more" (next 50): make it clear we're showing the next batch
-            if want_more:
-                header = f"📧 Next 50 unread emails (Primary inbox). {count_label}."
-            else:
-                if sender_match:
-                    header = f"📧 You have {count_label}. Here are the {min(count_from_query, 50)} most recent:"
-                else:
-                    header = f"📧 You have {count_label}. Here are the 50 most recent:"
+            header = f"📧 You have {total_unread} unread emails in {account_label}."
             body_text = "\n".join(numbered_lines) if numbered_lines else "No unread emails found."
             response_text = header + "\n\n" + body_text
-            if next_page_token:
-                response_text += f"\n\nSay **'show more'** to load the next 50 unread emails."
-            else:
-                if sender_match:
-                    response_text += f"\n\nNo more pages. You've seen all {count_from_query} unread emails from {sender_match}."
-                else:
-                    response_text += f"\n\nNo more pages. You've seen all {total_unread} unread emails in Primary."
+            if next_page_token or next_page_token_2:
+                response_text += "\n\nSay **'show more'** to load the next unread emails."
+            elif total_unread > preview_limit:
+                remaining = max(0, total_unread - preview_limit)
+                response_text += f"\n\nShowing {preview_limit} of {total_unread}. Say 'show more' for the next batch."
 
             return jsonify({
                 'response': response_text,
@@ -1074,16 +1124,12 @@ def chat():
                 'total_unread': total_unread,
                 'emails': emails_list,
                 'ai_summary': None,
-                'next_page_token': next_page_token
+                'next_page_token': next_page_token,
+                'next_page_token_2': next_page_token_2
             })
     except Exception as _e:
         logger.exception(f"Fast-path email check failed: {_e}")
-        # Return a clear error so user doesn't get timeout or generic 500 from fallback path
-        return jsonify({
-            'response': f"📧 Could not load Primary inbox emails: {str(_e)}. Try the EMAIL1 tab, or check that you're logged in and Gmail is connected.",
-            'error': True,
-            'function_called': None
-        }), 500
+        # Fall through to normal processing if fast-path fails
     try:
         # DISABLED: Database history retrieval to prevent timeout
         # The database query was causing timeouts, so we skip it entirely
@@ -1091,15 +1137,19 @@ def chat():
 
         
         # Build messages for OpenAI - comprehensive system prompt
-        system_content = """You are a helpful AI assistant. Your job is to give the most accurate, up-to-date answer by combining real-time data with your knowledge.
+        system_content = """You are a helpful AI assistant. Provide thorough, detailed, and well-formatted responses. 
+When asked for lists, provide complete lists with proper formatting (numbered or bulleted). 
+Use markdown formatting for better readability (bold, lists, code blocks, etc.).
+Be conversational and helpful, like ChatGPT.
 
-- Answer the user's question directly and completely.
-- When the conversation includes "NewsAPI - Recent articles" (or similar) with article titles, descriptions, and URLs: that is real-time news provided for this request. COMBINE it with your knowledge: use the news for current facts, events, and developments; use your knowledge for context, background, or when the news doesn't cover the question. Prefer and cite the News API when it is relevant. Summarize and cite those articles so the user gets up-to-date information. Never say you cannot provide real-time news when that data has been provided.
-- For weather, call the get_weather function with the user's location, then answer using the result.
-- For unread emails, use get_unread_emails when the user wants to see or check their inbox.
+**Two Gmail accounts — always distinguish first vs second from the user's words:**
+- **First account** = EMAIL1. Treat as first when the user says: first account, my first account, account 1, 1st account, email 1, primary account, main account, first Gmail, only first, first only, "in my first account", "from the first account".
+- **Second account** = EMAIL2. Treat as second when the user says: second account, my second account, account 2, 2nd account, email 2, second Gmail, only second, second only, "in my second account", "from the second account", "using my second account", "with my second account".
 
-- When asked for lists, give complete lists with clear formatting (numbered or bulleted). Use markdown for readability.
-- Be conversational and helpful. If the user asks a general-knowledge or how-to question, answer fully—using News API data when it was provided and is relevant, otherwise from your knowledge. Do not give generic refusals when you have been given real-time data or have tools to fetch it."""
+**get_unread_emails:** Set account='first' when the user asks only for first account/EMAIL1/account 1; set account='second' when they ask only for second account/EMAIL2/account 2; set account='both' when they ask for "new emails" without specifying, or "both accounts".
+**send_email:** Set from_second_account=true only when the user clearly asks to send FROM the second account (e.g. "send ... using my second account", "from the second account", "from EMAIL2"). Otherwise use the first account (from_second_account=false).
+**reply_to_email:** Reply from the account that received the email. If the email was listed with (EMAIL2), set from_second_account=true; if (EMAIL1), set from_second_account=false.
+**clean_gmail:** Set use_second_account=true when the user asks to clean/delete from the second account only; false for first account only."""
         
         messages = [
             {
@@ -1123,30 +1173,24 @@ def chat():
         # Add current user message
         messages.append({"role": "user", "content": user_message})
 
-            # News API grounding: fetch recent articles to give up-to-date answers (combine with OpenAI)
+            # News detection (broader): detect queries asking for latest news/updates/headlines
         try:
             is_news_query = False
-            topic = None
 
-            news_keywords_re = re.compile(
-                r"\b(news|headline|headlines|latest|recent|today|breaking|updates|update|in the news|"
-                r"what(?:'s| is) new|any updates|current|now|this week|this month|this year|"
-                r"happening|going on|right now|2024|2025)\b", re.IGNORECASE
-            )
+            news_keywords_re = re.compile(r"\b(news|headline|headlines|latest|recent|today|breaking|updates|update|in the news|what(?:'s| is) new|any updates)\b", re.IGNORECASE)
             if news_keywords_re.search(user_message):
                 is_news_query = True
 
+            # Detect present-tense 'who is the current X' or 'who is president' style questions
             if re.search(r"\bwho\s+is\b", user_message, re.IGNORECASE) and re.search(r"\b(current|today|now|president|prime minister|leader|king|queen|chancellor|pm|president of)\b", user_message, re.IGNORECASE):
                 is_news_query = True
 
+            # Also consider phrasing like 'tell me about X' or 'give me the latest on X' as news queries
             if re.search(r"\b(?:tell me|give me|show me|what(?:'s| is| are)|any news)\b.*\babout\b", user_message, re.IGNORECASE):
                 is_news_query = True
 
-            # Treat factual/what/who questions as potential news queries so we inject up-to-date context
-            if re.search(r"^\s*(what|who|when|where|how)\s+(is|are|was|were|did|does|do|will|has|have)\b", user_message, re.IGNORECASE) and len(user_message) > 15:
-                is_news_query = True
-
-            # Extract topic from explicit patterns
+            topic = None
+            # Try to extract topic after 'about' or after news keywords or 'who is' patterns
             m = re.search(r"news(?:\s+(?:about|on|for)\s+)(.+)$", user_message, re.IGNORECASE)
             if not m:
                 m = re.search(r"who\s+is\s+(?:the\s+)?(current\s+)?(.+)$", user_message, re.IGNORECASE)
@@ -1154,24 +1198,15 @@ def chat():
                 m = re.search(r"(?:about|on|regarding|re)\s+([A-Za-z0-9\-&,()'\"\s]+)", user_message, re.IGNORECASE)
             if not m:
                 m = re.search(r"(?:latest|headlines|news)\s+(?:about|on|for)?\s*(.+)", user_message, re.IGNORECASE)
-            if not m:
-                m = re.search(r"(?:what(?:'s| is)|happening)\s+(?:with\s+)?(.+?)\??$", user_message, re.IGNORECASE)
 
             if m:
+                # choose the last capture group that is non-empty
                 groups = [g for g in m.groups() if g]
                 if groups:
                     topic = groups[-1].strip().strip('?.!')
 
-            # Fallback topic: key phrase from question (strip question words for News API query)
-            if not topic and len(user_message.strip()) > 10:
-                stripped = re.sub(r"^\s*(what\s+is|what's|what\s+are|who\s+is|who're|when\s+did|when\s+does|when\s+is|where\s+is|where\s+are|how\s+do|how\s+does|how\s+is|why\s+do|why\s+does|tell\s+me\s+about|latest\s+on|current\s+state\s+of)\s+", "", user_message.strip(), flags=re.IGNORECASE)
-                stripped = re.sub(r"\?+\s*$", "", stripped).strip()
-                words = [w for w in stripped.split() if len(w) > 1 and w.lower() not in ("the", "a", "an", "of", "with", "in", "to", "for")]
-                if words:
-                    topic = " ".join(words[:6])
-
             news_snippet = None
-            if NEWSAPI_KEY and (is_news_query or topic):
+            if is_news_query and NEWSAPI_KEY:
                 try:
                     articles = fetch_latest_news(q=topic, country='us', pageSize=10)
                     if articles:
@@ -1182,17 +1217,22 @@ def chat():
                             desc = a.get('description') or ''
                             url = a.get('url') or ''
                             lines.append(f"- {title} ({src})\n  {desc}\n  {url}")
-                        news_snippet = "\n\nNewsAPI - Recent articles (use this for up-to-date information; combine with your knowledge to answer):\n" + "\n".join(lines)
+                        news_snippet = "\n\nNewsAPI - Recent articles (most recent first):\n" + "\n".join(lines)
+                        # Insert as a system message right after the system prompt so the model can use it
                         messages.insert(1, {"role": "system", "content": news_snippet})
-                        logger.info(f"[CHAT-{request_id}] Included {len(articles)} news articles (topic='{topic}') for up-to-date answer")
+                        logger.info(f"[CHAT-{request_id}] Included {len(articles)} news articles in prompt (topic='{topic}')")
                 except Exception as e:
                     logger.warning(f"[CHAT-{request_id}] News fetch failed: {e}")
-            # Fallback: infer topic from proper nouns and fetch news
-            if not news_snippet and NEWSAPI_KEY:
+            # Fallback: if no explicit news query detected, attempt to infer a topic
+            # from capitalized proper-noun phrases (e.g., person/place/org) and fetch recent news.
+            if not news_snippet and not is_news_query and NEWSAPI_KEY:
                 try:
+                    # Find capitalized phrases (2+ words) or single notable capitalized words
                     proper_nouns = re.findall(r"\b([A-Z][a-z]{2,}(?:\s+[A-Z][a-z]{2,}){0,3})\b", user_message)
+                    # If none, try single capitalized words that are not sentence-start
                     if not proper_nouns:
                         proper_nouns = re.findall(r"\b(?!I\b)([A-Z][a-z]{2,})\b", user_message)
+                    # Choose the longest candidate as topic
                     if proper_nouns:
                         candidates = sorted(set([p.strip() for p in proper_nouns]), key=lambda s: -len(s))
                         inferred_topic = candidates[0]
@@ -1205,9 +1245,9 @@ def chat():
                                 desc = a.get('description') or ''
                                 url = a.get('url') or ''
                                 lines.append(f"- {title} ({src})\n  {desc}\n  {url}")
-                            news_snippet = "\n\nNewsAPI - Recent articles (use for up-to-date information):\n" + "\n".join(lines)
+                            news_snippet = "\n\nNewsAPI - Recent articles (most recent first):\n" + "\n".join(lines)
                             messages.insert(1, {"role": "system", "content": news_snippet})
-                            logger.info(f"[CHAT-{request_id}] Inferred topic '{inferred_topic}'; included {len(articles)} articles")
+                            logger.info(f"[CHAT-{request_id}] Fallback included {len(articles)} news articles for inferred topic='{inferred_topic}'")
                 except Exception as e:
                     logger.debug(f"[CHAT-{request_id}] News fallback failed: {e}")
         except Exception as e:
@@ -1346,7 +1386,7 @@ def chat():
         message = response.choices[0].message
         function_called = None
         final_message = None
-        _response_extra = None  # e.g. next_page_token for get_unread_emails
+        _response_extra = None  # e.g. next_page_token(s) for get_unread_emails
         
         # Check if a function was called
         if hasattr(message, 'function_call') and message.function_call:
@@ -1359,19 +1399,79 @@ def chat():
             
             logger.warning(f"[CHAT-{request_id}] Function called: {function_name} with args: {function_args}")
             function_called = function_name
-            
-            # For get_unread_emails: always request 50 from Primary so Chat tab matches EMAIL1 behavior (avoid only 2–10 from model default)
+            function_args = dict(function_args) if isinstance(function_args, dict) else {}
+
+            # Map frontend/function account flags to backend use_second_gmail (always send a boolean)
+            if function_name == 'send_email':
+                from_second = function_args.get('from_second_account')
+                from_second = from_second is True or (isinstance(from_second, str) and from_second.strip().lower() == 'true')
+                from_ui = bool(data.get('send_from_second_account', False)) if isinstance(data, dict) else False
+                # Also detect "second account" in the user's message (e.g. "send ... using my second account")
+                msg_lower = (user_message or '').lower()
+                from_message = bool(re.search(
+                    r"\b(from\s+the\s+second\s+account|from\s+second\s+account|using\s+(?:my\s+)?(?:the\s+)?second\s+account|"
+                    r"with\s+(?:my\s+)?(?:the\s+)?second\s+account|my\s+second\s+account|from\s+EMAIL2|account\s+2)\b",
+                    msg_lower
+                ))
+                function_args['use_second_gmail'] = bool(from_second or from_ui or from_message)
+            elif function_name == 'reply_to_email':
+                function_args['use_second_gmail'] = function_args.get('from_second_account', False)
+            elif function_name == 'clean_gmail':
+                function_args['use_second_gmail'] = function_args.get('use_second_account', False)
+
+            # get_unread_emails: support account first / second / both (EMAIL1 first then EMAIL2)
             if function_name == 'get_unread_emails':
-                function_args = dict(function_args) if isinstance(function_args, dict) else {}
-                function_args.setdefault('limit', 50)
-                function_args['limit'] = min(50, max(1, int(function_args.get('limit') or 50)))
-                function_args.setdefault('query', 'in:inbox category:primary is:unread')
-            
-            # Execute the function (get_weather is handled locally via Open-Meteo; others go to backend)
-            if function_name == 'get_weather':
-                function_result = fetch_weather(function_args.get('location') or '')
+                account_raw = (function_args.get('account') or 'both')
+                account = str(account_raw).strip().lower()
+                # Normalize so we reliably distinguish first vs second (e.g. "1" -> first, "2" -> second)
+                if account in ('1', 'one', 'account1', 'email1', 'first account', 'primary'):
+                    account = 'first'
+                elif account in ('2', 'two', 'account2', 'email2', 'second account'):
+                    account = 'second'
+                elif account not in ('first', 'second', 'both'):
+                    account = 'both'
+                # Single account: 50; both: 25 per account
+                limit_per = 50 if account in ('first', 'second') else min(25, max(1, int(function_args.get('limit') or 25)))
+                query = function_args.get('query') or 'in:inbox category:primary is:unread'
+                page1 = data.get('email_page_token') if isinstance(data, dict) else None
+                page2 = data.get('email_page_token_2') if isinstance(data, dict) else None
+                caller_creds = data.get('user_credentials') if isinstance(data, dict) else None
+                if account == 'second':
+                    args2 = {'limit': limit_per, 'query': query, 'use_second_gmail': True}
+                    if page2:
+                        args2['page_token'] = page2
+                    function_result = call_backend_function('get_unread_emails', args2, caller_credentials=caller_creds)
+                    if isinstance(function_result, dict) and function_result.get('emails'):
+                        function_result['emails'] = [dict(e, account='EMAIL2') for e in function_result['emails'] if isinstance(e, dict)]
+                elif account == 'first':
+                    args1 = {'limit': limit_per, 'query': query}
+                    if page1:
+                        args1['page_token'] = page1
+                    function_result = call_backend_function('get_unread_emails', args1, caller_credentials=caller_creds)
+                    if isinstance(function_result, dict) and function_result.get('emails'):
+                        function_result['emails'] = [dict(e, account='EMAIL1') for e in function_result['emails'] if isinstance(e, dict)]
+                else:
+                    args1 = {'limit': limit_per, 'query': query}
+                    if page1:
+                        args1['page_token'] = page1
+                    args2 = {'limit': limit_per, 'query': query, 'use_second_gmail': True}
+                    if page2:
+                        args2['page_token'] = page2
+                    res1 = call_backend_function('get_unread_emails', args1, caller_credentials=caller_creds)
+                    res2 = call_backend_function('get_unread_emails', args2, caller_credentials=caller_creds)
+                    emails1 = [dict(e, account='EMAIL1') for e in (res1.get('emails') or []) if isinstance(e, dict)]
+                    emails2 = [dict(e, account='EMAIL2') for e in (res2.get('emails') or []) if isinstance(e, dict)] if isinstance(res2, dict) and res2.get('success') else []
+                    function_result = {
+                        'success': res1.get('success', False),
+                        'emails': emails1 + emails2,
+                        'total_unread': res1.get('total_unread', len(emails1)) + (res2.get('total_unread', len(emails2)) if isinstance(res2, dict) and res2.get('success') else 0),
+                        'next_page_token': res1.get('next_page_token'),
+                        'next_page_token_2': res2.get('next_page_token') if isinstance(res2, dict) and res2.get('success') else None
+                    }
+                    if not res1.get('success'):
+                        function_result['error'] = res1.get('detail') or res1.get('message') or res1.get('error') or 'Failed to fetch emails'
             else:
-                function_result = call_backend_function(function_name, function_args, caller_credentials=data.get('user_credentials'), auth_token=data.get('auth_token') if isinstance(data, dict) else None)
+                function_result = call_backend_function(function_name, function_args, caller_credentials=data.get('user_credentials'))
             
             # For app launches, return immediately without second OpenAI call for speed
             if function_name == 'launch_app':
@@ -1379,6 +1479,35 @@ def chat():
                     final_message = function_result.get('message', f"✅ Successfully launched {function_args.get('app_name', 'the app')}")
                 else:
                     final_message = function_result.get('detail', function_result.get('error', f"❌ Failed to launch {function_args.get('app_name', 'the app')}"))
+            elif function_name == 'get_unread_emails':
+                if not function_result.get('success'):
+                    final_message = function_result.get('message') or function_result.get('error') or function_result.get('detail') or 'Failed to fetch emails'
+                else:
+                    emails_raw = function_result.get('emails', []) or []
+                    emails = [e for e in emails_raw if isinstance(e, dict)]
+                    total_unread = function_result.get('total_unread', len(emails))
+                    if not emails:
+                        final_message = f"📧 No new emails. (total unread: {total_unread})"
+                    else:
+                        from email.utils import parsedate_to_datetime as _pd
+                        lines = []
+                        for idx, e in enumerate(emails[:50], start=1):
+                            sender = e.get('from_name') or e.get('from_email') or 'Unknown'
+                            subj = (e.get('subject') or '(no subject)').replace('\n', ' ').strip()
+                            raw_date = e.get('date') or e.get('received') or ''
+                            try:
+                                dt = _pd(str(raw_date))
+                                date_str = dt.strftime("%Y-%m-%d %H:%M") if getattr(dt, 'strftime', None) else str(raw_date)[:16]
+                            except Exception:
+                                date_str = str(raw_date)[:16] if raw_date else ''
+                            acc = e.get('account', '')
+                            acc_suffix = f" ({acc})" if acc else ""
+                            lines.append(f"{idx}. [{date_str}] {subj} — {sender}{acc_suffix}")
+                        final_message = f"📧 You have {total_unread} unread emails.\n\n" + "\n".join(lines)
+                        if total_unread > len(emails):
+                            final_message += "\n\nSay 'show more' for the next page."
+                if function_result.get('next_page_token') is not None or function_result.get('next_page_token_2') is not None:
+                    _response_extra = {'next_page_token': function_result.get('next_page_token'), 'next_page_token_2': function_result.get('next_page_token_2')}
             elif function_name == 'find_email':
                 # Email lookup: DB first, then Bing (or show method to find). Return clear message.
                 status = function_result.get('_http_status', 0)
@@ -1396,40 +1525,8 @@ def chat():
                     final_message = "🔍 " + (function_result.get('detail', f'No email found.')) + "\n\n_You can add contacts manually in Settings if you know the email._"
                 else:
                     final_message = "🔍 " + (function_result.get('detail', function_result.get('error', 'Could not look up email. Please try again.')))
-            elif function_name == 'get_unread_emails':
-                # Return immediately with formatted list — do NOT add full result to messages (would exceed context and cause 400/429)
-                if not function_result.get('success'):
-                    err = function_result.get('message') or function_result.get('error') or function_result.get('detail') or 'Failed to fetch emails'
-                    final_message = f"📧 Could not load emails: {err}"
-                else:
-                    emails_raw = function_result.get('emails', []) or []
-                    emails = [e for e in emails_raw if isinstance(e, dict)]
-                    total_unread = function_result.get('total_unread', len(emails))
-                    if not emails:
-                        final_message = f"📧 No new emails in Primary. (total unread: {total_unread})"
-                    else:
-                        from email.utils import parsedate_to_datetime as _pd
-                        lines = []
-                        for idx, e in enumerate(emails[:50], start=1):
-                            sender = e.get('from_name') or e.get('from_email') or 'Unknown'
-                            subj = (e.get('subject') or '(no subject)').replace('\n', ' ').strip()
-                            raw_date = e.get('date') or e.get('received') or ''
-                            try:
-                                dt = _pd(str(raw_date))
-                                date_str = dt.strftime("%Y-%m-%d %H:%M") if getattr(dt, 'strftime', None) else str(raw_date)[:16]
-                            except Exception:
-                                date_str = str(raw_date)[:16] if raw_date else ''
-                            lines.append(f"{idx}. [{date_str}] {subj} — {sender}")
-                        header = f"📧 You have {total_unread} unread emails in Primary."
-                        final_message = header + "\n\n" + "\n".join(lines)
-                        if total_unread > len(emails):
-                            final_message += f"\n\nShowing {len(emails)} of {total_unread}. Say 'show more' for the next page."
-                function_called = 'get_unread_emails'
-                if function_result.get('next_page_token'):
-                    _response_extra = {'next_page_token': function_result.get('next_page_token')}
             else:
                 # For other functions, add function result to messages and call OpenAI again to get the response
-                # Do NOT pass huge payloads (e.g. get_unread_emails is handled above)
                 messages.append({
                     "role": "assistant",
                     "content": None,
@@ -1531,7 +1628,7 @@ def chat():
     
     except Exception as e:
         error_str = str(e)
-        logger.error(f"[CHAT] Error: {error_str}", exc_info=True)
+        logger.error(f"[CHAT] Error: {error_str}")
         error_response = f'Sorry, I encountered an error: {str(e)}'
         
         # Don't save errors to database in blocking way - return immediately

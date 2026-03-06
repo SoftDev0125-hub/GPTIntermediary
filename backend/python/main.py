@@ -299,6 +299,7 @@ class MarkEmailReadRequest(BaseModel):
 class DeleteAllEmailsRequest(BaseModel):
     """Request model for permanently deleting all emails from Gmail (optional credentials; uses DB/.env if omitted)"""
     user_credentials: Optional[UserCredentials] = None
+    use_second_gmail: bool = False  # when True, delete from second Gmail account
 
 
 # Configure logging
@@ -1023,46 +1024,68 @@ async def send_email(
         google_client_id = None
         google_client_secret = None
 
-        if user_id and DATABASE_AVAILABLE:
-            from config_helpers import get_gmail_config
-            from user_service_helpers import get_user_gmail_credentials
-            gmail_config = get_gmail_config(db, user_id)
-            user_creds = get_user_gmail_credentials(db, user_id)
-            if gmail_config:
-                google_client_id = gmail_config.get('google_client_id')
-                google_client_secret = gmail_config.get('google_client_secret')
-            if user_creds and user_creds.get('access_token'):
-                access_token = user_creds['access_token']
-                refresh_token = user_creds.get('refresh_token')
-                logger.info(f"Using per-user Gmail credentials for user {user_id}")
-        
-        # Fallback to credentials from request body (backward compatibility)
-        if not access_token and request.user_credentials and request.user_credentials.access_token:
-            access_token = request.user_credentials.access_token
-            refresh_token = request.user_credentials.refresh_token
-            logger.info("Using credentials from request body (backward compatibility)")
-        if not access_token:
-            access_token = (os.getenv('USER_ACCESS_TOKEN') or '').strip()
-            refresh_token = (os.getenv('USER_REFRESH_TOKEN') or '').strip()
-            if access_token and refresh_token:
-                logger.info("Using Gmail credentials from .env (USER_ACCESS_TOKEN, USER_REFRESH_TOKEN)")
-                if not google_client_id:
-                    google_client_id = (os.getenv('GOOGLE_CLIENT_ID') or '').strip() or None
-                if not google_client_secret:
-                    google_client_secret = (os.getenv('GOOGLE_CLIENT_SECRET') or '').strip() or None
-        if not access_token:
-            raise HTTPException(status_code=400, detail="No Gmail credentials provided. Please connect your Gmail account first or set USER_ACCESS_TOKEN and USER_REFRESH_TOKEN in .env")
+        # Coerce use_second_gmail so string "true" or 1 from JSON is handled
+        _use_second_raw = getattr(request, 'use_second_gmail', False)
+        use_second = _use_second_raw is True or (
+            isinstance(_use_second_raw, str) and _use_second_raw.strip().lower() == 'true'
+        ) or _use_second_raw == 1
+        if use_second:
+            google_client_id = (os.getenv('GOOGLE_CLIENT_ID_2') or '').strip() or None
+            google_client_secret = (os.getenv('GOOGLE_CLIENT_SECRET_2') or '').strip() or None
+            access_token = (os.getenv('USER_ACCESS_TOKEN_2') or '').strip()
+            refresh_token = (os.getenv('USER_REFRESH_TOKEN_2') or '').strip()
+            if not access_token or not refresh_token:
+                raise HTTPException(status_code=400, detail="Second Gmail account not configured. Set USER_ACCESS_TOKEN_2 and USER_REFRESH_TOKEN_2 in Settings or .env")
+            if not google_client_id or not google_client_secret:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Second Gmail account requires GOOGLE_CLIENT_ID_2 and GOOGLE_CLIENT_SECRET_2 in Settings or .env (same OAuth app used for the second account)."
+                )
+            logger.info("Using second Gmail account (EMAIL2) for send_email")
+        else:
+            if user_id and DATABASE_AVAILABLE:
+                from config_helpers import get_gmail_config
+                from user_service_helpers import get_user_gmail_credentials
+                gmail_config = get_gmail_config(db, user_id)
+                user_creds = get_user_gmail_credentials(db, user_id)
+                if gmail_config:
+                    google_client_id = gmail_config.get('google_client_id')
+                    google_client_secret = gmail_config.get('google_client_secret')
+                if user_creds and user_creds.get('access_token'):
+                    access_token = user_creds['access_token']
+                    refresh_token = user_creds.get('refresh_token')
+                    logger.info(f"Using per-user Gmail credentials for user {user_id}")
+            
+            if not access_token and request.user_credentials and request.user_credentials.access_token:
+                access_token = request.user_credentials.access_token
+                refresh_token = request.user_credentials.refresh_token
+                logger.info("Using credentials from request body (backward compatibility)")
+            if not access_token:
+                access_token = (os.getenv('USER_ACCESS_TOKEN') or '').strip()
+                refresh_token = (os.getenv('USER_REFRESH_TOKEN') or '').strip()
+                if access_token and refresh_token:
+                    logger.info("Using Gmail credentials from .env (USER_ACCESS_TOKEN, USER_REFRESH_TOKEN)")
+                    if not google_client_id:
+                        google_client_id = (os.getenv('GOOGLE_CLIENT_ID') or '').strip() or None
+                    if not google_client_secret:
+                        google_client_secret = (os.getenv('GOOGLE_CLIENT_SECRET') or '').strip() or None
+            if not access_token:
+                raise HTTPException(status_code=400, detail="No Gmail credentials provided. Please connect your Gmail account first or set USER_ACCESS_TOKEN and USER_REFRESH_TOKEN in .env")
 
         # Determine sender email (from user's saved config or from provided credentials)
-        sender_email = None
-        try:
-            if 'gmail_config' in locals() and gmail_config and gmail_config.get('user_email'):
-                sender_email = gmail_config.get('user_email')
-        except Exception:
+        if use_second:
+            sender_email = (os.getenv('USER_EMAIL_2') or '').strip() or None
+        else:
             sender_email = None
-
-        if (not sender_email) and request.user_credentials and getattr(request.user_credentials, 'email', None):
-            sender_email = request.user_credentials.email
+            try:
+                if 'gmail_config' in locals() and gmail_config and gmail_config.get('user_email'):
+                    sender_email = gmail_config.get('user_email')
+            except Exception:
+                pass
+            if (not sender_email) and request.user_credentials and getattr(request.user_credentials, 'email', None):
+                sender_email = request.user_credentials.email
+            if not sender_email:
+                sender_email = (os.getenv('USER_EMAIL') or '').strip() or None
         
         # Resolve recipient(s)
         targets = []
@@ -1459,7 +1482,7 @@ async def get_unread_emails(
         try:
             import re as _lr
             import html as _html
-            def _strip_html_body(raw):
+            def _strip_body_html(raw):
                 if not raw:
                     return ''
                 s = _lr.sub(r'<style\b[^>]*>[\s\S]*?</style>', ' ', str(raw), flags=_lr.IGNORECASE | _lr.DOTALL)
@@ -1469,7 +1492,7 @@ async def get_unread_emails(
                 s = _lr.sub(r'\s+', ' ', s).strip()
                 return s
             def _local_summary(subject, body, sender, max_words=25):
-                body_plain = _strip_html_body((body or '')[:600])
+                body_plain = _strip_body_html((body or '')[:600])
                 src = ' '.join(filter(None, [subject or '', body_plain]))
                 src = _lr.sub(r'[^\w\s\.,:;\-@\(\)\'"/]', ' ', src)
                 src = _lr.sub(r'\s+', ' ', src).strip()
@@ -1490,15 +1513,11 @@ async def get_unread_emails(
 
             summarized_emails = []
             for e in emails:
-                # Support both Pydantic EmailMessage and dict (e.g. after JSON round-trip)
-                if hasattr(e, 'model_dump'):
-                    e = e.model_dump()
-                elif not isinstance(e, dict):
-                    e = dict(e) if hasattr(e, '__iter__') and not isinstance(e, (str, bytes)) else {}
                 sender = (e.get('from_name') or e.get('from_email') or 'Unknown')
                 subject = e.get('subject') or ''
                 body = e.get('body') or ''
                 summary = _local_summary(subject, body, sender)
+                # ensure we don't mutate original objects badly - copy dict
                 new_e = dict(e)
                 new_e['summary'] = summary
                 summarized_emails.append(new_e)
@@ -1546,41 +1565,48 @@ async def reply_to_email(
         Operation status
     """
     try:
-        # Try to get user's Gmail credentials from database first (if authenticated)
         access_token = None
         refresh_token = None
         google_client_id = None
         google_client_secret = None
-        
-        if user_id and DATABASE_AVAILABLE:
-            from config_helpers import get_gmail_config
-            from user_service_helpers import get_user_gmail_credentials
-            gmail_config = get_gmail_config(db, user_id)
-            user_creds = get_user_gmail_credentials(db, user_id)
-            if gmail_config:
-                google_client_id = gmail_config.get('google_client_id')
-                google_client_secret = gmail_config.get('google_client_secret')
-            if user_creds and user_creds.get('access_token'):
-                access_token = user_creds['access_token']
-                refresh_token = user_creds.get('refresh_token')
-                logger.info(f"Using per-user Gmail credentials for user {user_id}")
-        
-        # Fallback to credentials from request body (backward compatibility)
-        if not access_token and request.user_credentials and request.user_credentials.access_token:
-            access_token = request.user_credentials.access_token
-            refresh_token = request.user_credentials.refresh_token
-            logger.info("Using credentials from request body (backward compatibility)")
-        if not access_token:
-            access_token = (os.getenv('USER_ACCESS_TOKEN') or '').strip()
-            refresh_token = (os.getenv('USER_REFRESH_TOKEN') or '').strip()
-            if access_token and refresh_token:
-                logger.info("Using Gmail credentials from .env (USER_ACCESS_TOKEN, USER_REFRESH_TOKEN)")
-                if not google_client_id:
-                    google_client_id = (os.getenv('GOOGLE_CLIENT_ID') or '').strip() or None
-                if not google_client_secret:
-                    google_client_secret = (os.getenv('GOOGLE_CLIENT_SECRET') or '').strip() or None
-        if not access_token:
-            raise HTTPException(status_code=400, detail="No Gmail credentials provided. Please connect your Gmail account first or set USER_ACCESS_TOKEN and USER_REFRESH_TOKEN in .env")
+
+        if getattr(request, 'use_second_gmail', False):
+            google_client_id = (os.getenv('GOOGLE_CLIENT_ID_2') or '').strip() or None
+            google_client_secret = (os.getenv('GOOGLE_CLIENT_SECRET_2') or '').strip() or None
+            access_token = (os.getenv('USER_ACCESS_TOKEN_2') or '').strip()
+            refresh_token = (os.getenv('USER_REFRESH_TOKEN_2') or '').strip()
+            if not access_token or not refresh_token:
+                raise HTTPException(status_code=400, detail="Second Gmail account not configured. Set USER_ACCESS_TOKEN_2 and USER_REFRESH_TOKEN_2 in Settings or .env")
+            logger.info("Using second Gmail account (EMAIL2) for reply_to_email")
+        else:
+            if user_id and DATABASE_AVAILABLE:
+                from config_helpers import get_gmail_config
+                from user_service_helpers import get_user_gmail_credentials
+                gmail_config = get_gmail_config(db, user_id)
+                user_creds = get_user_gmail_credentials(db, user_id)
+                if gmail_config:
+                    google_client_id = gmail_config.get('google_client_id')
+                    google_client_secret = gmail_config.get('google_client_secret')
+                if user_creds and user_creds.get('access_token'):
+                    access_token = user_creds['access_token']
+                    refresh_token = user_creds.get('refresh_token')
+                    logger.info(f"Using per-user Gmail credentials for user {user_id}")
+            
+            if not access_token and request.user_credentials and request.user_credentials.access_token:
+                access_token = request.user_credentials.access_token
+                refresh_token = request.user_credentials.refresh_token
+                logger.info("Using credentials from request body (backward compatibility)")
+            if not access_token:
+                access_token = (os.getenv('USER_ACCESS_TOKEN') or '').strip()
+                refresh_token = (os.getenv('USER_REFRESH_TOKEN') or '').strip()
+                if access_token and refresh_token:
+                    logger.info("Using Gmail credentials from .env (USER_ACCESS_TOKEN, USER_REFRESH_TOKEN)")
+                    if not google_client_id:
+                        google_client_id = (os.getenv('GOOGLE_CLIENT_ID') or '').strip() or None
+                    if not google_client_secret:
+                        google_client_secret = (os.getenv('GOOGLE_CLIENT_SECRET') or '').strip() or None
+            if not access_token:
+                raise HTTPException(status_code=400, detail="No Gmail credentials provided. Please connect your Gmail account first or set USER_ACCESS_TOKEN and USER_REFRESH_TOKEN in .env")
         
         logger.info(f"Replying to email from {request.sender_email or request.message_id}")
         message_id = await email_service.reply_to_email(
@@ -1698,32 +1724,41 @@ async def delete_all_emails(
         google_client_id = None
         google_client_secret = None
 
-        if user_id and DATABASE_AVAILABLE:
-            from config_helpers import get_gmail_config
-            from user_service_helpers import get_user_gmail_credentials
-            gmail_config = get_gmail_config(db, user_id)
-            user_creds = get_user_gmail_credentials(db, user_id)
-            if gmail_config:
-                google_client_id = gmail_config.get('google_client_id')
-                google_client_secret = gmail_config.get('google_client_secret')
-            if user_creds and user_creds.get('access_token'):
-                access_token = user_creds['access_token']
-                refresh_token = user_creds.get('refresh_token')
-                logger.info(f"Using per-user Gmail credentials for user {user_id}")
+        if getattr(request, 'use_second_gmail', False):
+            google_client_id = (os.getenv('GOOGLE_CLIENT_ID_2') or '').strip() or None
+            google_client_secret = (os.getenv('GOOGLE_CLIENT_SECRET_2') or '').strip() or None
+            access_token = (os.getenv('USER_ACCESS_TOKEN_2') or '').strip()
+            refresh_token = (os.getenv('USER_REFRESH_TOKEN_2') or '').strip()
+            if not access_token or not refresh_token:
+                raise HTTPException(status_code=400, detail="Second Gmail account not configured. Set USER_ACCESS_TOKEN_2 and USER_REFRESH_TOKEN_2 in Settings or .env")
+            logger.info("Using second Gmail account (EMAIL2) for delete-all")
+        else:
+            if user_id and DATABASE_AVAILABLE:
+                from config_helpers import get_gmail_config
+                from user_service_helpers import get_user_gmail_credentials
+                gmail_config = get_gmail_config(db, user_id)
+                user_creds = get_user_gmail_credentials(db, user_id)
+                if gmail_config:
+                    google_client_id = gmail_config.get('google_client_id')
+                    google_client_secret = gmail_config.get('google_client_secret')
+                if user_creds and user_creds.get('access_token'):
+                    access_token = user_creds['access_token']
+                    refresh_token = user_creds.get('refresh_token')
+                    logger.info(f"Using per-user Gmail credentials for user {user_id}")
 
-        if not access_token and request.user_credentials and request.user_credentials.access_token:
-            access_token = request.user_credentials.access_token
-            refresh_token = request.user_credentials.refresh_token
-        if not access_token:
-            access_token = (os.getenv('USER_ACCESS_TOKEN') or '').strip()
-            refresh_token = (os.getenv('USER_REFRESH_TOKEN') or '').strip()
-            if access_token and refresh_token:
-                if not google_client_id:
-                    google_client_id = (os.getenv('GOOGLE_CLIENT_ID') or '').strip() or None
-                if not google_client_secret:
-                    google_client_secret = (os.getenv('GOOGLE_CLIENT_SECRET') or '').strip() or None
-        if not access_token:
-            raise HTTPException(status_code=400, detail="No Gmail credentials provided. Please connect your Gmail account first or set USER_ACCESS_TOKEN and USER_REFRESH_TOKEN in .env")
+            if not access_token and request.user_credentials and request.user_credentials.access_token:
+                access_token = request.user_credentials.access_token
+                refresh_token = request.user_credentials.refresh_token
+            if not access_token:
+                access_token = (os.getenv('USER_ACCESS_TOKEN') or '').strip()
+                refresh_token = (os.getenv('USER_REFRESH_TOKEN') or '').strip()
+                if access_token and refresh_token:
+                    if not google_client_id:
+                        google_client_id = (os.getenv('GOOGLE_CLIENT_ID') or '').strip() or None
+                    if not google_client_secret:
+                        google_client_secret = (os.getenv('GOOGLE_CLIENT_SECRET') or '').strip() or None
+            if not access_token:
+                raise HTTPException(status_code=400, detail="No Gmail credentials provided. Please connect your Gmail account first or set USER_ACCESS_TOKEN and USER_REFRESH_TOKEN in .env")
 
         logger.info("Starting permanent delete of all Gmail messages")
         total_deleted = await email_service.delete_all_emails(
