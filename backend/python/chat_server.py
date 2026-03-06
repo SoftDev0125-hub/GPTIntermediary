@@ -97,6 +97,80 @@ def fetch_latest_news(q=None, country='us', pageSize=10):
         logger.error(f"Failed to fetch news: {e}")
         return []
 
+
+def fetch_weather(location: str) -> dict:
+    """Fetch current weather for a location using Open-Meteo (free, no API key)."""
+    if not location or not str(location).strip():
+        return {"error": "Please specify a location (e.g. city name)."}
+    try:
+        # Geocode: city name -> lat, lon
+        geo_params = {"name": str(location).strip(), "count": 1, "language": "en"}
+        geo = requests.get("https://geocoding-api.open-meteo.com/v1/search", params=geo_params, timeout=8)
+        geo.raise_for_status()
+        geo_data = geo.json()
+        results = geo_data.get("results") or []
+        if not results:
+            return {"error": f"No location found for '{location}'."}
+        first = results[0]
+        lat = first.get("latitude")
+        lon = first.get("longitude")
+        name = first.get("name", location)
+        country = first.get("country_code", "")
+        if lat is None or lon is None:
+            return {"error": f"Could not get coordinates for '{location}'."}
+        # Current weather
+        params = {
+            "latitude": lat,
+            "longitude": lon,
+            "current": "temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m,precipitation",
+            "timezone": "auto",
+        }
+        resp = requests.get("https://api.open-meteo.com/v1/forecast", params=params, timeout=8)
+        resp.raise_for_status()
+        data = resp.json()
+        cur = data.get("current") or {}
+        # WMO weather codes: 0=Clear, 1-3=Clouds, 45/48=Fog, 51-67=Rain/Drizzle, 71-77=Snow, 80-99=Showers/Thunderstorm
+        code = cur.get("weather_code", 0)
+        if code == 0:
+            conditions = "Clear"
+        elif code in (1, 2, 3):
+            conditions = "Partly cloudy" if code == 2 else ("Mainly clear" if code == 1 else "Cloudy")
+        elif code in (45, 48):
+            conditions = "Foggy"
+        elif code in (51, 53, 55, 56, 57, 61, 63, 65, 66, 67):
+            conditions = "Rain"
+        elif code in (71, 73, 75, 77):
+            conditions = "Snow"
+        elif code in (80, 81, 82, 85, 86):
+            conditions = "Showers"
+        elif code in (95, 96, 99):
+            conditions = "Thunderstorm"
+        else:
+            conditions = "Unknown"
+        temp = cur.get("temperature_2m")
+        unit = data.get("current_units", {}).get("temperature_2m", "°C")
+        humidity = cur.get("relative_humidity_2m")
+        wind = cur.get("wind_speed_10m")
+        wind_unit = data.get("current_units", {}).get("wind_speed_10m", "km/h")
+        return {
+            "success": True,
+            "location": f"{name}, {country}" if country else name,
+            "temperature": temp,
+            "temperature_unit": unit,
+            "conditions": conditions,
+            "humidity_percent": humidity,
+            "wind_speed": wind,
+            "wind_unit": wind_unit,
+            "weather_code": code,
+        }
+    except requests.RequestException as e:
+        logger.warning(f"Weather fetch failed: {e}")
+        return {"error": f"Could not fetch weather: {e}"}
+    except Exception as e:
+        logger.warning(f"Weather error: {e}")
+        return {"error": str(e)}
+
+
 # Setup logging - use WARNING level to reduce logging overhead
 logging.basicConfig(level=logging.WARNING)  # Changed from INFO to WARNING for faster performance
 logger = logging.getLogger(__name__)
@@ -358,6 +432,20 @@ FUNCTIONS = [
             },
             "required": ["name"]
         }
+    },
+    {
+        "name": "get_weather",
+        "description": "Get current weather for a location (city or place). Use for any question about weather, temperature, or conditions (e.g. 'What's the weather in Paris?', 'Is it raining in Tokyo?', 'Temperature in London').",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "location": {
+                    "type": "string",
+                    "description": "City name or location (e.g. New York, London, Tokyo)"
+                }
+            },
+            "required": ["location"]
+        }
     }
 ]
 
@@ -577,8 +665,9 @@ def chat():
             'error': True
         })
 
-    # Normalize voice/typo/grammar errors so commands and questions are recognized correctly
-    user_message = _normalize_user_message(user_message) or user_message
+    # Normalize voice/typo for short commands; skip for clear questions (?) or long messages to preserve intent
+    if not (user_message.strip().endswith('?') or len(user_message) > 80):
+        user_message = _normalize_user_message(user_message) or user_message
     user_message = user_message.strip()
 
     # Fast-path: "Clean my Gmail" / "Delete all emails" -> call delete-all backend directly
@@ -744,6 +833,12 @@ def chat():
             or re.search(r"\b(unread\s+)?(emails?|mail|inbox)\b.*\b(primary|gmail|inbox)\b", user_message, re.IGNORECASE)
             or re.search(r"\b(primary|gmail|inbox)\b.*\b(unread\s+)?(emails?|mail|inbox)\b", user_message, re.IGNORECASE)
         )
+        # Do NOT intercept general/how-to questions — let OpenAI answer them properly
+        if email_trigger and re.search(
+            r"^\s*(how\s+(?:do|can|does|to|might)|what\s+is|what's|why\s+(?:do|does|is)|explain|can\s+you\s+explain|tell\s+me\s+how|where\s+do\s+I|when\s+do\s+I|which\s+(?:is|are)|is\s+it\s+possible|difference\s+between)",
+            user_message, re.IGNORECASE
+        ):
+            email_trigger = False
         if email_trigger:
             caller_creds = data.get('user_credentials') if isinstance(data, dict) else None
             # Try to detect a specific sender in the user's question ("from Alice" / "from alice@example.com")
@@ -996,10 +1091,15 @@ def chat():
 
         
         # Build messages for OpenAI - comprehensive system prompt
-        system_content = """You are a helpful AI assistant. Provide thorough, detailed, and well-formatted responses. 
-When asked for lists, provide complete lists with proper formatting (numbered or bulleted). 
-Use markdown formatting for better readability (bold, lists, code blocks, etc.).
-Be conversational and helpful, like ChatGPT."""
+        system_content = """You are a helpful AI assistant. Your job is to give the most accurate, up-to-date answer by combining real-time data with your knowledge.
+
+- Answer the user's question directly and completely.
+- When the conversation includes "NewsAPI - Recent articles" (or similar) with article titles, descriptions, and URLs: that is real-time news provided for this request. COMBINE it with your knowledge: use the news for current facts, events, and developments; use your knowledge for context, background, or when the news doesn't cover the question. Prefer and cite the News API when it is relevant. Summarize and cite those articles so the user gets up-to-date information. Never say you cannot provide real-time news when that data has been provided.
+- For weather, call the get_weather function with the user's location, then answer using the result.
+- For unread emails, use get_unread_emails when the user wants to see or check their inbox.
+
+- When asked for lists, give complete lists with clear formatting (numbered or bulleted). Use markdown for readability.
+- Be conversational and helpful. If the user asks a general-knowledge or how-to question, answer fully—using News API data when it was provided and is relevant, otherwise from your knowledge. Do not give generic refusals when you have been given real-time data or have tools to fetch it."""
         
         messages = [
             {
@@ -1023,24 +1123,30 @@ Be conversational and helpful, like ChatGPT."""
         # Add current user message
         messages.append({"role": "user", "content": user_message})
 
-            # News detection (broader): detect queries asking for latest news/updates/headlines
+            # News API grounding: fetch recent articles to give up-to-date answers (combine with OpenAI)
         try:
             is_news_query = False
+            topic = None
 
-            news_keywords_re = re.compile(r"\b(news|headline|headlines|latest|recent|today|breaking|updates|update|in the news|what(?:'s| is) new|any updates)\b", re.IGNORECASE)
+            news_keywords_re = re.compile(
+                r"\b(news|headline|headlines|latest|recent|today|breaking|updates|update|in the news|"
+                r"what(?:'s| is) new|any updates|current|now|this week|this month|this year|"
+                r"happening|going on|right now|2024|2025)\b", re.IGNORECASE
+            )
             if news_keywords_re.search(user_message):
                 is_news_query = True
 
-            # Detect present-tense 'who is the current X' or 'who is president' style questions
             if re.search(r"\bwho\s+is\b", user_message, re.IGNORECASE) and re.search(r"\b(current|today|now|president|prime minister|leader|king|queen|chancellor|pm|president of)\b", user_message, re.IGNORECASE):
                 is_news_query = True
 
-            # Also consider phrasing like 'tell me about X' or 'give me the latest on X' as news queries
             if re.search(r"\b(?:tell me|give me|show me|what(?:'s| is| are)|any news)\b.*\babout\b", user_message, re.IGNORECASE):
                 is_news_query = True
 
-            topic = None
-            # Try to extract topic after 'about' or after news keywords or 'who is' patterns
+            # Treat factual/what/who questions as potential news queries so we inject up-to-date context
+            if re.search(r"^\s*(what|who|when|where|how)\s+(is|are|was|were|did|does|do|will|has|have)\b", user_message, re.IGNORECASE) and len(user_message) > 15:
+                is_news_query = True
+
+            # Extract topic from explicit patterns
             m = re.search(r"news(?:\s+(?:about|on|for)\s+)(.+)$", user_message, re.IGNORECASE)
             if not m:
                 m = re.search(r"who\s+is\s+(?:the\s+)?(current\s+)?(.+)$", user_message, re.IGNORECASE)
@@ -1048,15 +1154,24 @@ Be conversational and helpful, like ChatGPT."""
                 m = re.search(r"(?:about|on|regarding|re)\s+([A-Za-z0-9\-&,()'\"\s]+)", user_message, re.IGNORECASE)
             if not m:
                 m = re.search(r"(?:latest|headlines|news)\s+(?:about|on|for)?\s*(.+)", user_message, re.IGNORECASE)
+            if not m:
+                m = re.search(r"(?:what(?:'s| is)|happening)\s+(?:with\s+)?(.+?)\??$", user_message, re.IGNORECASE)
 
             if m:
-                # choose the last capture group that is non-empty
                 groups = [g for g in m.groups() if g]
                 if groups:
                     topic = groups[-1].strip().strip('?.!')
 
+            # Fallback topic: key phrase from question (strip question words for News API query)
+            if not topic and len(user_message.strip()) > 10:
+                stripped = re.sub(r"^\s*(what\s+is|what's|what\s+are|who\s+is|who're|when\s+did|when\s+does|when\s+is|where\s+is|where\s+are|how\s+do|how\s+does|how\s+is|why\s+do|why\s+does|tell\s+me\s+about|latest\s+on|current\s+state\s+of)\s+", "", user_message.strip(), flags=re.IGNORECASE)
+                stripped = re.sub(r"\?+\s*$", "", stripped).strip()
+                words = [w for w in stripped.split() if len(w) > 1 and w.lower() not in ("the", "a", "an", "of", "with", "in", "to", "for")]
+                if words:
+                    topic = " ".join(words[:6])
+
             news_snippet = None
-            if is_news_query and NEWSAPI_KEY:
+            if NEWSAPI_KEY and (is_news_query or topic):
                 try:
                     articles = fetch_latest_news(q=topic, country='us', pageSize=10)
                     if articles:
@@ -1067,22 +1182,17 @@ Be conversational and helpful, like ChatGPT."""
                             desc = a.get('description') or ''
                             url = a.get('url') or ''
                             lines.append(f"- {title} ({src})\n  {desc}\n  {url}")
-                        news_snippet = "\n\nNewsAPI - Recent articles (most recent first):\n" + "\n".join(lines)
-                        # Insert as a system message right after the system prompt so the model can use it
+                        news_snippet = "\n\nNewsAPI - Recent articles (use this for up-to-date information; combine with your knowledge to answer):\n" + "\n".join(lines)
                         messages.insert(1, {"role": "system", "content": news_snippet})
-                        logger.info(f"[CHAT-{request_id}] Included {len(articles)} news articles in prompt (topic='{topic}')")
+                        logger.info(f"[CHAT-{request_id}] Included {len(articles)} news articles (topic='{topic}') for up-to-date answer")
                 except Exception as e:
                     logger.warning(f"[CHAT-{request_id}] News fetch failed: {e}")
-            # Fallback: if no explicit news query detected, attempt to infer a topic
-            # from capitalized proper-noun phrases (e.g., person/place/org) and fetch recent news.
-            if not news_snippet and not is_news_query and NEWSAPI_KEY:
+            # Fallback: infer topic from proper nouns and fetch news
+            if not news_snippet and NEWSAPI_KEY:
                 try:
-                    # Find capitalized phrases (2+ words) or single notable capitalized words
                     proper_nouns = re.findall(r"\b([A-Z][a-z]{2,}(?:\s+[A-Z][a-z]{2,}){0,3})\b", user_message)
-                    # If none, try single capitalized words that are not sentence-start
                     if not proper_nouns:
                         proper_nouns = re.findall(r"\b(?!I\b)([A-Z][a-z]{2,})\b", user_message)
-                    # Choose the longest candidate as topic
                     if proper_nouns:
                         candidates = sorted(set([p.strip() for p in proper_nouns]), key=lambda s: -len(s))
                         inferred_topic = candidates[0]
@@ -1095,9 +1205,9 @@ Be conversational and helpful, like ChatGPT."""
                                 desc = a.get('description') or ''
                                 url = a.get('url') or ''
                                 lines.append(f"- {title} ({src})\n  {desc}\n  {url}")
-                            news_snippet = "\n\nNewsAPI - Recent articles (most recent first):\n" + "\n".join(lines)
+                            news_snippet = "\n\nNewsAPI - Recent articles (use for up-to-date information):\n" + "\n".join(lines)
                             messages.insert(1, {"role": "system", "content": news_snippet})
-                            logger.info(f"[CHAT-{request_id}] Fallback included {len(articles)} news articles for inferred topic='{inferred_topic}'")
+                            logger.info(f"[CHAT-{request_id}] Inferred topic '{inferred_topic}'; included {len(articles)} articles")
                 except Exception as e:
                     logger.debug(f"[CHAT-{request_id}] News fallback failed: {e}")
         except Exception as e:
@@ -1257,8 +1367,11 @@ Be conversational and helpful, like ChatGPT."""
                 function_args['limit'] = min(50, max(1, int(function_args.get('limit') or 50)))
                 function_args.setdefault('query', 'in:inbox category:primary is:unread')
             
-            # Execute the function
-            function_result = call_backend_function(function_name, function_args, caller_credentials=data.get('user_credentials'), auth_token=data.get('auth_token') if isinstance(data, dict) else None)
+            # Execute the function (get_weather is handled locally via Open-Meteo; others go to backend)
+            if function_name == 'get_weather':
+                function_result = fetch_weather(function_args.get('location') or '')
+            else:
+                function_result = call_backend_function(function_name, function_args, caller_credentials=data.get('user_credentials'), auth_token=data.get('auth_token') if isinstance(data, dict) else None)
             
             # For app launches, return immediately without second OpenAI call for speed
             if function_name == 'launch_app':
