@@ -302,6 +302,12 @@ class DeleteAllEmailsRequest(BaseModel):
     use_second_gmail: bool = False  # when True, delete from second Gmail account
 
 
+class MarkAllReadRequest(BaseModel):
+    """Request model for marking all unread emails as read (optional credentials; uses DB/.env if omitted)"""
+    user_credentials: Optional[UserCredentials] = None
+    use_second_gmail: bool = False  # when True, use second Gmail account
+
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -1704,6 +1710,75 @@ async def mark_email_read(
         )
     except Exception as e:
         logger.error(f"Error marking email as read: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/email/mark-all-read", response_model=OperationResponse)
+async def mark_all_emails_read(
+    request: MarkAllReadRequest,
+    user_id: Optional[int] = Depends(get_current_user_id_optional),
+    db: Session = Depends(get_db)
+):
+    """
+    Mark all unread emails in the user's Gmail account as read.
+    Uses per-user credentials from database if authenticated, otherwise request/.env.
+    """
+    try:
+        access_token = None
+        refresh_token = None
+        google_client_id = None
+        google_client_secret = None
+
+        if getattr(request, 'use_second_gmail', False):
+            google_client_id = (os.getenv('GOOGLE_CLIENT_ID_2') or '').strip() or None
+            google_client_secret = (os.getenv('GOOGLE_CLIENT_SECRET_2') or '').strip() or None
+            access_token = (os.getenv('USER_ACCESS_TOKEN_2') or '').strip()
+            refresh_token = (os.getenv('USER_REFRESH_TOKEN_2') or '').strip()
+            if not access_token or not refresh_token:
+                raise HTTPException(status_code=400, detail="Second Gmail account not configured. Set USER_ACCESS_TOKEN_2 and USER_REFRESH_TOKEN_2 in Settings or .env")
+            logger.info("Using second Gmail account for mark-all-read")
+        else:
+            if user_id and DATABASE_AVAILABLE:
+                from config_helpers import get_gmail_config
+                from user_service_helpers import get_user_gmail_credentials
+                gmail_config = get_gmail_config(db, user_id)
+                user_creds = get_user_gmail_credentials(db, user_id)
+                if gmail_config:
+                    google_client_id = gmail_config.get('google_client_id')
+                    google_client_secret = gmail_config.get('google_client_secret')
+                if user_creds and user_creds.get('access_token'):
+                    access_token = user_creds['access_token']
+                    refresh_token = user_creds.get('refresh_token')
+                    logger.info(f"Using per-user Gmail credentials for user {user_id}")
+
+            if not access_token and request.user_credentials and request.user_credentials.access_token:
+                access_token = request.user_credentials.access_token
+                refresh_token = request.user_credentials.refresh_token
+            if not access_token:
+                access_token = (os.getenv('USER_ACCESS_TOKEN') or '').strip()
+                refresh_token = (os.getenv('USER_REFRESH_TOKEN') or '').strip()
+                if access_token and refresh_token:
+                    if not google_client_id:
+                        google_client_id = (os.getenv('GOOGLE_CLIENT_ID') or '').strip() or None
+                    if not google_client_secret:
+                        google_client_secret = (os.getenv('GOOGLE_CLIENT_SECRET') or '').strip() or None
+            if not access_token:
+                raise HTTPException(status_code=400, detail="No Gmail credentials provided. Please connect your Gmail account first or set USER_ACCESS_TOKEN and USER_REFRESH_TOKEN in .env")
+
+        logger.info("Marking all unread emails as read")
+        total_marked = await email_service.mark_all_unread_as_read(
+            access_token=access_token,
+            refresh_token=refresh_token,
+            google_client_id=google_client_id,
+            google_client_secret=google_client_secret
+        )
+        return OperationResponse(
+            success=True,
+            message=f"Marked {total_marked} unread email(s) as read.",
+            data={"marked_count": total_marked}
+        )
+    except Exception as e:
+        logger.error(f"Error marking all emails as read: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

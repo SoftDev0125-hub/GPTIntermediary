@@ -358,7 +358,7 @@ def call_backend_function(function_name, arguments, caller_credentials=None):
     """Call the backend API with function arguments"""
     
     # Add user credentials to email functions (first account only). When sending from second account, backend uses .env.
-    if function_name in ['send_email', 'get_unread_emails', 'reply_to_email', 'clean_gmail']:
+    if function_name in ['send_email', 'get_unread_emails', 'reply_to_email', 'clean_gmail', 'mark_all_read']:
         use_second = arguments.get('use_second_gmail') is True or (
             isinstance(arguments.get('use_second_gmail'), str) and str(arguments.get('use_second_gmail')).strip().lower() == 'true'
         )
@@ -377,6 +377,7 @@ def call_backend_function(function_name, arguments, caller_credentials=None):
         'get_unread_emails': '/api/email/unread',
         'reply_to_email': '/api/email/reply',
         'clean_gmail': '/api/email/delete-all',
+        'mark_all_read': '/api/email/mark-all-read',
         'launch_app': '/api/app/launch',
         'find_email': '/api/contacts/find-email'
     }
@@ -395,6 +396,8 @@ def call_backend_function(function_name, arguments, caller_credentials=None):
             timeout_sec = 25
         if function_name == 'clean_gmail':
             timeout_sec = 300  # Delete-all can take a long time for large mailboxes
+        if function_name == 'mark_all_read':
+            timeout_sec = 120  # Mark-all-read may process many messages
         import time as _time
         t0 = _time.time()
         response = requests.post(url, json=arguments, timeout=timeout_sec)
@@ -567,14 +570,33 @@ def chat():
             'error': True
         })
 
-    # Fast-path: "Clean my Gmail" / "Delete all emails" -> call delete-all backend directly
+    # Fast-path: "Clear" / "Mark all (emails) as read" -> mark all unread as read (no deletion)
     try:
-        clean_pattern = re.search(
-            r"\b(clean\s+(my\s+)?gmail|delete\s+all\s+(my\s+)?emails?|clear\s+(my\s+)?(gmail|email)|wipe\s+(my\s+)?(gmail|inbox)|empty\s+(my\s+)?(gmail|inbox))\b",
+        mark_read_pattern = re.search(
+            r"\b(clear\s*(my\s+)?(gmail|email|inbox)?|mark\s+all\s+(?:emails?\s+)?as\s+read)\b",
+            user_message.strip(),
+            re.IGNORECASE
+        )
+        if mark_read_pattern:
+            caller_creds = data.get('user_credentials') if isinstance(data, dict) else None
+            result = call_backend_function('mark_all_read', {}, caller_credentials=caller_creds)
+            if isinstance(result, dict) and result.get('success'):
+                count = result.get('data', {}).get('marked_count', 0)
+                msg = result.get('message', f'Marked {count} unread email(s) as read.')
+                return jsonify({'response': msg, 'function_called': 'mark_all_read'})
+            err = result.get('error') or result.get('detail') or result.get('message') or str(result)
+            return jsonify({'response': f"Could not mark emails as read: {err}", 'error': True, 'function_called': 'mark_all_read'}), 500
+    except Exception as e_cmd:
+        print(f"Direct mark-all-read handling failed: {e_cmd}")
+
+    # Fast-path: "Empty" / "Delete" / "Clean Gmail" / "Wipe" -> permanently delete all emails (not "clear")
+    try:
+        delete_pattern = re.search(
+            r"\b(clean\s+(my\s+)?gmail|delete(?:\s+all\s+(?:my\s+)?emails?)?|wipe\s+(my\s+)?(gmail|inbox)|empty(?:\s+(?:my\s+)?(?:gmail|inbox))?)\b",
             user_message,
             re.IGNORECASE
         )
-        if clean_pattern:
+        if delete_pattern:
             caller_creds = data.get('user_credentials') if isinstance(data, dict) else None
             result = call_backend_function('clean_gmail', {}, caller_credentials=caller_creds)
             if isinstance(result, dict) and result.get('success'):

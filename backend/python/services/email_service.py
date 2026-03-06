@@ -456,6 +456,64 @@ class EmailService:
             logger.error(f"Gmail API error: {error}")
             raise Exception(f"Failed to mark email as read: {error}")
     
+    async def mark_all_unread_as_read(
+        self,
+        access_token: str,
+        refresh_token: Optional[str] = None,
+        google_client_id: Optional[str] = None,
+        google_client_secret: Optional[str] = None,
+    ) -> int:
+        """
+        Mark all unread emails in the account as read.
+        Uses list with query is:unread and batchModify to remove UNREAD label.
+
+        Returns:
+            Number of messages marked as read.
+        """
+        try:
+            service = self._get_service(
+                access_token, refresh_token,
+                google_client_id=google_client_id,
+                google_client_secret=google_client_secret,
+            )
+            total_marked = 0
+            page_token = None
+            batch_size = 1000  # Gmail API batchModify limit
+
+            while True:
+                params = {
+                    'userId': 'me',
+                    'q': 'is:unread',
+                    'maxResults': min(500, batch_size),
+                }
+                if page_token:
+                    params['pageToken'] = page_token
+
+                results = service.users().messages().list(**params).execute()
+                messages = results.get('messages', []) or []
+                ids = [m['id'] for m in messages]
+
+                if not ids:
+                    break
+
+                service.users().messages().batchModify(
+                    userId='me',
+                    body={'ids': ids, 'removeLabelIds': ['UNREAD']}
+                ).execute()
+                total_marked += len(ids)
+                logger.info(f"Marked as read batch of {len(ids)} messages (total so far: {total_marked})")
+
+                page_token = results.get('nextPageToken')
+                if not page_token:
+                    break
+
+            logger.info(f"Marked all unread as read. Total: {total_marked}")
+            return total_marked
+
+        except HttpError as error:
+            logger.error(f"Gmail API error during mark all read: {error}")
+            raise Exception(f"Failed to mark all as read: {error}")
+
     async def delete_all_emails(
         self,
         access_token: str,
