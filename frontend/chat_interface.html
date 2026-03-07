@@ -167,6 +167,13 @@
                         autocomplete="off"
                         style="resize: none; overflow: hidden;"
                     ></textarea>
+                    <select id="voiceToneSelect" class="voice-tone-select" title="Response voice tone">
+                        <option value="default">Default</option>
+                        <option value="male">Male</option>
+                        <option value="female">Female</option>
+                        <option value="child">Child</option>
+                        <option value="elderly">Elderly</option>
+                    </select>
                     <button id="voiceRecognitionButton" class="voice-recognition-btn" title="Voice Recognition">
                         <svg id="voiceIcon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
@@ -1631,17 +1638,17 @@
                     // If this message was sent from voice input, speak the response
                     if (speak && 'speechSynthesis' in window) {
                         try {
-                            // Mark TTS as playing - recognition stays on but we ignore transcripts (except "stop")
-                            // to prevent laptop mic from echoing the app's voice as user input
                             ttsPlaying = true;
-                            // Cancel any existing utterances and speak the new response
                             window.speechSynthesis.cancel();
                             const utter = new SpeechSynthesisUtterance(data.response);
-                            // Prefer recognition language if available
                             try { utter.lang = (recognition && recognition.lang) ? recognition.lang : 'en-US'; } catch (e) {}
+                            const chosenVoice = getSelectedVoice();
+                            if (chosenVoice) utter.voice = chosenVoice;
                             utter.onend = () => {
                                 ttsPlaying = false;
-                                console.log('[VOICE] TTS finished');
+                                // Cooldown: ignore speech recognition for 1.5s after TTS ends to avoid echo from speaker
+                                ttsCooldownUntil = Date.now() + 1500;
+                                console.log('[VOICE] TTS finished (cooldown until no-echo)');
                             };
                             window.speechSynthesis.speak(utter);
                         } catch (e) {
@@ -1717,8 +1724,43 @@
         let isListening = false; // UI state: whether mic shows as listening
         let listeningActive = false; // Logical state: mic toggled ON
         let ttsPlaying = false; // True while TTS is speaking - prevents mic from echoing app's voice back
+        let ttsCooldownUntil = 0; // After TTS ends, ignore recognition until this timestamp (avoids echo from speaker)
         let silenceTimer = null; // timer for detecting silence
         let currentTranscript = ''; // accumulated transcript while mic is ON
+
+        // Ensure TTS voices are loaded (Chrome populates asynchronously)
+        if (window.speechSynthesis) {
+            window.speechSynthesis.getVoices();
+            window.speechSynthesis.onvoiceschanged = function () { window.speechSynthesis.getVoices(); };
+        }
+
+        // Pick TTS voice by tone (male, female, child, elderly, default). Uses speechSynthesis.getVoices().
+        function getSelectedVoice() {
+            const sel = document.getElementById('voiceToneSelect');
+            const type = (sel && sel.value) ? sel.value : 'default';
+            if (type === 'default') return null;
+            const voices = window.speechSynthesis.getVoices();
+            const lang = (recognition && recognition.lang) ? recognition.lang : 'en-US';
+            const langPrefix = lang.split('-')[0];
+            const preferLang = (v) => (v.lang && (v.lang === lang || v.lang.startsWith(langPrefix)));
+            // Heuristics by common system voice names (Windows, macOS, Chrome)
+            const maleNames = /david|mark|george|paul|daniel|alex|fred|bruce|ralph|eric|aaron|ryan|sam|matt|joey|nick/i;
+            const femaleNames = /zira|samantha|victoria|karen|susan|kate|moira|sara|anna|melina|amanda|linda|maria|heather|hazel|fiona|emily|google.*english.*female/i;
+            const childNames = /child|kid|young/i;
+            const elderlyNames = /grandpa|grandma|elder|old|aged|senior|arthur|agnes|alice|eddy|bruce|fred/i;
+            const byType = {
+                male: (v) => maleNames.test(v.name),
+                female: (v) => femaleNames.test(v.name),
+                child: (v) => childNames.test(v.name),
+                elderly: (v) => elderlyNames.test(v.name)
+            };
+            const pred = byType[type];
+            if (!pred) return null;
+            const preferred = voices.filter(v => preferLang(v) && pred(v));
+            const any = voices.filter(pred);
+            const pick = preferred[0] || any[0] || null;
+            return pick;
+        }
 
         // Secure context required: Speech Recognition only works over HTTPS or localhost
         const isSecureContext = window.isSecureContext || (window.location && (window.location.protocol === 'https:' || window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'));
@@ -1749,8 +1791,15 @@
                 voiceRecognitionButton.title = 'Listening... Click to stop';
             };
 
-            // Stop commands that should halt voice response (TTS) when spoken
-            const STOP_TTS_COMMANDS = ['stop', 'stop talking', 'stop speaking', 'enough', 'quiet', 'shut up', 'that\'s enough', 'no more'];
+            // Stop commands that should halt voice response (TTS) when spoken (even while app is responding)
+            const STOP_TTS_COMMANDS = ['stop', 'stop talking', 'stop speaking', 'stop voice', 'voice stop', 'stop the voice', 'enough', 'quiet', 'shut up', 'that\'s enough', 'no more'];
+            function isStopVoiceCommand(transcriptLower) {
+                if (!transcriptLower) return false;
+                if (STOP_TTS_COMMANDS.some(cmd => transcriptLower === cmd)) return true;
+                // Also treat "stop ... voice" or "voice ... stop" as stop command
+                if ((transcriptLower.includes('stop') && transcriptLower.includes('voice')) || (transcriptLower.includes('voice') && transcriptLower.includes('stop'))) return true;
+                return false;
+            }
 
             // Final results from speech recognition
             recognition.onresult = (event) => {
@@ -1763,18 +1812,22 @@
 
                     if (!transcript) return;
 
-                    // While TTS is playing, ignore all transcripts except stop commands (prevents echo feedback)
+                    // While TTS is playing, only honor stop commands — stop TTS immediately and wait for next command
                     if (ttsPlaying) {
                         const transcriptLower = transcript.toLowerCase().trim();
-                        if (STOP_TTS_COMMANDS.some(cmd => transcriptLower === cmd)) {
+                        if (isStopVoiceCommand(transcriptLower)) {
                             if ('speechSynthesis' in window && window.speechSynthesis.speaking) {
                                 window.speechSynthesis.cancel();
                                 ttsPlaying = false;
+                                ttsCooldownUntil = Date.now() + 800; // brief cooldown after stop
                                 console.log('[VOICE] Voice response stopped by voice command');
                             }
                         }
-                        return; // Discard - likely echo from laptop speakers
+                        return; // Discard all other input while TTS is playing (prevents echo)
                     }
+
+                    // After TTS just ended, cooldown period to avoid laptop mic picking up residual speaker output
+                    if (Date.now() < ttsCooldownUntil) return;
 
                     console.log('[VOICE] Recognized text:', transcript);
 

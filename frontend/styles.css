@@ -718,6 +718,28 @@ body::before {
     height: 20px;
 }
 
+/* Voice tone selector (TTS) */
+.voice-tone-select {
+    height: 40px;
+    padding: 0 10px;
+    background: rgba(30, 41, 59, 0.8);
+    border: 1px solid rgba(99, 102, 241, 0.3);
+    border-radius: 10px;
+    color: #e2e8f0;
+    font-size: 13px;
+    cursor: pointer;
+    flex-shrink: 0;
+    min-width: 0;
+    max-width: 100px;
+}
+.voice-tone-select:hover {
+    border-color: rgba(99, 102, 241, 0.5);
+}
+.voice-tone-select:focus {
+    outline: none;
+    border-color: rgba(99, 102, 241, 0.6);
+}
+
 /* Buttons */
 .btn {
     padding: 10px 20px;
@@ -5126,6 +5148,13 @@ body::before {
 
     .input-wrapper input {
         font-size: 14px;
+    }
+
+    .voice-tone-select {
+        height: 36px;
+        padding: 0 8px;
+        font-size: 12px;
+        max-width: 82px;
     }
 
     .voice-recognition-btn {

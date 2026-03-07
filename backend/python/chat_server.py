@@ -14,6 +14,7 @@ import random
 import logging
 from pathlib import Path
 from dotenv import load_dotenv
+from datetime import datetime
 import sys
 
 def _get_project_root():
@@ -55,33 +56,13 @@ if not NEWSAPI_KEY:
     logging.warning('NEWSAPI_KEY not configured; news features may be limited')
 
 def fetch_latest_news(q=None, country='us', pageSize=10):
-    """Fetch news using NewsAPI; use 'everything' for queries (newest first, last 7 days) and 'top-headlines' otherwise."""
+    """Fetch news using NewsAPI; use 'everything' for topic queries (newest first, last 7 days) and 'top-headlines' otherwise.
+    If 'everything' fails (e.g. 426 on free tier in production), falls back to top-headlines so the user still gets news."""
     if not NEWSAPI_KEY:
         return []
-    try:
-        if q:
-            from datetime import datetime, timedelta
-            from_date = (datetime.utcnow() - timedelta(days=7)).strftime('%Y-%m-%d')
-            params = {
-                'apiKey': NEWSAPI_KEY,
-                'q': q,
-                'pageSize': min(pageSize, 20),
-                'sortBy': 'publishedAt',
-                'language': 'en',
-                'from': from_date,
-            }
-            resp = requests.get('https://newsapi.org/v2/everything', params=params, timeout=10)
-        else:
-            params = {
-                'apiKey': NEWSAPI_KEY,
-                'country': country,
-                'pageSize': min(pageSize, 20)
-            }
-            resp = requests.get('https://newsapi.org/v2/top-headlines', params=params, timeout=8)
-        data = resp.json()
-        if data.get('status') != 'ok':
-            logger.warning(f"NewsAPI returned non-ok status: {data.get('message')}")
-            return []
+    log = logging.getLogger(__name__)
+
+    def _parse_articles(data):
         articles = []
         for a in data.get('articles', []):
             articles.append({
@@ -91,13 +72,221 @@ def fetch_latest_news(q=None, country='us', pageSize=10):
                 'publishedAt': a.get('publishedAt'),
                 'description': a.get('description')
             })
-        logger.info(f"Fetched {len(articles)} articles for query='{q}'")
+        return articles
+
+    # Try topic-specific search first when q is provided
+    if q:
+        try:
+            from datetime import datetime, timedelta
+            from_date = (datetime.utcnow() - timedelta(days=7)).strftime('%Y-%m-%d')
+            params = {
+                'apiKey': NEWSAPI_KEY,
+                'q': q.strip(),
+                'pageSize': min(pageSize, 20),
+                'sortBy': 'publishedAt',
+                'language': 'en',
+                'from': from_date,
+            }
+            resp = requests.get('https://newsapi.org/v2/everything', params=params, timeout=10)
+            data = resp.json()
+            if data.get('status') == 'ok':
+                articles = _parse_articles(data)
+                log.info(f"NewsAPI everything: fetched {len(articles)} articles for query='{q}'")
+                return articles
+            # Log actual API error (e.g. 426 upgrade required on free tier in production)
+            msg = data.get('message', resp.reason or 'unknown')
+            log.warning(f"NewsAPI everything failed (status_code={resp.status_code}, message={msg}); falling back to top-headlines")
+        except Exception as e:
+            log.warning(f"NewsAPI everything request failed: {e}; falling back to top-headlines")
+
+    # Use top-headlines (works on free tier; no topic filter)
+    try:
+        params = {
+            'apiKey': NEWSAPI_KEY,
+            'country': country,
+            'pageSize': min(pageSize, 20)
+        }
+        resp = requests.get('https://newsapi.org/v2/top-headlines', params=params, timeout=8)
+        data = resp.json()
+        if data.get('status') != 'ok':
+            log.warning(f"NewsAPI top-headlines returned non-ok: status_code={resp.status_code}, message={data.get('message', 'unknown')}")
+            return []
+        articles = _parse_articles(data)
+        log.info(f"NewsAPI top-headlines: fetched {len(articles)} articles (country={country})")
         return articles
     except Exception as e:
-        logger.error(f"Failed to fetch news: {e}")
+        log.error(f"Failed to fetch news: {e}")
         return []
 
-# Setup logging - use WARNING level to reduce logging overhead
+
+def _extract_news_topic_from_question(message):
+    """Extract a short search topic from a user question for News API. Returns None if nothing useful."""
+    msg = (message or "").strip().strip("?.!")
+    if len(msg) < 4:
+        return None
+    # "Who is the current X" / "Who is X" -> keep "current X" or "X"
+    m = re.search(r"who\s+is\s+(?:the\s+)?(current\s+)?(.+)$", msg, re.IGNORECASE)
+    if m:
+        t = m.group(2).strip().strip("?.!")
+        if len(t) > 2:
+            return t[:80]
+    # "What is X", "What are X", "How does X work", etc. -> X
+    m = re.search(
+        r"^\s*(what|who|how|when|where|why|which|explain|describe)\s+(is|are|was|were|do|does|did|can)\s+(?:the\s+)?(.+)$",
+        msg,
+        re.IGNORECASE,
+    )
+    if m:
+        t = m.group(3).strip().strip("?.!")
+        if len(t) > 2:
+            return t[:80]
+    # "Tell me about X", "Latest on X", "News about X"
+    m = re.search(r"(?:about|on|regarding|re)\s+([A-Za-z0-9\-&,()'\"\s]{3,})", msg, re.IGNORECASE)
+    if m:
+        t = m.group(1).strip().strip("?.!")
+        if len(t) > 2:
+            return t[:80]
+    # Fallback: remove leading question words and use rest (limit length)
+    stripped = re.sub(
+        r"^\s*(what|who|how|when|where|why|which|explain|describe|is|are|do|does|did|can you|could you|tell me|give me|show me)\s+(is|are|the|a|an)?\s*",
+        "",
+        msg,
+        flags=re.IGNORECASE,
+    ).strip().strip("?.!")
+    if len(stripped) >= 4:
+        return stripped[:80]
+    return None
+
+
+# Max grounding size to stay under model context (gpt-3.5-turbo ~16k tokens). ~1 token ≈ 4 chars.
+MAX_GROUNDING_CHARS = int(os.getenv("CHAT_MAX_GROUNDING_CHARS", "5500"))
+MAX_NEWS_ARTICLES = 5
+MAX_NEWS_ARTICLES_NEWS_QUERY = 10  # When user explicitly asks about news, provide more
+MAX_NEWS_DESC_CHARS = 250
+MAX_NEWS_DESC_CHARS_NEWS_QUERY = 380  # When user explicitly asks about news, longer snippets
+MAX_BING_SNIPPETS = 4
+MAX_BING_SNIP_CHARS = 220
+
+
+def _format_news_articles_for_grounding(articles, instruction_prefix, max_articles=None, max_desc_chars=None):
+    """Build grounding text from articles; cap count and description length to avoid context overflow."""
+    max_articles = max_articles if max_articles is not None else MAX_NEWS_ARTICLES
+    max_desc = max_desc_chars if max_desc_chars is not None else MAX_NEWS_DESC_CHARS
+    lines = []
+    for a in articles[:max_articles]:
+        title = (a.get("title") or "").strip()[:200]
+        src = (a.get("source") or "").strip()
+        desc = (a.get("description") or "").strip()
+        if len(desc) > max_desc:
+            desc = desc[:max_desc].rsplit(" ", 1)[0] + "..."
+        url = (a.get("url") or "").strip()
+        pub = (a.get("publishedAt") or "").strip()
+        if pub:
+            lines.append(f"- {title} ({src}) — {pub}\n  {desc}\n  {url}")
+        else:
+            lines.append(f"- {title} ({src})\n  {desc}\n  {url}")
+    if not lines:
+        return "", 0
+    text = instruction_prefix + "\n\nNewsAPI (most recent first; use these for up-to-date facts):\n" + "\n".join(lines)
+    return text, len(lines)
+
+
+def _is_person_contact_query(msg):
+    """True if the user is asking about a person's contact info: email, address, phone, contact."""
+    if not msg or len(msg.strip()) < 6:
+        return False
+    m = msg.strip().lower()
+    if not re.search(r"\b(email|address|contact|phone|number|telephone)\b", m):
+        return False
+    return bool(
+        re.search(r"\b(email|address|contact|phone|number)\s+(of|for)\s+", m)
+        or re.search(r"\b(of|for)\s+[\w\s]+\s+(email|address|contact|phone)\b", m)
+        or re.search(r"[\w\s]+'s\s+(email|address|contact|phone)\b", m)
+        or re.search(r"(what is|find|get|look up)\s+[\w\s]+'?s?\s+(email|address|contact|phone)", m)
+    )
+
+
+def _person_contact_triple_source(user_message, request_id):
+    """
+    For person/contact queries: get answers from OpenAI, then News API, then Bing;
+    then return the most accurate and most recent. Returns response string or None on failure.
+    """
+    try:
+        client = get_openai_client()
+        person_query = user_message.strip()[:200]
+
+        # 1) OpenAI: derive answer from model knowledge
+        openai_answer = ""
+        try:
+            r1 = client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {"role": "system", "content": "You answer with only the requested contact information (email, address, phone) if you know it. If you do not know it, reply with exactly: I do not have that information."},
+                    {"role": "user", "content": person_query},
+                ],
+                max_tokens=300,
+                temperature=0,
+            )
+            if r1 and r1.choices and r1.choices[0].message.content:
+                openai_answer = (r1.choices[0].message.content or "").strip()
+        except Exception as e:
+            logger.debug(f"[CHAT-{request_id}] Person contact OpenAI step: {e}")
+
+        # 2) News API: fetch articles about the person, format as text
+        news_answer = ""
+        if NEWSAPI_KEY:
+            try:
+                topic = _extract_news_topic_from_question(user_message) or re.sub(r"\b(email|address|contact|phone|number|of|for|what is|find|get)\b", "", person_query, flags=re.IGNORECASE).strip()[:60]
+                if not topic:
+                    topic = person_query[:50]
+                articles = fetch_latest_news(q=topic, country='us', pageSize=5)
+                if articles:
+                    bits = []
+                    for a in articles[:5]:
+                        title = (a.get("title") or "").strip()
+                        src = (a.get("source") or "").strip()
+                        pub = (a.get("publishedAt") or "").strip()
+                        desc = (a.get("description") or "").strip()[:200]
+                        bits.append(f"- {title} ({src}) {pub}\n  {desc}")
+                    news_answer = "NewsAPI results:\n" + "\n".join(bits)
+            except Exception as e:
+                logger.debug(f"[CHAT-{request_id}] Person contact News API step: {e}")
+
+        # 3) Bing: web search for contact/email/phone/address
+        bing_answer = ""
+        try:
+            from services.contact_resolver import bing_web_search_grounding, email_finder_keys_status
+            if email_finder_keys_status().get("bing_configured"):
+                results = bing_web_search_grounding(person_query + " contact email phone address", max_results=6)
+                if results:
+                    bing_answer = "Bing search results:\n" + "\n".join(
+                        f"{i}. {r.get('snippet', '')}\n   {r.get('url', '')}" for i, r in enumerate(results[:6], 1)
+                    )
+        except Exception as e:
+            logger.debug(f"[CHAT-{request_id}] Person contact Bing step: {e}")
+
+        # 4) Synthesize: pick the most accurate and most recent from the three
+        combined = f"User asked: \"{person_query}\"\n\n"
+        combined += "Source 1 (OpenAI knowledge):\n" + (openai_answer or "(no answer)") + "\n\n"
+        combined += "Source 2 (NewsAPI):\n" + (news_answer or "(no results)") + "\n\n"
+        combined += "Source 3 (Bing search):\n" + (bing_answer or "(no results)") + "\n\n"
+        combined += "Instructions: From the three sources above, output only the most accurate and most recent contact information (email, address, phone) for the user's question. Cite which source you used. If none are reliable, say so briefly."
+
+        r2 = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[{"role": "user", "content": combined}],
+            max_tokens=400,
+            temperature=0,
+        )
+        if r2 and r2.choices and r2.choices[0].message.content:
+            return (r2.choices[0].message.content or "").strip()
+        return "I could not find reliable contact information from the available sources."
+    except Exception as e:
+        logger.warning(f"[CHAT-{request_id}] Person contact triple-source failed: {e}")
+        return None
+
+
+# Setup logging - use WARNING level for faster performance
 logging.basicConfig(level=logging.WARNING)  # Changed from INFO to WARNING for faster performance
 logger = logging.getLogger(__name__)
 
@@ -569,6 +758,12 @@ def chat():
             'response': 'Please enter a message.',
             'error': True
         })
+
+    # Person/contact query: answer from OpenAI, then News API, then Bing; return most accurate and most recent
+    if _is_person_contact_query(user_message):
+        triple_resp = _person_contact_triple_source(user_message, request_id)
+        if triple_resp:
+            return jsonify({'response': triple_resp, 'function_called': None})
 
     # Fast-path: "Clear" / "Mark all (emails) as read" -> mark all unread as read (no deletion)
     try:
@@ -1391,6 +1586,8 @@ When asked for lists, provide complete lists with proper formatting (numbered or
 Use markdown formatting for better readability (bold, lists, code blocks, etc.).
 Be conversational and helpful, like ChatGPT.
 
+**Up-to-date information:** When the next message includes NewsAPI or web search results, base your answer on that content and cite source and date. If those sources do not contain the answer, say so before adding general knowledge.
+
 **Two Gmail accounts — always distinguish first vs second from the user's words:**
 - **First account** = EMAIL1. Treat as first when the user says: first account, my first account, account 1, 1st account, email 1, primary account, main account, first Gmail, only first, first only, "in my first account", "from the first account".
 - **Second account** = EMAIL2. Treat as second when the user says: second account, my second account, account 2, 2nd account, email 2, second Gmail, only second, second only, "in my second account", "from the second account", "using my second account", "with my second account".
@@ -1419,114 +1616,95 @@ Be conversational and helpful, like ChatGPT.
                         "content": str(msg['content'])[:2000]  # Limit individual message length
                     })
         
-        # Add current user message
+        # Add current user message (grounding will be inserted right before it so the model sees context immediately before the question)
         messages.append({"role": "user", "content": user_message})
 
-            # News detection (broader): detect queries asking for latest news/updates/headlines
+        grounding_parts = []
+        needs_up_to_date = False
+        topic = None
+
+        # Single path for latest news: detect when user wants current info, get topic, fetch once
         try:
-            is_news_query = False
+            is_explicit_news = bool(re.search(r"\b(news|headlines?|latest\s+news|recent\s+news|breaking|in\s+the\s+news)\b", user_message, re.IGNORECASE))
+            if re.search(r"\b(news|headline|latest|recent|today|breaking|current|who is the)\b", user_message, re.IGNORECASE):
+                needs_up_to_date = True
+            if re.search(r"^\s*(what|who|how|when|where|why)\s+(is|are|was|were|did|do)\s+", user_message, re.IGNORECASE) and len(user_message.strip()) > 10:
+                needs_up_to_date = True
+            if user_message.strip().endswith("?"):
+                needs_up_to_date = True
 
-            news_keywords_re = re.compile(r"\b(news|headline|headlines|latest|recent|today|breaking|updates|update|in the news|what(?:'s| is) new|any updates)\b", re.IGNORECASE)
-            if news_keywords_re.search(user_message):
-                is_news_query = True
-
-            # Detect present-tense 'who is the current X' or 'who is president' style questions
-            if re.search(r"\bwho\s+is\b", user_message, re.IGNORECASE) and re.search(r"\b(current|today|now|president|prime minister|leader|king|queen|chancellor|pm|president of)\b", user_message, re.IGNORECASE):
-                is_news_query = True
-
-            # Also consider phrasing like 'tell me about X' or 'give me the latest on X' as news queries
-            if re.search(r"\b(?:tell me|give me|show me|what(?:'s| is| are)|any news)\b.*\babout\b", user_message, re.IGNORECASE):
-                is_news_query = True
-
-            topic = None
-            # Try to extract topic after 'about' or after news keywords or 'who is' patterns
             m = re.search(r"news(?:\s+(?:about|on|for)\s+)(.+)$", user_message, re.IGNORECASE)
             if not m:
                 m = re.search(r"who\s+is\s+(?:the\s+)?(current\s+)?(.+)$", user_message, re.IGNORECASE)
             if not m:
                 m = re.search(r"(?:about|on|regarding|re)\s+([A-Za-z0-9\-&,()'\"\s]+)", user_message, re.IGNORECASE)
-            if not m:
-                m = re.search(r"(?:latest|headlines|news)\s+(?:about|on|for)?\s*(.+)", user_message, re.IGNORECASE)
-
             if m:
-                # choose the last capture group that is non-empty
                 groups = [g for g in m.groups() if g]
                 if groups:
                     topic = groups[-1].strip().strip('?.!')
+            if not topic and len(user_message.strip()) > 8:
+                topic = _extract_news_topic_from_question(user_message)
 
-            news_snippet = None
-            if is_news_query and NEWSAPI_KEY:
-                try:
-                    articles = fetch_latest_news(q=topic, country='us', pageSize=10)
-                    if articles:
-                        lines = []
-                        for a in articles:
-                            title = a.get('title') or ''
-                            src = a.get('source') or ''
-                            desc = a.get('description') or ''
-                            url = a.get('url') or ''
-                            lines.append(f"- {title} ({src})\n  {desc}\n  {url}")
-                        news_snippet = "\n\nNewsAPI - Recent articles (most recent first):\n" + "\n".join(lines)
-                        # Insert as a system message right after the system prompt so the model can use it
-                        messages.insert(1, {"role": "system", "content": news_snippet})
-                        logger.info(f"[CHAT-{request_id}] Included {len(articles)} news articles in prompt (topic='{topic}')")
-                except Exception as e:
-                    logger.warning(f"[CHAT-{request_id}] News fetch failed: {e}")
-            # Fallback: if no explicit news query detected, attempt to infer a topic
-            # from capitalized proper-noun phrases (e.g., person/place/org) and fetch recent news.
-            if not news_snippet and not is_news_query and NEWSAPI_KEY:
-                try:
-                    # Find capitalized phrases (2+ words) or single notable capitalized words
-                    proper_nouns = re.findall(r"\b([A-Z][a-z]{2,}(?:\s+[A-Z][a-z]{2,}){0,3})\b", user_message)
-                    # If none, try single capitalized words that are not sentence-start
-                    if not proper_nouns:
-                        proper_nouns = re.findall(r"\b(?!I\b)([A-Z][a-z]{2,})\b", user_message)
-                    # Choose the longest candidate as topic
-                    if proper_nouns:
-                        candidates = sorted(set([p.strip() for p in proper_nouns]), key=lambda s: -len(s))
-                        inferred_topic = candidates[0]
-                        articles = fetch_latest_news(q=inferred_topic, country='us', pageSize=8)
-                        if articles:
-                            lines = []
-                            for a in articles:
-                                title = a.get('title') or ''
-                                src = a.get('source') or ''
-                                desc = a.get('description') or ''
-                                url = a.get('url') or ''
-                                lines.append(f"- {title} ({src})\n  {desc}\n  {url}")
-                            news_snippet = "\n\nNewsAPI - Recent articles (most recent first):\n" + "\n".join(lines)
-                            messages.insert(1, {"role": "system", "content": news_snippet})
-                            logger.info(f"[CHAT-{request_id}] Fallback included {len(articles)} news articles for inferred topic='{inferred_topic}'")
-                except Exception as e:
-                    logger.debug(f"[CHAT-{request_id}] News fallback failed: {e}")
+            if needs_up_to_date and NEWSAPI_KEY:
+                page_size = MAX_NEWS_ARTICLES_NEWS_QUERY if is_explicit_news else MAX_NEWS_ARTICLES
+                articles = fetch_latest_news(q=topic, country='us', pageSize=page_size)
+                if not articles and topic:
+                    articles = fetch_latest_news(q=None, country='us', pageSize=page_size)
+                if articles:
+                    instruction = "Use the NewsAPI articles below to answer. Cite source and date. If the articles do not contain the answer, say so."
+                    max_arts = MAX_NEWS_ARTICLES_NEWS_QUERY if is_explicit_news else None
+                    max_desc = MAX_NEWS_DESC_CHARS_NEWS_QUERY if is_explicit_news else None
+                    snippet, n = _format_news_articles_for_grounding(articles, instruction, max_articles=max_arts, max_desc_chars=max_desc)
+                    if snippet:
+                        grounding_parts.append(snippet)
+                        logger.info(f"[CHAT-{request_id}] News: {n} articles (topic=%s)", topic or "headlines")
         except Exception as e:
-            logger.debug(f"News detection error: {e}")
+            logger.debug(f"[CHAT-{request_id}] News: %s", e)
 
-        # Bing grounding: inject web search results (like ChatGPT.com with Bing) when Bing key is set
+        # Bing grounding: inject web search results for up-to-date answers when Bing key is set (critical for "who is current X" etc.)
         try:
             from services.contact_resolver import bing_web_search_grounding, email_finder_keys_status
             if email_finder_keys_status().get("bing_configured"):
                 q = user_message.strip()
+                # Use Bing for questions or when query suggests current info; always use for "who is the current X"
+                is_who_current = bool(re.search(r"\bwho\s+is\s+(?:the\s+)?(current\s+)?", q, re.IGNORECASE))
                 is_searchy = (
+                    is_who_current or
                     q.endswith("?") or
-                    re.search(r"\b(what|who|when|where|why|how|which|current|latest|recent|today|is\s+\w+\s+\w+\?)\b", q, re.IGNORECASE)
+                    needs_up_to_date or
+                    re.search(r"\b(what|who|when|where|why|how|which|current|latest|recent|today)\b", q, re.IGNORECASE)
                 )
-                if is_searchy and len(q) > 10:
-                    results = bing_web_search_grounding(q, max_results=5)
+                if is_searchy and len(q) > 5:
+                    num_results = min(8 if is_who_current else 6, MAX_BING_SNIPPETS)
+                    results = bing_web_search_grounding(q, max_results=num_results)
                     if results:
-                        lines = ["Web search results (use to answer with up-to-date information):"]
-                        for i, r in enumerate(results, 1):
+                        lines = ["Web search results. Use these to answer; cite source."]
+                        for i, r in enumerate(results[:MAX_BING_SNIPPETS], 1):
                             snip = (r.get("snippet") or "").strip()
+                            if len(snip) > MAX_BING_SNIP_CHARS:
+                                snip = snip[:MAX_BING_SNIP_CHARS].rsplit(" ", 1)[0] + "..."
                             url = (r.get("url") or "").strip()
                             if snip:
                                 lines.append(f"{i}. {snip}")
                             if url:
                                 lines.append(f"   Source: {url}")
                         bing_snippet = "\n".join(lines)
-                        messages.insert(1, {"role": "system", "content": bing_snippet})
-                        logger.info(f"[CHAT-{request_id}] Bing grounding: injected {len(results)} web snippets")
+                        grounding_parts.append(bing_snippet)
+                        logger.info(f"[CHAT-{request_id}] Bing grounding: injected {len(results[:MAX_BING_SNIPPETS])} web snippets")
         except Exception as e:
             logger.debug(f"[CHAT-{request_id}] Bing grounding failed: {e}")
+
+        if grounding_parts:
+            today = datetime.utcnow().strftime("%Y-%m-%d")
+            combined_grounding = (
+                f"Today (UTC): {today}. The user asked: \"{user_message.strip()[:300].replace(chr(34), chr(39))}\"\n\n"
+                "Answer using the sources below. Cite source and date. If the sources do not contain the answer, say so.\n\n"
+                + "\n\n---\n\n".join(grounding_parts)
+            )
+            if len(combined_grounding) > MAX_GROUNDING_CHARS:
+                combined_grounding = combined_grounding[:MAX_GROUNDING_CHARS].rsplit("\n", 1)[0] + "\n\n[Truncated.]"
+            messages.insert(len(messages) - 1, {"role": "system", "content": combined_grounding})
+            logger.info(f"[CHAT-{request_id}] Grounding: {len(grounding_parts)} part(s), {len(combined_grounding)} chars")
         
         total_context = len(messages)
         logger.info(f"[CHAT] Total messages in context: {total_context}")
