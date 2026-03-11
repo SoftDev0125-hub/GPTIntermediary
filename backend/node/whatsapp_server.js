@@ -839,9 +839,9 @@ app.post('/api/whatsapp/contacts', async (req, res) => {
         const now = Date.now();
         const cacheValid = chatsCache && (now - chatsCacheAt) < CHATS_CACHE_MS;
 
-        if (chatsCacheLoading || (!cacheValid && !chatsCache)) {
-            if (!cacheValid && !chatsCacheLoading) {
-                startBackgroundGetChats();
+        if (chatsCacheLoading || (!cacheValid && !chatsCache) || (chatsCache && chatsCache.length === 0)) {
+            if ((!cacheValid && !chatsCache) || (chatsCache && chatsCache.length === 0)) {
+                if (!chatsCacheLoading) startBackgroundGetChats();
             }
             return res.json({
                 success: true,
@@ -924,9 +924,11 @@ async function getChatsWithRetryAndCache() {
     for (let attempt = 1; attempt <= maxTries; attempt++) {
         try {
             const chats = await client.getChats();
-            chatsCache = chats;
-            chatsCacheAt = Date.now();
-            return chats;
+            if (chats && chats.length > 0) {
+                chatsCache = chats;
+                chatsCacheAt = Date.now();
+            }
+            return chats || [];
         } catch (err) {
             const isRetryable = /undefined|update|getChatModel|Evaluation failed/i.test(String(err.message || ''));
             if (attempt < maxTries && isRetryable) {

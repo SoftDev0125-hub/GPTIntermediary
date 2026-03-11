@@ -3962,7 +3962,7 @@
         let whatsappMessagesRetryCount = 0;
         const WHATSAPP_MESSAGES_AUTO_RETRY_MAX = 4;
         const WHATSAPP_MESSAGES_AUTO_RETRY_DELAY_MS = 12000;
-        const WHATSAPP_FIRST_LOAD_DELAY_MS = 15000;
+        const WHATSAPP_FIRST_LOAD_DELAY_MS = 3000;  // Start loading chats soon after ready (was 15s)
         let whatsappJustScannedQR = false; // Track if QR was just scanned (vs. existing session on launch)
         let whatsappSocket = null;
         let whatsappRealtimePollTimer = null; // Fallback polling when WebSocket is not connected
@@ -4120,15 +4120,22 @@
                 }
 
                 // Authenticated but not ready yet: QR was scanned, but whatsapp-web.js still initializing.
-                // Do NOT call /contacts yet (it requires isReady=true on backend).
+                // Hide QR immediately and show "Preparing" so the QR code does not remain visible.
                 if (data.success && data.is_authenticated && !data.is_ready) {
                     whatsappIsAuthenticated = true;
                     whatsappIsReady = false;
                     whatsappJustScannedQR = true; // Mark that QR was scanned (so we auto-load chats when ready)
 
-                    if (whatsappQrContainer) whatsappQrContainer.style.display = 'flex';
-                    if (whatsappQrImageWrapper) whatsappQrImageWrapper.style.display = 'none';
-                    if (whatsappEmptyState) whatsappEmptyState.style.display = 'none';
+                    if (whatsappQrContainer) whatsappQrContainer.style.display = 'none';
+                    if (whatsappEmptyState) {
+                        whatsappEmptyState.style.display = 'flex';
+                        const emptyStateTitle = whatsappEmptyState.querySelector('h3');
+                        const emptyStateDesc = whatsappEmptyState.querySelector('p');
+                        const emptyStateSubtext = document.getElementById('whatsappEmptyStateSubtext');
+                        if (emptyStateTitle) emptyStateTitle.textContent = 'Finishing connection...';
+                        if (emptyStateDesc) emptyStateDesc.textContent = 'WhatsApp verified. Preparing your chats...';
+                        if (emptyStateSubtext) emptyStateSubtext.textContent = 'Please wait a moment. You can click Refresh to load chats once ready.';
+                    }
                     if (whatsappQrTitle) whatsappQrTitle.textContent = 'Finishing connection...';
                     if (whatsappQrDescription) whatsappQrDescription.textContent = 'WhatsApp verified. Preparing chats...';
                     if (whatsappQrStatus) {
@@ -4431,6 +4438,7 @@
                     whatsappShowButton.textContent = 'Refresh';
                     return;
                 }
+                if (whatsappIsReady && whatsappQrContainer) whatsappQrContainer.style.display = 'none';
 
                 if (whatsappChatsList) {
                     whatsappChatsList.innerHTML = '<div class="whatsapp-sidebar-loading">Loading contacts…<br><small>Accounts with thousands of contacts can take several minutes. The list will update automatically—please wait.</small></div>';
@@ -4480,6 +4488,7 @@
                                     whatsappContactsOffset = data.contacts.length;
                                     whatsappContactsHasMore = !!data.has_more;
                                     whatsappContactsTotalCount = data.total_count != null ? data.total_count : null;
+                                    if (whatsappQrContainer) whatsappQrContainer.style.display = 'none';
                                     if (whatsappChatsList) {
                                         whatsappChatsList.innerHTML = '';
                                         appendWhatsAppContactItems(data.contacts);
@@ -4531,6 +4540,7 @@
                     whatsappContactsOffset = contactsData.contacts.length;
                     whatsappContactsHasMore = !!contactsData.has_more;
                     whatsappContactsTotalCount = contactsData.total_count != null ? contactsData.total_count : null;
+                    if (whatsappQrContainer) whatsappQrContainer.style.display = 'none';
                     if (whatsappChatsList) {
                         whatsappChatsList.innerHTML = '';
                         appendWhatsAppContactItems(contactsData.contacts);
@@ -4556,14 +4566,11 @@
                     whatsappContactsTotalCount = contactsData.total_count != null ? contactsData.total_count : 0;
                     const isRetryableWarning = contactsData.warning && /could not be loaded yet|still loading|initializing/i.test(String(contactsData.warning));
                     if (whatsappChatsList) {
-                        const emptyMsg = (contactsData.warning) ? contactsData.warning : 'No chats found';
-                        const escaped = emptyMsg.replace(/</g, '&lt;').replace(/\n/g, '<br>');
-                        let retryHint = '<br><br>Then click <strong>Refresh</strong> above.';
-                        if (isRetryableWarning && whatsappContactsRetryCount < WHATSAPP_CONTACTS_AUTO_RETRY_MAX) {
-                            const sec = WHATSAPP_CONTACTS_AUTO_RETRY_DELAY_MS / 1000;
-                            retryHint = `<br><br><strong>Will retry automatically in ${sec} seconds…</strong>`;
-                        }
-                        whatsappChatsList.innerHTML = '<div class="whatsapp-sidebar-empty">' + escaped + retryHint + '</div>';
+                        const retrySec = WHATSAPP_CONTACTS_AUTO_RETRY_DELAY_MS / 1000;
+                        const msg = isRetryableWarning && whatsappContactsRetryCount < WHATSAPP_CONTACTS_AUTO_RETRY_MAX
+                            ? 'Chats still loading.<br><strong>Retrying automatically in ' + retrySec + ' seconds…</strong>'
+                            : ((contactsData.warning) ? String(contactsData.warning).replace(/</g, '&lt;').replace(/\n/g, '<br>') : 'No chats found') + '<br><br>Click <strong>Refresh</strong> to try again.';
+                        whatsappChatsList.innerHTML = '<div class="whatsapp-sidebar-empty">' + msg + '</div>';
                     }
                     if (isRetryableWarning && whatsappContactsRetryCount < WHATSAPP_CONTACTS_AUTO_RETRY_MAX) {
                         whatsappContactsRetryCount += 1;
