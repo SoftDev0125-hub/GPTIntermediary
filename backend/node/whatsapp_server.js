@@ -113,9 +113,48 @@ function getMyContactId() {
     }
 }
 
+/**
+ * Safely get chat/contact ID string (handles LID, _serialized, or plain string from whatsapp-web.js).
+ * Returns null if not extractable.
+ */
+function serializeChatId(chat) {
+    try {
+        if (!chat || !chat.id) return null;
+        const id = chat.id;
+        if (typeof id === 'string') return id;
+        if (id._serialized) return String(id._serialized);
+        if (id.user) return `${id.user}@${id.server || 'c.us'}`;
+        // LID or other formats: id.id (string) or Jid.toString()
+        if (id.id && typeof id.id === 'string') return id.id.includes('@') ? id.id : `${id.id}@${id.server || 'c.us'}`;
+        if (typeof id.toString === 'function') {
+            const s = id.toString();
+            if (s && s !== '[object Object]') return s;
+        }
+        return null;
+    } catch (e) {
+        return null;
+    }
+}
+
+/**
+ * Safely get message ID string (handles _serialized or plain string from whatsapp-web.js).
+ * Returns null if not extractable.
+ */
+function serializeMessageId(msg) {
+    try {
+        if (!msg || !msg.id) return null;
+        const id = msg.id;
+        if (typeof id === 'string') return id;
+        if (id._serialized) return String(id._serialized);
+        return null;
+    } catch (e) {
+        return null;
+    }
+}
+
 function cacheWhatsAppMessage(msg) {
     try {
-        const id = msg && msg.id && msg.id._serialized ? String(msg.id._serialized) : null;
+        const id = serializeMessageId(msg);
         if (!id) return;
         messageCacheById.set(id, msg);
         // Keep memory bounded
@@ -334,7 +373,7 @@ function initializeWhatsApp() {
             // Get chat first so contact_id matches the open conversation (1:1 or group)
             const chat = await message.getChat();
             const quickMessage = {
-                id: message.id._serialized,
+                id: serializeMessageId(message),
                 body: message.body || '',
                 from: message.from,
                 fromMe: message.fromMe,
@@ -344,7 +383,7 @@ function initializeWhatsApp() {
                 mediaUrl: null,
                 mediaMimetype: null,
                 mediaFilename: null,
-                contact_id: chat.id._serialized,
+                contact_id: serializeChatId(chat),
                 contact_name: 'Loading...',
                 is_group: !!chat.isGroup
             };
@@ -368,7 +407,7 @@ function initializeWhatsApp() {
             try {
                 const contact = await message.getContact();
                 const formattedMessage = {
-                    id: message.id._serialized,
+                    id: serializeMessageId(message),
                     body: message.body || '',
                     from: message.from,
                     fromMe: message.fromMe,
@@ -378,7 +417,7 @@ function initializeWhatsApp() {
                     mediaUrl: quickMessage.mediaUrl,
                     mediaMimetype: quickMessage.mediaMimetype,
                     mediaFilename: quickMessage.mediaFilename,
-                    contact_id: chat.id._serialized,
+                    contact_id: serializeChatId(chat),
                     contact_name: chat.name || contact.name || 'Unknown',
                     is_group: !!chat.isGroup
                 };
@@ -386,13 +425,13 @@ function initializeWhatsApp() {
             } catch (chatError) {
                 console.error('[WhatsApp] Error getting chat info:', chatError);
             }
-            
+
             console.log('[WhatsApp] Message emitted via WebSocket');
         } catch (error) {
             console.error('[WhatsApp] Error processing incoming message:', error);
         }
     });
-    
+
     // Message create event - fired when a message is created (sent or received)
     client.on('message_create', async (message) => {
         // Only handle sent messages here (received messages are handled by 'message' event)
@@ -401,7 +440,7 @@ function initializeWhatsApp() {
                 cacheWhatsAppMessage(message);
                 const chat = await message.getChat();
                 const quickMessage = {
-                    id: message.id._serialized,
+                    id: serializeMessageId(message),
                     body: message.body || '',
                     from: message.from,
                     fromMe: true,
@@ -411,7 +450,7 @@ function initializeWhatsApp() {
                     mediaUrl: null,
                     mediaMimetype: null,
                     mediaFilename: null,
-                    contact_id: chat.id._serialized,
+                    contact_id: serializeChatId(chat),
                     contact_name: 'Loading...',
                     is_group: !!chat.isGroup
                 };
@@ -435,7 +474,7 @@ function initializeWhatsApp() {
                     const contact = await message.getContact();
                     
                     const formattedMessage = {
-                        id: message.id._serialized,
+                        id: serializeMessageId(message),
                         body: message.body || '',
                         from: message.from,
                         fromMe: true,
@@ -445,11 +484,11 @@ function initializeWhatsApp() {
                         mediaUrl: quickMessage.mediaUrl,
                         mediaMimetype: quickMessage.mediaMimetype,
                         mediaFilename: quickMessage.mediaFilename,
-                        contact_id: chat.id._serialized,
+                        contact_id: serializeChatId(chat),
                         contact_name: chat.name || contact.name || 'Unknown',
                         is_group: !!chat.isGroup
                     };
-                    
+
                     // Emit updated message with full info
                     io.emit('whatsapp_message_update', formattedMessage);
                 } catch (chatError) {
@@ -856,13 +895,16 @@ app.post('/api/whatsapp/contacts', async (req, res) => {
         const chats = chatsCache;
         const allContacts = (chats || []).map(chat => {
             const last = chat.lastMessage || null;
+            const chatId = serializeChatId(chat);
+            const lastMsgId = serializeMessageId(last);
+            const idObj = chat && chat.id && typeof chat.id === 'object' ? chat.id : null;
             return ({
-                contact_id: chat.id._serialized,
-                contact_user: chat.id && chat.id.user ? chat.id.user : null,
-                contact_server: chat.id && chat.id.server ? chat.id.server : null,
-                name: chat.name || (chat.id && chat.id.user) || 'Unknown',
+                contact_id: chatId,
+                contact_user: idObj && idObj.user ? idObj.user : null,
+                contact_server: idObj && idObj.server ? idObj.server : null,
+                name: chat.name || (idObj && idObj.user) || 'Unknown',
                 is_group: !!chat.isGroup,
-                last_message_id: (last && last.id && last.id._serialized) ? String(last.id._serialized) : null,
+                last_message_id: lastMsgId,
                 last_message: (last && last.body) ? String(last.body) : '',
                 last_message_time: (last && typeof last.timestamp === 'number') ? last.timestamp : null,
                 last_message_from_me: (last && typeof last.fromMe === 'boolean') ? last.fromMe : null,
@@ -871,10 +913,25 @@ app.post('/api/whatsapp/contacts', async (req, res) => {
                 unread_count: chat.unreadCount || 0,
                 avatar_url: null
             });
-        });
+        }).filter(c => c.contact_id); // omit chats with no extractable ID (e.g. malformed from library)
         const contacts = allContacts.slice(offset, offset + limit);
         const totalCount = allContacts.length;
         const has_more = offset + contacts.length < totalCount;
+
+        // If we had chats but all were filtered out (unexpected id format), tell the user to retry
+        const rawCount = (chats || []).length;
+        if (rawCount > 0 && totalCount === 0) {
+            console.warn('[WhatsApp] All', rawCount, 'chats were filtered out (contact_id could not be extracted). Returning loading so client can retry.');
+            return res.json({
+                success: true,
+                count: 0,
+                total_count: null,
+                has_more: true,
+                loading: true,
+                contacts: [],
+                warning: 'Chat list is still loading. Please wait a moment and click Refresh again.'
+            });
+        }
 
         console.log('[WhatsApp] Contacts loaded:', contacts.length, 'of', totalCount, '(offset', offset, ')');
         return res.json({
@@ -967,12 +1024,13 @@ function startBackgroundGetChats() {
 
 function buildChatPreview(chat) {
     const last = chat && chat.lastMessage ? chat.lastMessage : null;
+    const idObj = chat && chat.id && typeof chat.id === 'object' ? chat.id : null;
     return {
-        contact_id: chat.id && chat.id._serialized ? String(chat.id._serialized) : null,
-        name: chat.name || (chat.id && chat.id.user) || 'Unknown',
+        contact_id: serializeChatId(chat),
+        name: chat.name || (idObj && idObj.user) || 'Unknown',
         is_group: !!chat.isGroup,
         unread_count: chat.unreadCount || 0,
-        last_message_id: (last && last.id && last.id._serialized) ? String(last.id._serialized) : null,
+        last_message_id: serializeMessageId(last),
         last_message: (last && last.body) ? String(last.body) : '',
         last_message_time: (last && typeof last.timestamp === 'number') ? last.timestamp : null,
         last_message_from_me: (last && typeof last.fromMe === 'boolean') ? last.fromMe : null,
@@ -1141,9 +1199,8 @@ app.post('/api/whatsapp/unread/last', async (req, res) => {
                             best = chat;
                         }
                     }
-                    if (best && best.id && best.id._serialized) {
-                        contactId = String(best.id._serialized);
-                    }
+                    const bestId = best ? serializeChatId(best) : null;
+                    if (bestId) contactId = bestId;
                 }
             }
         }
@@ -1531,10 +1588,13 @@ app.post('/api/whatsapp/messages', async (req, res) => {
             messages.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
         }
 
-        // Format messages for frontend
-        const formattedMessages = await Promise.all((messages || []).map(async (msg) => {
+        // Format messages for frontend (skip messages with no extractable id)
+        const msgId = (m) => serializeMessageId(m);
+        const formattedMessages = (await Promise.all((messages || []).map(async (msg) => {
+            const id = msgId(msg);
+            if (!id) return null;
             const baseMessage = {
-                id: msg.id._serialized,
+                id,
                 body: msg.body || '',
                 from: msg.from || contact_id,
                 fromMe: msg.fromMe,
@@ -1547,8 +1607,8 @@ app.post('/api/whatsapp/messages', async (req, res) => {
             };
 
             // Media can be large; default to on-demand streaming via /api/whatsapp/media/:messageId
-            baseMessage.mediaFetchUrl = `/api/whatsapp/media/${msg.id._serialized}?inline=1`;
-            baseMessage.mediaDownloadUrl = `/api/whatsapp/media/${msg.id._serialized}?download=true`;
+            baseMessage.mediaFetchUrl = `/api/whatsapp/media/${id}?inline=1`;
+            baseMessage.mediaDownloadUrl = `/api/whatsapp/media/${id}?download=true`;
             
             // Best-effort mimetype/filename without downloading the whole file
             if (msg.hasMedia) {
@@ -1587,7 +1647,7 @@ app.post('/api/whatsapp/messages', async (req, res) => {
             }
 
             return baseMessage;
-        }));
+        }))).filter(Boolean);
 
         // Sort by timestamp (oldest first for display)
         formattedMessages.sort((a, b) => a.timestamp - b.timestamp);
@@ -1661,7 +1721,7 @@ app.get('/api/whatsapp/media/:messageId', async (req, res) => {
                 if (chatId) {
                     const chat = await client.getChatById(chatId);
                     const recent = await chat.fetchMessages({ limit: 500 });
-                    message = (recent || []).find(m => m && m.id && m.id._serialized === messageId) || null;
+                    message = (recent || []).find(m => serializeMessageId(m) === messageId) || null;
                     if (message) cacheWhatsAppMessage(message);
                 }
             } catch (e) {}
@@ -1837,7 +1897,7 @@ app.put('/api/whatsapp/message/:messageId', async (req, res) => {
         return res.json({
             success: true,
             message: 'Message edited successfully',
-            message_id: editedMessage.id._serialized,
+            message_id: serializeMessageId(editedMessage),
             body: editedMessage.body
         });
     } catch (error) {
@@ -1877,7 +1937,7 @@ app.post('/api/whatsapp/send', async (req, res) => {
         return res.json({
             success: true,
             message: 'Message sent successfully',
-            message_id: message.id._serialized
+            message_id: serializeMessageId(message)
         });
     } catch (error) {
         console.error('[WhatsApp] Error sending message:', error);

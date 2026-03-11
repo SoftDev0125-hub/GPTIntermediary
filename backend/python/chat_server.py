@@ -206,6 +206,74 @@ def _is_person_contact_query(msg):
     )
 
 
+def _analyze_user_intent(user_message, request_id=None):
+    """
+    Use the LLM to analyze user intent and extract entities for Chat tab commands.
+    Returns a dict: intent (str), entities (dict), confidence ('high'|'low'), or None on failure.
+    This enables natural phrasing (e.g. "I'd like to clear my inbox", "check my WhatsApp") instead of regex-only.
+    """
+    if not user_message or len(user_message.strip()) < 2:
+        return None
+    log = logging.getLogger(__name__)
+    try:
+        client = get_openai_client()
+        prompt = """Analyze the user's message and classify their intent. Return ONLY valid JSON, no other text.
+
+Possible intents:
+- person_contact_query: asking for someone's email, phone, address, or contact info
+- mark_all_read: want to clear inbox / mark emails as read (NOT delete)
+- clean_gmail: want to permanently delete or empty all emails
+- reply_to_email: want to reply to an email (extract sender name/email in "sender")
+- send_email: want to send an email (extract "recipient" and "message_content")
+- whatsapp_unread: check WhatsApp unread or messages
+- whatsapp_send: send a WhatsApp message (extract recipient, message_content)
+- whatsapp_reply: reply on WhatsApp (extract recipient)
+- get_unread_emails: check new/unread emails (extract account: first, second, or both)
+- general_chat: general question, conversation, or unclear intent
+
+Entities to extract when relevant (use null if not present):
+- sender: who they want to reply to (name or email)
+- recipient: who to send to (name or email/phone)
+- message_content: brief content to send
+- account: "first", "second", or "both" when they specify which Gmail/account
+
+User message: """
+        full_prompt = prompt + user_message.strip()[:500]
+        resp = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "You output only valid JSON. No markdown, no explanation. Keys: intent (string), entities (object with optional sender, recipient, message_content, account), confidence (string: high or low)."},
+                {"role": "user", "content": full_prompt},
+            ],
+            max_tokens=200,
+            temperature=0.1,
+        )
+        raw = (resp.choices[0].message.content or "").strip() if resp and resp.choices else ""
+        # Strip markdown code fence if present
+        if raw.startswith("```"):
+            raw = re.sub(r"^```(?:json)?\s*", "", raw)
+            raw = re.sub(r"\s*```\s*$", "", raw)
+        out = json.loads(raw)
+        intent = (out.get("intent") or "general_chat").strip().lower()
+        entities = out.get("entities") if isinstance(out.get("entities"), dict) else {}
+        confidence = (out.get("confidence") or "low").strip().lower()
+        if confidence not in ("high", "low"):
+            confidence = "low"
+        # Normalize intent to known values
+        if "whatsapp" in intent and intent != "general_chat":
+            if "send" in intent:
+                intent = "whatsapp_send"
+            elif "reply" in intent:
+                intent = "whatsapp_reply"
+            else:
+                intent = "whatsapp_unread"
+        return {"intent": intent, "entities": entities, "confidence": confidence}
+    except Exception as e:
+        if request_id:
+            log.debug("[CHAT-%s] Intent analysis failed (fallback to regex): %s", request_id, e)
+        return None
+
+
 def _person_contact_triple_source(user_message, request_id):
     """
     For person/contact queries: get answers from OpenAI, then News API, then Bing;
@@ -802,8 +870,15 @@ def chat():
             'error': True
         })
 
+    # Deep intent analysis (LLM) so natural phrasing is understood, not only regex
+    analyzed = _analyze_user_intent(user_message, request_id)
+    analyzed_intent = (analyzed.get("intent") or "general_chat").strip().lower() if analyzed else "general_chat"
+    analyzed_entities = analyzed.get("entities") if analyzed and isinstance(analyzed.get("entities"), dict) else {}
+    analyzed_confidence = (analyzed.get("confidence") or "low").strip().lower() if analyzed else "low"
+    use_analyzed = analyzed and analyzed_confidence == "high" and analyzed_intent != "general_chat"
+
     # Person/contact query: answer from OpenAI, then News API, then Bing; return most accurate and most recent
-    if _is_person_contact_query(user_message):
+    if _is_person_contact_query(user_message) or (use_analyzed and analyzed_intent == "person_contact_query"):
         triple_resp = _person_contact_triple_source(user_message, request_id)
         if triple_resp:
             return jsonify({'response': triple_resp, 'function_called': None})
@@ -820,6 +895,11 @@ def chat():
             user_message.strip(),
             re.IGNORECASE
         )
+        # Deep analysis: treat LLM-detected intents as mark-read or delete when user phrasing didn't match regex
+        if use_analyzed and analyzed_intent == "mark_all_read" and not mark_read_pattern:
+            mark_read_pattern = True  # truthy so we take the mark-read branch
+        if use_analyzed and analyzed_intent == "clean_gmail" and not delete_pattern:
+            delete_pattern = True
         if mark_read_pattern and delete_pattern:
             return jsonify({
                 'response': "Please specify: do you want to **mark all emails as read** (clear, no deletion) or **permanently delete all emails**? Reply with 'clear' or 'delete'.",
@@ -827,7 +907,10 @@ def chat():
             })
         if mark_read_pattern:
             caller_creds = data.get('user_credentials') if isinstance(data, dict) else None
-            result = call_backend_function('mark_all_read', {}, caller_credentials=caller_creds)
+            mark_read_payload = {}
+            if use_analyzed and (analyzed_entities.get("account") or "").strip().lower() == "second":
+                mark_read_payload["use_second_gmail"] = True
+            result = call_backend_function('mark_all_read', mark_read_payload, caller_credentials=caller_creds)
             if isinstance(result, dict) and result.get('success'):
                 count = result.get('data', {}).get('marked_count', 0)
                 msg = result.get('message', f'Marked {count} unread email(s) as read.')
@@ -836,7 +919,10 @@ def chat():
             return jsonify({'response': f"Could not mark emails as read: {err}", 'error': True, 'function_called': 'mark_all_read'}), 500
         if delete_pattern:
             caller_creds = data.get('user_credentials') if isinstance(data, dict) else None
-            result = call_backend_function('clean_gmail', {}, caller_credentials=caller_creds)
+            clean_payload = {}
+            if use_analyzed and (analyzed_entities.get("account") or "").strip().lower() == "second":
+                clean_payload["use_second_gmail"] = True
+            result = call_backend_function('clean_gmail', clean_payload, caller_credentials=caller_creds)
             if isinstance(result, dict) and result.get('success'):
                 count = result.get('data', {}).get('deleted_count', 0)
                 msg = result.get('message', f'Permanently deleted {count} emails from your Gmail account.')
@@ -853,8 +939,15 @@ def chat():
             user_message,
             re.IGNORECASE
         )
+        # Use deep analysis sender when regex didn't match (e.g. "I need to reply to John")
+        reply_use_analysis = not reply_match and use_analyzed and analyzed_intent == "reply_to_email" and analyzed_entities.get("sender")
         if reply_match:
             raw_spec = reply_match.group(1).strip().strip('"\',.')
+        elif reply_use_analysis:
+            raw_spec = (analyzed_entities.get("sender") or "").strip().strip('"\',.')
+        else:
+            raw_spec = None
+        if reply_match or reply_use_analysis:
             # Strip "using X account" / "from the X account" (and Korean: 리용하여/이용하여, 두/첫 번째 계정) to get person name
             account_phrase = re.compile(
                 r"\s*(?:using|from|with|via)\s+(?:my\s+)?(?:the\s+)?(?:second|first|2nd|1st)\s+(?:account|gmail|email)\s*"
@@ -958,9 +1051,23 @@ def chat():
             m_cmd = re.match(r"^\s*send\s+(.+?)\s+to\s+(.+)$", user_message, re.IGNORECASE)
             if not m_cmd:
                 m_cmd = re.match(r"^\s*(?:can you|please|could you|would you|i want to|i'd like to)\s+send\s+(.+?)\s+to\s+(.+)$", user_message, re.IGNORECASE)
+        # Deep analysis: treat as send_email when intent is send_email and we have recipient (and not WhatsApp)
+        send_from_analysis = False
+        send_analysis_orig = None
+        send_analysis_rec = None
+        if not m_cmd and not want_whatsapp and use_analyzed and analyzed_intent == "send_email" and analyzed_entities.get("recipient"):
+            send_analysis_orig = (analyzed_entities.get("message_content") or user_message.strip()[:200] or "Message").strip()
+            send_analysis_rec = (analyzed_entities.get("recipient") or "").strip()
+            if send_analysis_rec:
+                send_from_analysis = True
+                m_cmd = True
         if m_cmd:
-            original_text = m_cmd.group(1).strip()
-            recipient = m_cmd.group(2).strip()
+            if send_from_analysis and send_analysis_rec:
+                original_text = send_analysis_orig or "Message"
+                recipient = send_analysis_rec
+            else:
+                original_text = m_cmd.group(1).strip()
+                recipient = m_cmd.group(2).strip()
 
             # Detect second-account send and strip that phrase from recipient BEFORE composing,
             # so we create the email the same way as for the first account (clean recipient + same content).
@@ -1110,6 +1217,8 @@ def chat():
     # Fast-path: WhatsApp commands in Chat tab (unread/news, per-contact unread, show history, send message, reply)
     try:
         wa_trigger = bool(re.search(r"\b(whats\s*app|whatsapp)\b", user_message, re.IGNORECASE))
+        if use_analyzed and analyzed_intent.startswith("whatsapp"):
+            wa_trigger = True
         if wa_trigger:
             def _wa_call(method: str, subpath: str, payload: dict = None, timeout_sec: int = 45):
                 base = WHATSAPP_NODE_URL.rstrip('/')
