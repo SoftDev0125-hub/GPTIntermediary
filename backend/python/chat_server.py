@@ -161,7 +161,7 @@ def _extract_news_topic_from_question(message):
 # Max grounding size to stay under model context (gpt-3.5-turbo ~16k tokens). ~1 token ≈ 4 chars.
 MAX_GROUNDING_CHARS = int(os.getenv("CHAT_MAX_GROUNDING_CHARS", "5500"))
 MAX_NEWS_ARTICLES = 5
-MAX_NEWS_ARTICLES_NEWS_QUERY = 10  # When user explicitly asks about news, provide more
+MAX_NEWS_ARTICLES_NEWS_QUERY = 10  # When user asks for news/updates, provide at least 10 recent items
 MAX_NEWS_DESC_CHARS = 250
 MAX_NEWS_DESC_CHARS_NEWS_QUERY = 380  # When user explicitly asks about news, longer snippets
 MAX_BING_SNIPPETS = 4
@@ -403,7 +403,7 @@ USER_CREDENTIALS = {
 # Database imports
 try:
     from database import SessionLocal, init_db, engine
-    from db_models import ChatWithGPT, Base
+    from db_models import ChatWithGPT, Base, User
     DATABASE_AVAILABLE = True
     logger.info("[OK] Database modules loaded successfully")
     
@@ -421,6 +421,35 @@ except ImportError as e:
     SessionLocal = None
     Base = None
     engine = None
+    User = None
+
+
+def _get_user_login_email(user_id):
+    """Return the login email for the given user_id (same as used when logging in), or None if not found or DB unavailable."""
+    if not DATABASE_AVAILABLE or not SessionLocal or not User or not user_id:
+        return None
+    try:
+        uid = int(user_id)
+    except (ValueError, TypeError):
+        return None
+    try:
+        db = SessionLocal()
+        try:
+            user = db.query(User).filter(User.id == uid).first()
+            return (user.email or "").strip() if user else None
+        finally:
+            db.close()
+    except Exception as e:
+        logger.warning(f"[CHAT] Could not get user login email for user_id={user_id}: {e}")
+        return None
+
+
+def _normalize_login_email(s):
+    """Normalize email for comparison: strip and lowercase (emails are case-insensitive)."""
+    if not s or not isinstance(s, str):
+        return ""
+    return s.strip().lower()
+
 
 # Function definitions for OpenAI
 FUNCTIONS = [
@@ -473,7 +502,7 @@ FUNCTIONS = [
     },
     {
         "name": "reply_to_email",
-        "description": "Reply to an email. Always reply from the account that received that email. Each listed email is labeled (EMAIL1) or (EMAIL2): set from_second_account=true when replying to an email shown as (EMAIL2); false when (EMAIL1).",
+        "description": "Reply to an email. If the user says to reply 'using the second account' or 'from the first account' (or Korean: x번째 계정을 리용하여), set from_second_account accordingly (true=second, false=first). Otherwise reply from the account that received the email: from_second_account=true when the email was in (EMAIL2); false when (EMAIL1).",
         "parameters": {
             "type": "object",
             "properties": {
@@ -495,14 +524,28 @@ FUNCTIONS = [
         }
     },
     {
-        "name": "clean_gmail",
-        "description": "Permanently delete all emails from a Gmail account. Use when the user asks to clean Gmail, delete all emails, or wipe inbox. use_second_account=true when they say second account/account 2/EMAIL2; false when they say first account/account 1/EMAIL1.",
+        "name": "mark_all_read",
+        "description": "Mark all emails in the account as read. Does NOT delete any emails. Use when the user says clear, clear inbox, clear my gmail, mark all as read, mark emails as read, etc. Do NOT use for delete/empty/wipe/clean — use clean_gmail for permanent deletion only.",
         "parameters": {
             "type": "object",
             "properties": {
                 "use_second_account": {
                     "type": "boolean",
-                    "description": "True = second account (EMAIL2) only; False = first account (EMAIL1) only. Match the account the user asked to clean.",
+                    "description": "True = second account (EMAIL2) only; False = first account (EMAIL1) only.",
+                    "default": False
+                }
+            }
+        }
+    },
+    {
+        "name": "clean_gmail",
+        "description": "Permanently delete all emails from a Gmail account (cannot be undone). Use ONLY when the user says delete, empty, wipe, or clean (meaning remove/destroy). Do NOT use when the user says 'clear' or 'mark as read' — those mean mark as read only; use mark_all_read for that.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "use_second_account": {
+                    "type": "boolean",
+                    "description": "True = second account (EMAIL2) only; False = first account (EMAIL1) only. Match the account the user asked to delete from.",
                     "default": False
                 }
             }
@@ -765,13 +808,23 @@ def chat():
         if triple_resp:
             return jsonify({'response': triple_resp, 'function_called': None})
 
-    # Fast-path: "Clear" / "Mark all (emails) as read" -> mark all unread as read (no deletion)
+    # Fast-path: "Clear" / "Mark all as read" vs "Delete" / "Empty" — execute directly (no email confirmation)
     try:
         mark_read_pattern = re.search(
             r"\b(clear\s*(my\s+)?(gmail|email|inbox)?|mark\s+all\s+(?:emails?\s+)?as\s+read)\b",
             user_message.strip(),
             re.IGNORECASE
         )
+        delete_pattern = re.search(
+            r"\b(clean\s+(my\s+)?gmail|delete(?:\s+all\s+(?:my\s+)?emails?)?|wipe\s+(my\s+)?(gmail|inbox)|empty(?:\s+(?:my\s+)?(?:gmail|inbox))?)\b",
+            user_message.strip(),
+            re.IGNORECASE
+        )
+        if mark_read_pattern and delete_pattern:
+            return jsonify({
+                'response': "Please specify: do you want to **mark all emails as read** (clear, no deletion) or **permanently delete all emails**? Reply with 'clear' or 'delete'.",
+                'function_called': None
+            })
         if mark_read_pattern:
             caller_creds = data.get('user_credentials') if isinstance(data, dict) else None
             result = call_backend_function('mark_all_read', {}, caller_credentials=caller_creds)
@@ -781,16 +834,6 @@ def chat():
                 return jsonify({'response': msg, 'function_called': 'mark_all_read'})
             err = result.get('error') or result.get('detail') or result.get('message') or str(result)
             return jsonify({'response': f"Could not mark emails as read: {err}", 'error': True, 'function_called': 'mark_all_read'}), 500
-    except Exception as e_cmd:
-        print(f"Direct mark-all-read handling failed: {e_cmd}")
-
-    # Fast-path: "Empty" / "Delete" / "Clean Gmail" / "Wipe" -> permanently delete all emails (not "clear")
-    try:
-        delete_pattern = re.search(
-            r"\b(clean\s+(my\s+)?gmail|delete(?:\s+all\s+(?:my\s+)?emails?)?|wipe\s+(my\s+)?(gmail|inbox)|empty(?:\s+(?:my\s+)?(?:gmail|inbox))?)\b",
-            user_message,
-            re.IGNORECASE
-        )
         if delete_pattern:
             caller_creds = data.get('user_credentials') if isinstance(data, dict) else None
             result = call_backend_function('clean_gmail', {}, caller_credentials=caller_creds)
@@ -801,9 +844,9 @@ def chat():
             err = result.get('error') or result.get('detail') or result.get('message') or str(result)
             return jsonify({'response': f"Could not clean Gmail: {err}", 'error': True, 'function_called': 'clean_gmail'}), 500
     except Exception as e_cmd:
-        print(f"Direct clean Gmail handling failed: {e_cmd}")
+        print(f"Direct clear/delete handling failed: {e_cmd}")
 
-    # Fast-path: "Reply to xxx" — fetch that person's email, analyze with AI, create and send reply
+    # Fast-path: "Reply to xxx" — optionally "using second/first account"; fetch email, draft reply, send from chosen account
     try:
         reply_match = re.search(
             r"\b(?:please\s+)?reply\s+(?:to\s+)?(?:the\s+)?(?:email\s+from\s+)?(.+?)(?:\s*\.)?\s*$",
@@ -811,7 +854,17 @@ def chat():
             re.IGNORECASE
         )
         if reply_match:
-            target_spec = reply_match.group(1).strip().strip('"\',.')
+            raw_spec = reply_match.group(1).strip().strip('"\',.')
+            # Strip "using X account" / "from the X account" (and Korean: 리용하여/이용하여, 두/첫 번째 계정) to get person name
+            account_phrase = re.compile(
+                r"\s*(?:using|from|with|via)\s+(?:my\s+)?(?:the\s+)?(?:second|first|2nd|1st)\s+(?:account|gmail|email)\s*"
+                r"|\s*(?:second|first|2nd|1st)\s+(?:account|gmail|email)\s+(?:to\s+)?(?:reply\s+)?"
+                r"|\s*account\s*[12]\s*|\s*EMAIL[12]\s*"
+                r"|\s*(?:리용하여|이용하여)\s*(?:내\s+)?(?:두\s*번째|첫\s*번째|[12])\s*번째\s*계정\s*"
+                r"|\s*(?:두\s*번째|첫\s*번째)\s*계정\s*(?:을?\s*리용하여|을?\s*이용하여)?\s*",
+                re.IGNORECASE
+            )
+            target_spec = account_phrase.sub(" ", raw_spec).strip().strip('"\',.')
             if target_spec:
                 caller_creds = data.get('user_credentials') if isinstance(data, dict) else None
                 # Fetch unread from both accounts to find an email from this sender
@@ -842,7 +895,16 @@ def chat():
                 body_raw = target_email.get("body") or target_email.get("snippet") or ""
                 if body_raw and len(body_raw) > 1200:
                     body_raw = body_raw[:1200] + "..."
-                use_second = target_email.get("account") == "EMAIL2"
+                # User can say "reply to X using second account" → send from that account; else use account that received the email
+                msg_lower = (user_message or "").lower()
+                reply_from_second = bool(re.search(r"\b(second|2nd|account\s*2|email\s*2|email2|두\s*번째)\s*(account|gmail|email|계정)?\b", msg_lower))
+                reply_from_first = bool(re.search(r"\b(first|1st|account\s*1|email\s*1|email1|첫\s*번째)\s*(account|gmail|email|계정)?\b", msg_lower))
+                if reply_from_second and not reply_from_first:
+                    use_second = True
+                elif reply_from_first and not reply_from_second:
+                    use_second = False
+                else:
+                    use_second = target_email.get("account") == "EMAIL2"
                 # Draft reply using AI
                 try:
                     client = get_openai_client()
@@ -1073,18 +1135,170 @@ def chat():
                 except Exception:
                     return str(ts or '')
 
-            # 0) Reply to [contact] on WhatsApp — analyze last message, synthesize reply, send
-            m_reply = re.search(
-                r"\breply\s+to\s+(.+?)\s+on\s+(?:my\s+)?(?:whats\s*app|whatsapp)\s*(?:account)?\s*$",
-                user_message, re.IGNORECASE
-            )
-            if not m_reply:
-                m_reply = re.search(
-                    r"\breply\s+on\s+(?:my\s+)?(?:whats\s*app|whatsapp)\s+to\s+(.+?)\s*$",
-                    user_message, re.IGNORECASE
+            def _wa_clean_text(s: str) -> str:
+                s = (s or "").strip()
+                # Remove trailing “on whatsapp” / “via whatsapp” / “in whatsapp”
+                s = re.sub(r"\s+(?:on|via|in)\s+(?:my\s+)?(?:whats\s*app|whatsapp)\b\s*$", "", s, flags=re.IGNORECASE).strip()
+                # Remove leading “on whatsapp …”
+                s = re.sub(r"^\s*(?:on|via|in)\s+(?:my\s+)?(?:whats\s*app|whatsapp)\b[\s\,\-:]+", "", s, flags=re.IGNORECASE).strip()
+                # Remove “from whatsapp account …” (we currently support one WA backend; ignore account selection phrases)
+                s = re.sub(r"\s+from\s+(?:my\s+)?(?:whats\s*app|whatsapp)\s*(?:account)?\s*(?:#?\s*\d+|one|two|first|second)?\s*$", "", s, flags=re.IGNORECASE).strip()
+                s = re.sub(r"^\s*from\s+(?:my\s+)?(?:whats\s*app|whatsapp)\s*(?:account)?\s*(?:#?\s*\d+|one|two|first|second)?[\s\,\-:]+", "", s, flags=re.IGNORECASE).strip()
+                return s
+
+            def _wa_extract_send_or_reply(message: str):
+                """
+                Return tuple (kind, recipient, text) where:
+                  - kind: 'reply' | 'send'
+                  - recipient: str
+                  - text: str (may be None for AI reply flow)
+                """
+                msg = _wa_clean_text(message)
+
+                # Explicit reply content: “reply to John: …”, “reply to John saying …”, “reply to John with …”
+                m = re.search(
+                    r"\breply\s+(?:back\s+)?(?:to\s+)?(.+?)\s+(?:saying|with(?:\s+the)?\s+(?:message|text|content)|that\s+says|:|-)\s*(.+)\s*$",
+                    msg,
+                    re.IGNORECASE | re.DOTALL,
                 )
-            if m_reply:
-                who = m_reply.group(1).strip().strip('"\'.')
+                if m:
+                    return ("reply", m.group(1).strip().strip('"\'.'), m.group(2).strip().strip())
+
+                # AI reply flow: “reply to John on WhatsApp”
+                m_reply = re.search(r"\breply\s+to\s+(.+?)\s+on\s+(?:my\s+)?(?:whats\s*app|whatsapp)\s*(?:account)?\s*$", message, re.IGNORECASE)
+                if not m_reply:
+                    m_reply = re.search(r"\breply\s+on\s+(?:my\s+)?(?:whats\s*app|whatsapp)\s+to\s+(.+?)\s*$", message, re.IGNORECASE)
+                if m_reply:
+                    return ("reply", m_reply.group(1).strip().strip('"\'.'), None)
+
+                # “send a message with the content X to Y”, “send a message to Y saying X”
+                def _asking_to_msg(phrase):
+                    s = (phrase or "").strip().strip('.\'"')
+                    if not s:
+                        return phrase
+                    m = re.match(r"^(?:asking\s+)?(when)\s+(.+?)\s+is\s*$", s, re.IGNORECASE)
+                    if m:
+                        return f"When is {m.group(2).strip()}?"
+                    m = re.match(r"^(?:asking\s+)?(when)\s+(.+?)\s+will\s+be\s*$", s, re.IGNORECASE)
+                    if m:
+                        return f"When will {m.group(2).strip()} be?"
+                    m = re.match(r"^(?:and\s+)?ask\s+(.+)\s*$", s, re.IGNORECASE)
+                    if m:
+                        inner = m.group(1).strip().strip('.\'"')
+                        return _asking_to_msg(inner) if not inner.endswith("?") else inner
+                    if not s.endswith("?"):
+                        s = s.rstrip(".")
+                        if any(s.lower().startswith(w) for w in ("when", "where", "who", "what", "how", "why")):
+                            s = s + "?"
+                    return s
+
+                m = re.search(
+                    r"\bsend\s+(?:a\s+)?(?:whats\s*app\s+)?message\s+to\s+(.+?)\s+(?:asking|and\s+ask)\s+(.+?)\s*$",
+                    msg,
+                    re.IGNORECASE | re.DOTALL,
+                )
+                if m:
+                    rec = m.group(1).strip().strip('"\'.')
+                    ask_phrase = m.group(2).strip().strip('.\'"')
+                    if rec and ask_phrase:
+                        return ("send", rec, _asking_to_msg(ask_phrase) or ask_phrase)
+
+                m = re.search(
+                    r"\bsend\s+(?:a\s+)?(?:whats\s*app\s+)?message\s+(?:asking|and\s+ask)\s+(.+?)\s*$",
+                    msg,
+                    re.IGNORECASE | re.DOTALL,
+                )
+                if m:
+                    ask_phrase = m.group(1).strip().strip('.\'"')
+                    if ask_phrase:
+                        return ("send", None, _asking_to_msg(ask_phrase) or ask_phrase)
+
+                m = re.search(
+                    r"\b(?:send|text|message|dm|tell|notify)\s+(?:a\s+)?(?:whats\s*app\s+)?(?:message|text)?\s*(?:with(?:\s+the)?\s+(?:message|text|content)\s+)?(.+?)\s+to\s+(.+?)\s*$",
+                    msg,
+                    re.IGNORECASE | re.DOTALL,
+                )
+                if m:
+                    # If user used “with content … to …” then group(1) is the content; else it might be “send message <content> to <recipient>”
+                    text_guess = m.group(1).strip().strip('"\'.')
+                    recipient = m.group(2).strip().strip('"\'.')
+                    # Guard: if text_guess is too short and looks like recipient (e.g. “send message to John”), let other patterns handle
+                    if recipient and text_guess and len(text_guess) >= 1:
+                        return ("send", recipient, text_guess)
+
+                # “send message to John: Hello”, “message John - Hello”
+                m = re.search(
+                    r"\b(?:send|text|message|dm|tell|notify)\s+(?:a\s+)?(?:whats\s*app\s+)?(?:message|text)?\s*(?:to\s+)?(.+?)[\:\-]\s*(.+)\s*$",
+                    msg,
+                    re.IGNORECASE | re.DOTALL,
+                )
+                if m:
+                    return ("send", m.group(1).strip().strip('"\'.'), m.group(2).strip().strip())
+
+                # Existing simple form: “send <text> to <recipient>”
+                m = re.search(r"\bsend\s+(.+?)\s+to\s+(.+?)\s*$", msg, re.IGNORECASE | re.DOTALL)
+                if m:
+                    return ("send", m.group(2).strip().strip('"\'.'), m.group(1).strip().strip('"\'.'))
+
+                # “whatsapp John: Hello”, “WhatsApp John saying Hello”
+                m = re.search(
+                    r"\b(?:whats\s*app|whatsapp)\s+(.+?)\s+(?:saying|with|:|-)\s*(.+)\s*$",
+                    msg,
+                    re.IGNORECASE | re.DOTALL,
+                )
+                if m:
+                    return ("send", m.group(1).strip().strip('"\'.'), m.group(2).strip().strip())
+
+                return (None, None, None)
+
+            def _wa_validate_send(recipient: str, text: str):
+                """
+                Ensure we have a plausible recipient and message; avoid swapping or mis-parsing.
+                Returns (recipient, text) possibly corrected, or (None, None) if invalid.
+                """
+                if not recipient or not text:
+                    return (None, None)
+                recipient = (recipient or "").strip().strip('"\'.')
+                text = (text or "").strip()
+                if not recipient or not text:
+                    return (None, None)
+                # If 'text' looks like "X to Y" (contains " to " and recipient is one word), we may have swapped
+                if " to " in text and len(recipient.split()) <= 2 and len(text.split()) > 2:
+                    parts = text.split(" to ", 1)
+                    if len(parts) == 2 and parts[0].strip() and parts[1].strip():
+                        possible_msg, possible_recip = parts[0].strip(), parts[1].strip()
+                        if possible_recip and not possible_recip.lower().startswith(("on ", "via ", "in ")):
+                            text, recipient = possible_msg, possible_recip
+                # Recipient should not be the same as the whole message (obvious misparse)
+                if recipient == text or (len(text) < 20 and text.lower() == recipient.lower()):
+                    return (None, None)
+                return (recipient, text)
+
+            # 0) Reply / Send message (more flexible extraction)
+            kind, recipient, text = _wa_extract_send_or_reply(user_message)
+            if kind == "send" and recipient and text:
+                recipient, text = _wa_validate_send(recipient, text)
+                if not recipient or not text:
+                    kind, recipient, text = None, None, None
+            if kind == "reply" and recipient and text:
+                # Explicit reply text provided by user -> send as-is
+                resolved = _wa_call('POST', 'resolve', {'query': recipient, 'include_groups': True, 'max_candidates': 5}, timeout_sec=60)
+                if not isinstance(resolved, dict) or not resolved.get('success') or not resolved.get('match'):
+                    err = (resolved or {}).get('error') or 'Could not resolve contact'
+                    return jsonify({'response': f"WhatsApp: {err}.", 'error': True})
+                contact_id = (resolved.get('match') or {}).get('contact_id')
+                contact_name = (resolved.get('match') or {}).get('name') or recipient
+                if not contact_id:
+                    return jsonify({'response': f"WhatsApp: Could not resolve contact for '{recipient}'.", 'error': True})
+                send_res = _wa_call('POST', 'send', {'contact_id': contact_id, 'text': text}, timeout_sec=60)
+                if isinstance(send_res, dict) and send_res.get('success'):
+                    return jsonify({'response': f"✅ Replied to **{contact_name}** on WhatsApp: _{text}_", 'function_called': 'whatsapp_reply'})
+                err = (send_res or {}).get('error') or (send_res or {}).get('message') or 'Failed to send'
+                return jsonify({'response': f"❌ Could not send WhatsApp reply to {contact_name}: {err}", 'error': True, 'function_called': 'whatsapp_reply'}), 500
+
+            if kind == "reply" and recipient and text is None:
+                # AI reply flow: analyze last message, synthesize reply, send
+                who = recipient
                 resolved = _wa_call('POST', 'resolve', {'query': who, 'include_groups': True, 'max_candidates': 5}, timeout_sec=60)
                 if not isinstance(resolved, dict) or not resolved.get('success') or not resolved.get('match'):
                     err = (resolved or {}).get('error') or 'Could not resolve contact'
@@ -1135,49 +1349,31 @@ def chat():
                 err = (send_res or {}).get('error') or (send_res or {}).get('message') or 'Failed to send'
                 return jsonify({'response': f"WhatsApp: Could not send reply to {contact_name}: {err}", 'error': True, 'function_called': 'whatsapp_reply'}), 500
 
-            # 1) Send message — match multiple phrasings (we're already in wa_trigger)
-            recipient = None
-            text = None
-            # "send message to John: Hello" or "send message to John - Hello"
-            m_send_a = re.search(
-                r"\bsend\s+(?:a\s+)?(?:whats\s*app\s+)?message\s+to\s+(.+?)[\:\-]\s*(.+)$",
-                user_message, re.IGNORECASE
-            )
-            if m_send_a:
-                recipient = str(m_send_a.group(1)).strip().strip('"\'.')
-                text = str(m_send_a.group(2)).strip()
-            if not (recipient and text):
-                # "send Hello to John on whatsapp" or "send Hello to John"
-                m_send_b = re.search(
-                    r"\bsend\s+(.+?)\s+to\s+(.+?)\s*$",
-                    user_message, re.IGNORECASE | re.DOTALL
-                )
-                if m_send_b:
-                    text = str(m_send_b.group(1)).strip().strip('"\'.')
-                    recipient = str(m_send_b.group(2)).strip().strip('"\'.')
-                    # Remove trailing " on/whatsapp" / " via whatsapp" from recipient
-                    recipient = re.sub(r"\s+(?:on|via)\s+(?:my\s+)?(?:whats\s*app|whatsapp)\s*$", "", recipient, flags=re.IGNORECASE).strip()
-            if not (recipient and text):
-                # "on whatsapp send Hello to John" or "via whatsapp send Hello to John"
-                m_send_c = re.search(
-                    r"(?:on\s+|via\s+)(?:my\s+)?(?:whats\s*app|whatsapp)\s+send\s+(.+?)\s+to\s+(.+?)\s*$",
-                    user_message, re.IGNORECASE | re.DOTALL
-                )
-                if m_send_c:
-                    text = str(m_send_c.group(1)).strip().strip('"\'.')
-                    recipient = str(m_send_c.group(2)).strip().strip('"\'.')
-                    recipient = re.sub(r"\s+(?:on|via)\s+(?:my\s+)?(?:whats\s*app|whatsapp)\s*$", "", recipient, flags=re.IGNORECASE).strip()
+            if kind == "send" and not recipient and text:
+                return jsonify({
+                    'response': "Please specify **who** to send the WhatsApp message to. For example: _Send a WhatsApp message **to John** asking when the meeting is._ or _Send to Maria: When will the meeting be?_",
+                    'function_called': 'whatsapp_send_prompt_contact'
+                })
 
-            if recipient and text:
+            if kind == "send" and recipient and text:
                 resolved = _wa_call('POST', 'resolve', {'query': recipient, 'include_groups': True, 'max_candidates': 5}, timeout_sec=60)
                 if not isinstance(resolved, dict) or not resolved.get('success') or not resolved.get('match'):
                     err = (resolved or {}).get('error') or 'Could not resolve contact'
                     return jsonify({'response': f"WhatsApp: {err}.", 'error': True})
 
-                contact_id = (resolved.get('match') or {}).get('contact_id')
-                contact_name = (resolved.get('match') or {}).get('name') or recipient
+                match = resolved.get('match') or {}
+                contact_id = match.get('contact_id')
+                contact_name = (match.get('name') or '').strip() or recipient
+                candidates = resolved.get('candidates') or []
+                # Confirm we're sending to the intended contact: use resolved name and optional disambiguation
                 if not contact_id:
                     return jsonify({'response': f"WhatsApp: Could not resolve contact for '{recipient}'.", 'error': True})
+                if candidates and len(candidates) > 1:
+                    other_names = [c.get('name') for c in candidates[:3] if c.get('name') and c.get('name') != contact_name]
+                    if other_names:
+                        contact_name = f"{contact_name} (matched '{recipient}'; other matches: {', '.join(other_names)})"
+                elif contact_name != recipient and recipient:
+                    contact_name = f"{contact_name} (matched '{recipient}')"
 
                 send_res = _wa_call('POST', 'send', {'contact_id': contact_id, 'text': text}, timeout_sec=60)
                 if isinstance(send_res, dict) and send_res.get('success'):
@@ -1185,7 +1381,7 @@ def chat():
                 err = (send_res or {}).get('error') or (send_res or {}).get('message') or 'Failed to send'
                 return jsonify({'response': f"❌ Could not send WhatsApp message to {contact_name}: {err}", 'error': True, 'function_called': 'whatsapp_send'}), 500
 
-            # 2) Show conversation/history with a contact: up to 20 messages
+            # 1) Show conversation/history with a contact: up to 20 messages
             m_hist = re.search(
                 r"\b(?:show|display|open|get)\b.*\b(?:conversation|chat|messages|communications)\b.*\bwith\s+(.+?)(?:\s+on\s+(?:whats\s*app|whatsapp))?\b",
                 user_message, re.IGNORECASE
@@ -1215,7 +1411,49 @@ def chat():
                     lines.append(f"{prefix} {body}")
                 return jsonify({'response': "\n".join(lines), 'function_called': 'whatsapp_history'})
 
-            # 3) New messages from a specific contact
+            # 3a) Last message from a specific contact (read or unread) — "show me the last message from X on WhatsApp"
+            m_last = re.search(
+                r"\b(?:show\s+(?:me\s+)?(?:the\s+)?)?last\s+message\s+from\s+(.+?)\s*(?:on\s+(?:my\s+)?(?:whats\s*app|whatsapp))?\s*$",
+                user_message, re.IGNORECASE
+            )
+            if not m_last:
+                m_last = re.search(
+                    r"\b(?:what(?:'s|s)?\s+)?(?:the\s+)?last\s+message\s+from\s+(.+?)\s*(?:on\s+(?:whats\s*app|whatsapp))?\s*$",
+                    user_message, re.IGNORECASE
+                )
+            if m_last:
+                who = m_last.group(1).strip().strip('"\'.')
+                resolved = _wa_call('POST', 'resolve', {'query': who, 'include_groups': True, 'max_candidates': 5}, timeout_sec=60)
+                if not isinstance(resolved, dict) or not resolved.get('success') or not resolved.get('match'):
+                    err = (resolved or {}).get('error') or 'Could not resolve contact'
+                    return jsonify({'response': f"WhatsApp: {err}.", 'error': True})
+                contact_id = (resolved.get('match') or {}).get('contact_id')
+                contact_name = (resolved.get('match') or {}).get('name') or who
+                if not contact_id:
+                    return jsonify({'response': f"WhatsApp: Could not resolve contact for '{who}'.", 'error': True})
+                msgs_res = _wa_call('POST', 'messages', {'contact_id': contact_id, 'limit': 30}, timeout_sec=90)
+                if not isinstance(msgs_res, dict) or not msgs_res.get('success'):
+                    err = (msgs_res or {}).get('error') or 'Failed to load messages'
+                    return jsonify({'response': f"WhatsApp: {err}.", 'error': True}), 500
+                messages = (msgs_res.get('messages') or [])
+                # Last message received from them (not from me)
+                last_from_them = None
+                for m in reversed(messages):
+                    if not m.get('fromMe'):
+                        last_from_them = m
+                        break
+                if not last_from_them:
+                    return jsonify({'response': f"WhatsApp: No message **from** **{contact_name}** in this chat (only your messages).", 'function_called': 'whatsapp_last_from'})
+                ts = _fmt_ts(last_from_them.get('timestamp'))
+                body = (last_from_them.get('body') or '').strip()
+                if not body and last_from_them.get('hasMedia'):
+                    body = f"[Media: {last_from_them.get('type') or 'attachment'}]"
+                header = f"WhatsApp: last message from **{contact_name}**"
+                if ts:
+                    header += f" ({ts})"
+                return jsonify({'response': f"{header}\n\n{body}", 'function_called': 'whatsapp_last_from'})
+
+            # 3b) New messages from a specific contact (unread only)
             m_from = re.search(
                 r"\b(?:any\s+)?new\s+(?:messages?|news)\s+from\s+(.+?)\s+on\s+(?:whats\s*app|whatsapp)\b",
                 user_message, re.IGNORECASE
@@ -1232,7 +1470,20 @@ def chat():
                 contact = (chk.get('contact') or {})
                 contact_name = contact.get('name') or who
                 if not chk.get('has_new'):
-                    return jsonify({'response': f"WhatsApp: **no new messages** from **{contact_name}**.", 'function_called': 'whatsapp_unread_from'})
+                    # Show last message from them even if read, so user sees the latest from that contact
+                    msgs_res = _wa_call('POST', 'messages', {'contact_id': contact.get('contact_id'), 'limit': 20}, timeout_sec=90)
+                    last_line = ""
+                    if isinstance(msgs_res, dict) and msgs_res.get('success'):
+                        messages = (msgs_res.get('messages') or [])
+                        for m in reversed(messages):
+                            if not m.get('fromMe'):
+                                ts = _fmt_ts(m.get('timestamp'))
+                                body = (m.get('body') or '').strip()
+                                if not body and m.get('hasMedia'):
+                                    body = f"[Media: {m.get('type') or 'attachment'}]"
+                                last_line = f"\n\n**Last message from {contact_name}**" + (f" ({ts})" if ts else "") + f":\n{body}"
+                                break
+                    return jsonify({'response': f"WhatsApp: **no new messages** from **{contact_name}**.{last_line}", 'function_called': 'whatsapp_unread_from'})
                 msg = chk.get('message') or {}
                 ts = _fmt_ts(msg.get('timestamp'))
                 body = (msg.get('body') or '').strip()
@@ -1594,8 +1845,9 @@ Be conversational and helpful, like ChatGPT.
 
 **get_unread_emails:** Set account='first' when the user asks only for first account/EMAIL1/account 1; set account='second' when they ask only for second account/EMAIL2/account 2; set account='both' when they ask for "new emails" without specifying, or "both accounts".
 **send_email:** Set from_second_account=true only when the user clearly asks to send FROM the second account (e.g. "send ... using my second account", "from the second account", "from EMAIL2"). Otherwise use the first account (from_second_account=false).
-**reply_to_email:** Reply from the account that received the email. If the email was listed with (EMAIL2), set from_second_account=true; if (EMAIL1), set from_second_account=false.
-**clean_gmail:** Set use_second_account=true when the user asks to clean/delete from the second account only; false for first account only."""
+**reply_to_email:** If the user says to reply using the second/first account (e.g. 'reply to X using the second account', '두 번째 계정을 리용하여 답장'), set from_second_account=true for second account, false for first. Otherwise use the account that received the email: (EMAIL2)→true, (EMAIL1)→false.
+**mark_all_read:** Use for 'clear' or 'mark all as read' — marks emails as read only, no deletion. Set use_second_account=true for second account only; false for first.
+**clean_gmail:** Use ONLY for 'delete', 'empty', 'wipe', or 'clean' (permanent deletion). Never use for 'clear' or 'mark as read'. Set use_second_account=true when the user asks to delete from the second account only; false for first account only."""
         
         messages = [
             {
@@ -1625,7 +1877,10 @@ Be conversational and helpful, like ChatGPT.
 
         # Single path for latest news: detect when user wants current info, get topic, fetch once
         try:
-            is_explicit_news = bool(re.search(r"\b(news|headlines?|latest\s+news|recent\s+news|breaking|in\s+the\s+news)\b", user_message, re.IGNORECASE))
+            is_explicit_news = bool(re.search(
+                r"\b(news|headlines?|latest\s+news|recent\s+news|recent\s+updates|updates|breaking|in\s+the\s+news)\b",
+                user_message, re.IGNORECASE
+            ))
             if re.search(r"\b(news|headline|latest|recent|today|breaking|current|who is the)\b", user_message, re.IGNORECASE):
                 needs_up_to_date = True
             if re.search(r"^\s*(what|who|how|when|where|why)\s+(is|are|was|were|did|do)\s+", user_message, re.IGNORECASE) and len(user_message.strip()) > 10:
@@ -1646,7 +1901,8 @@ Be conversational and helpful, like ChatGPT.
                 topic = _extract_news_topic_from_question(user_message)
 
             if needs_up_to_date and NEWSAPI_KEY:
-                page_size = MAX_NEWS_ARTICLES_NEWS_QUERY if is_explicit_news else MAX_NEWS_ARTICLES
+                # When user asks for news/updates, fetch at least 10 items (recent news, not just a few)
+                page_size = max(MAX_NEWS_ARTICLES_NEWS_QUERY, 10) if is_explicit_news else MAX_NEWS_ARTICLES
                 articles = fetch_latest_news(q=topic, country='us', pageSize=page_size)
                 if not articles and topic:
                     articles = fetch_latest_news(q=None, country='us', pageSize=page_size)
@@ -1843,8 +2099,23 @@ Be conversational and helpful, like ChatGPT.
                 function_args['use_second_gmail'] = bool(from_second or from_ui or from_message)
             elif function_name == 'reply_to_email':
                 function_args['use_second_gmail'] = function_args.get('from_second_account', False)
+            elif function_name == 'mark_all_read':
+                function_args['use_second_gmail'] = function_args.get('use_second_account', False)
             elif function_name == 'clean_gmail':
                 function_args['use_second_gmail'] = function_args.get('use_second_account', False)
+
+            # Safeguard: never run clean_gmail (delete) when user said "clear" or "mark as read" — those mean mark as read only
+            if function_name == 'clean_gmail':
+                msg_lower = (user_message or '').strip().lower()
+                looks_clear = bool(re.search(r'\b(clear|mark\s+all\s+as\s+read|mark\s+emails?\s+as\s+read)\b', msg_lower))
+                looks_delete = bool(re.search(r'\b(delete|empty|wipe|clean\s+gmail|remove\s+all)\b', msg_lower))
+                if looks_clear and not looks_delete:
+                    final_message = (
+                        '"Clear" and "mark as read" only mark emails as read; they do not delete. '
+                        'To mark all as read, say **clear** or **mark all as read**. '
+                        'To permanently delete all emails, say **delete** or **empty**.'
+                    )
+                    return jsonify({'response': final_message, 'function_called': None})
 
             # get_unread_emails: support account first / second / both (EMAIL1 first then EMAIL2)
             if function_name == 'get_unread_emails':
@@ -1935,6 +2206,18 @@ Be conversational and helpful, like ChatGPT.
                             final_message += "\n\nSay 'show more' for the next page."
                 if function_result.get('next_page_token') is not None or function_result.get('next_page_token_2') is not None:
                     _response_extra = {'next_page_token': function_result.get('next_page_token'), 'next_page_token_2': function_result.get('next_page_token_2')}
+            elif function_name == 'mark_all_read':
+                if function_result.get('success'):
+                    count = function_result.get('data', {}).get('marked_count', 0)
+                    final_message = function_result.get('message', f'Marked {count} unread email(s) as read.')
+                else:
+                    final_message = function_result.get('message') or function_result.get('error') or function_result.get('detail') or 'Could not mark emails as read.'
+            elif function_name == 'clean_gmail':
+                if function_result.get('success'):
+                    count = function_result.get('data', {}).get('deleted_count', 0)
+                    final_message = function_result.get('message', f'Permanently deleted {count} emails from your Gmail account.')
+                else:
+                    final_message = function_result.get('message') or function_result.get('error') or function_result.get('detail') or 'Could not delete emails.'
             elif function_name == 'find_email':
                 # Email lookup: DB first, then Bing (or show method to find). Return clear message.
                 status = function_result.get('_http_status', 0)

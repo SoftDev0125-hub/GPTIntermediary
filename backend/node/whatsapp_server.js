@@ -21,6 +21,14 @@ const fs = require('fs');
 const cors = require('cors');
 const http = require('http');
 const { Server } = require('socket.io');
+let puppeteer = null;
+try {
+    // Optional dependency: if installed, we use its bundled Chromium for maximum portability.
+    // In dev, this lets us use Puppeteer's browser; in dist/, we prefer a bundled chrome.exe (see below).
+    puppeteer = require('puppeteer');
+} catch (e) {
+    puppeteer = null;
+}
 
 const app = express();
 const server = http.createServer(app);
@@ -50,11 +58,13 @@ let readyAt = 0;
 // Timeout for fallback when 'ready' never fires (whatsapp-web.js known issue)
 let readyFallbackTimeout = null;
 // Warmup delay: wait this many ms after 'ready' before allowing getChats/getChatById (WhatsApp Web needs time to initialize)
-const CHATS_WARMUP_MS = 30000;
+const CHATS_WARMUP_MS = 45000; // 45s for large accounts (10k+ contacts)
 // Cache getChats() result for pagination (avoid repeated heavy getChats() calls)
-const CHATS_CACHE_MS = 120000; // 2 minutes
+const CHATS_CACHE_MS = 300000; // 5 minutes (large accounts may scroll 10k+ contacts)
 let chatsCache = null;
 let chatsCacheAt = 0;
+/** True while getChats() is running in the background; clients get loading: true until cache is ready */
+let chatsCacheLoading = false;
 // Cache messages so media can be fetched later even when whatsapp-web.js can't resolve by id (common for older messages)
 const messageCacheById = new Map(); // messageId -> Message
 
@@ -215,22 +225,43 @@ function initializeWhatsApp() {
     // Create client with LocalAuth for session persistence
     // Use 1.34.6 for getChats fix (GroupMetadata undefined → PR #5779). If you see "auth timeout" on QR
     // login, try downgrading to 1.34.2 temporarily; then upgrade again when a fix is released.
+    const puppeteerOpts = {
+        headless: true,
+        args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-accelerated-2d-canvas',
+            '--no-first-run',
+            '--no-zygote',
+            '--disable-gpu'
+        ]
+    };
+
+    // 1) Prefer a Chromium that is bundled inside the app (works in dist/ on machines without internet)
+    const BUNDLED_CHROME_DIR_WIN = path.join(PROJECT_ROOT, 'whatsapp_chrome_win');
+    const BUNDLED_CHROME_EXE_WIN = path.join(BUNDLED_CHROME_DIR_WIN, 'chrome.exe');
+    if (process.platform === 'win32' && fs.existsSync(BUNDLED_CHROME_EXE_WIN)) {
+        puppeteerOpts.executablePath = BUNDLED_CHROME_EXE_WIN;
+        console.log('[WhatsApp] Using bundled Chromium at:', BUNDLED_CHROME_EXE_WIN);
+    } else if (puppeteer && typeof puppeteer.executablePath === 'function') {
+        // 2) Fallback: use Puppeteer's own bundled Chromium (requires that it has been downloaded once)
+        try {
+            const exe = puppeteer.executablePath();
+            if (exe && typeof exe === 'string' && exe.length > 0) {
+                puppeteerOpts.executablePath = exe;
+                console.log('[WhatsApp] Using Puppeteer bundled Chromium at:', exe);
+            }
+        } catch (e) {
+            console.warn('[WhatsApp] Could not resolve Puppeteer executablePath, falling back to whatsapp-web.js default:', e && e.message);
+        }
+    }
+
     client = new Client({
         authStrategy: new LocalAuth({
             dataPath: SESSION_DIR
         }),
-        puppeteer: {
-            headless: true,
-            args: [
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage',
-                '--disable-accelerated-2d-canvas',
-                '--no-first-run',
-                '--no-zygote',
-                '--disable-gpu'
-            ]
-        }
+        puppeteer: puppeteerOpts
     });
 
     // QR code event - fired when QR code is generated
@@ -274,7 +305,9 @@ function initializeWhatsApp() {
         } catch (e) {
             console.error('[WhatsApp] Could not write auth flag:', e);
         }
-        
+        // Preload all chats in background after warmup (enables accurate display for 10k+ contacts without blocking)
+        setTimeout(() => startBackgroundGetChats(), CHATS_WARMUP_MS);
+
         // Emit ready event to all connected clients
         const readyPayload = {
             is_connected: true,
@@ -779,9 +812,9 @@ app.post('/api/whatsapp/initialize', async (req, res) => {
  * Get WhatsApp contacts/chats
  */
 app.post('/api/whatsapp/contacts', async (req, res) => {
-    // Allow up to 5 minutes for getChats() when user has hundreds/thousands of chats (no server-side timeout)
-    req.setTimeout(300000);
-    res.setTimeout(300000);
+    // Allow up to 10 minutes for getChats() when user has 10k+ chats (no server-side timeout)
+    req.setTimeout(600000);
+    res.setTimeout(600000);
     try {
         // Check if session folder was deleted and reset if needed
         await checkAndResetIfSessionDeleted();
@@ -803,31 +836,24 @@ app.post('/api/whatsapp/contacts', async (req, res) => {
 
         const limit = Math.min(Math.max(parseInt(req.body.limit, 10) || 20, 1), 100);
         const offset = Math.max(parseInt(req.body.offset, 10) || 0, 0);
-        let chats;
         const now = Date.now();
-        if (chatsCache && (now - chatsCacheAt) < CHATS_CACHE_MS) {
-            chats = chatsCache;
-        } else {
-            const maxTries = 18;
-            const retryDelayMs = 8000;
-            for (let attempt = 1; attempt <= maxTries; attempt++) {
-                try {
-                    chats = await client.getChats();
-                    chatsCache = chats;
-                    chatsCacheAt = Date.now();
-                    break;
-                } catch (getChatsErr) {
-                    const isRetryable = /undefined|update|getChatModel|Evaluation failed/i.test(String(getChatsErr.message || ''));
-                    if (attempt < maxTries && isRetryable) {
-                        console.log(`[WhatsApp] getChats attempt ${attempt}/${maxTries} failed, retrying in ${retryDelayMs}ms...`, getChatsErr.message);
-                        await new Promise(r => setTimeout(r, retryDelayMs));
-                    } else {
-                        throw getChatsErr;
-                    }
-                }
+        const cacheValid = chatsCache && (now - chatsCacheAt) < CHATS_CACHE_MS;
+
+        if (chatsCacheLoading || (!cacheValid && !chatsCache)) {
+            if (!cacheValid && !chatsCacheLoading) {
+                startBackgroundGetChats();
             }
+            return res.json({
+                success: true,
+                count: 0,
+                total_count: null,
+                has_more: true,
+                loading: true,
+                contacts: []
+            });
         }
-        
+
+        const chats = chatsCache;
         const allContacts = (chats || []).map(chat => {
             const last = chat.lastMessage || null;
             return ({
@@ -847,13 +873,14 @@ app.post('/api/whatsapp/contacts', async (req, res) => {
             });
         });
         const contacts = allContacts.slice(offset, offset + limit);
-        const has_more = offset + contacts.length < allContacts.length;
+        const totalCount = allContacts.length;
+        const has_more = offset + contacts.length < totalCount;
 
-        console.log('[WhatsApp] Contacts loaded:', contacts.length, 'of', allContacts.length, '(offset', offset, ')');
+        console.log('[WhatsApp] Contacts loaded:', contacts.length, 'of', totalCount, '(offset', offset, ')');
         return res.json({
             success: true,
             count: contacts.length,
-            total_count: allContacts.length,
+            total_count: totalCount,
             has_more: has_more,
             contacts: contacts
         });
@@ -911,6 +938,29 @@ async function getChatsWithRetryAndCache() {
         }
     }
     return [];
+}
+
+/**
+ * Start getChats() in the background so the first page can be served once ready.
+ * Used for large accounts (10k+ contacts) so the first request does not block/timeout.
+ * Call after warmup. Safe to call when already loading (no-op).
+ */
+function startBackgroundGetChats() {
+    if (chatsCacheLoading || !client) return;
+    const now = Date.now();
+    if (chatsCache && (now - chatsCacheAt) < CHATS_CACHE_MS) return;
+    chatsCacheLoading = true;
+    console.log('[WhatsApp] Loading all chats in background (first page will appear when ready)...');
+    getChatsWithRetryAndCache()
+        .then((chats) => {
+            console.log('[WhatsApp] Background getChats completed:', (chats || []).length, 'chats');
+        })
+        .catch((err) => {
+            console.error('[WhatsApp] Background getChats failed:', err.message);
+        })
+        .finally(() => {
+            chatsCacheLoading = false;
+        });
 }
 
 function buildChatPreview(chat) {
@@ -1414,9 +1464,9 @@ app.get('/api/whatsapp/avatar/image', async (req, res) => {
  * Get messages for a specific contact/chat
  */
 app.post('/api/whatsapp/messages', async (req, res) => {
-    // Allow up to 5 minutes for fetchMessages when chat has long history (prioritize displaying messages)
-    req.setTimeout(300000);
-    res.setTimeout(300000);
+    // Allow up to 10 minutes for fetchMessages when chat has hundreds of messages (prioritize displaying messages)
+    req.setTimeout(600000);
+    res.setTimeout(600000);
     try {
         // Check if session folder was deleted and reset if needed
         await checkAndResetIfSessionDeleted();

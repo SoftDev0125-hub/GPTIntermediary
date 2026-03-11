@@ -783,6 +783,7 @@
                             <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
                                 <button id="whatsappShowButton" class="whatsapp-refresh-btn">Refresh</button>
                             </div>
+                            <div id="whatsappContactsCount" class="whatsapp-contacts-count" style="display: none; font-size: 12px; color: var(--text-muted, #666); margin-top: 4px;"></div>
                         </div>
                     </div>
                     <div class="whatsapp-sidebar-content" id="whatsappChatsList">
@@ -1594,6 +1595,7 @@
                     body: JSON.stringify({ 
                         message: message,
                         user_id: userIdInt,
+                        user_email: localStorage.getItem('user_email') || undefined,
                         history: conversationHistory,
                         email_page_token: lastEmailPageToken || undefined,
                         email_page_token_2: lastEmailPageToken2 || undefined,
@@ -3952,7 +3954,9 @@
         let whatsappIsLoadingChats = false;
         let whatsappContactsRetryTimer = null;
         let whatsappContactsRetryCount = 0;
+        let whatsappContactsPollTimer = null;
         const WHATSAPP_CONTACTS_AUTO_RETRY_MAX = 4;
+        const WHATSAPP_CONTACTS_POLL_INTERVAL_MS = 10000;
         const WHATSAPP_CONTACTS_AUTO_RETRY_DELAY_MS = 15000;
         let whatsappMessagesRetryTimer = null;
         let whatsappMessagesRetryCount = 0;
@@ -3965,14 +3969,15 @@
         let currentChatMessages = []; // Store messages for currently open chat
         const WHATSAPP_CONTACTS_PAGE_SIZE = 50;  // Per request; all contacts are shown by loading more on scroll (no total cap)
         const WHATSAPP_MESSAGES_PAGE_SIZE = 30;
-        // Timeouts set long so contact list and chat history always have time to load (prioritize display over quick failure)
-        const WHATSAPP_CONTACTS_FIRST_LOAD_TIMEOUT_MS = 300000;  // 5 min: first load runs getChats() which loads ALL chats
-        const WHATSAPP_CONTACTS_LOAD_MORE_TIMEOUT_MS = 180000;    // 3 min: paginated load (cache may expire with many contacts)
-        const WHATSAPP_MESSAGES_TIMEOUT_MS = 180000;             // 3 min: loading chat history (can be slow with long history)
+        // Timeouts set long so 10k+ contacts and long chat histories load within the allowed timeframe
+        const WHATSAPP_CONTACTS_FIRST_LOAD_TIMEOUT_MS = 600000;  // 10 min: first load (polling until backend has full list)
+        const WHATSAPP_CONTACTS_LOAD_MORE_TIMEOUT_MS = 300000;    // 5 min: paginated load (cache may expire with many contacts)
+        const WHATSAPP_MESSAGES_TIMEOUT_MS = 300000;             // 5 min: loading chat history (hundreds of messages per chat)
         let allWhatsAppContacts = []; // Accumulated contacts (for display and avatar lazy-load)
         let whatsappContactsOffset = 0;
         let whatsappContactsHasMore = false;
         let whatsappContactsLoadingMore = false;
+        let whatsappContactsTotalCount = null; // Total from server (for "X of Y" display; no frontend cap)
         let whatsappMessagePaging = {}; // contactId -> { oldestId, oldestTimestamp, reachedStart, loadingOlder }
 
         function updateWhatsAppMeAvatar(myContactId, myName) {
@@ -4410,6 +4415,10 @@
                 clearTimeout(whatsappContactsRetryTimer);
                 whatsappContactsRetryTimer = null;
             }
+            if (whatsappContactsPollTimer) {
+                clearTimeout(whatsappContactsPollTimer);
+                whatsappContactsPollTimer = null;
+            }
             whatsappShowButton.disabled = true;
             whatsappShowButton.textContent = 'Loading...';
             allWhatsAppMessages = [];
@@ -4424,7 +4433,7 @@
                 }
 
                 if (whatsappChatsList) {
-                    whatsappChatsList.innerHTML = '<div class="whatsapp-sidebar-loading">Loading contacts…<br><small>With many chats this can take several minutes. Please wait.</small></div>';
+                    whatsappChatsList.innerHTML = '<div class="whatsapp-sidebar-loading">Loading contacts…<br><small>Accounts with thousands of contacts can take several minutes. The list will update automatically—please wait.</small></div>';
                 }
                 const contactsResponse = await fetch(`${WHATSAPP_API_URL}/api/whatsapp/contacts`, {
                     method: 'POST',
@@ -4445,16 +4454,88 @@
                 const contactsData = await contactsResponse.json();
                 console.log('[*] WhatsApp contacts (first page):', contactsData);
 
+                if (contactsData.success && contactsData.loading) {
+                    if (whatsappContactsPollTimer) clearTimeout(whatsappContactsPollTimer);
+                    if (whatsappChatsList) {
+                        whatsappChatsList.innerHTML = '<div class="whatsapp-sidebar-loading">Loading your chats…<br><small>Accounts with thousands (or 10,000+) contacts can take several minutes. The list will update automatically—please keep this tab open.</small></div>';
+                    }
+                    function pollContactsFirstPage() {
+                        if (!whatsappShowButton) return;
+                        fetch(`${WHATSAPP_API_URL}/api/whatsapp/contacts`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ offset: 0, limit: WHATSAPP_CONTACTS_PAGE_SIZE }),
+                            signal: AbortSignal.timeout(WHATSAPP_CONTACTS_FIRST_LOAD_TIMEOUT_MS)
+                        }).then(r => r.ok ? r.json() : r.json().then(j => { throw new Error(j.error || r.statusText); }))
+                            .then(async (data) => {
+                                if (data.loading) {
+                                    whatsappContactsPollTimer = setTimeout(pollContactsFirstPage, WHATSAPP_CONTACTS_POLL_INTERVAL_MS);
+                                    return;
+                                }
+                                whatsappContactsPollTimer = null;
+                                if (data.success && data.contacts && data.contacts.length > 0) {
+                                    whatsappContactsRetryCount = 0;
+                                    whatsappHasLoadedChats = true;
+                                    allWhatsAppContacts = data.contacts.slice();
+                                    whatsappContactsOffset = data.contacts.length;
+                                    whatsappContactsHasMore = !!data.has_more;
+                                    whatsappContactsTotalCount = data.total_count != null ? data.total_count : null;
+                                    if (whatsappChatsList) {
+                                        whatsappChatsList.innerHTML = '';
+                                        appendWhatsAppContactItems(data.contacts);
+                                    }
+                                    updateWhatsAppContactsCount();
+                                    if (!currentWhatsAppChatId && data.contacts[0] && data.contacts[0].contact_id) {
+                                        try {
+                                            await selectWhatsAppContact(data.contacts[0].contact_id, data.contacts[0].name);
+                                        } catch (e) {}
+                                    }
+                                    scheduleWhatsAppAvatarLoad();
+                                    setupWhatsAppContactsScrollLoadMore();
+                                } else if (data.success && (!data.contacts || data.contacts.length === 0)) {
+                                    allWhatsAppContacts = [];
+                                    whatsappContactsOffset = 0;
+                                    whatsappContactsHasMore = false;
+                                    whatsappContactsTotalCount = data.total_count != null ? data.total_count : 0;
+                                    if (whatsappChatsList) {
+                                        whatsappChatsList.innerHTML = '<div class="whatsapp-sidebar-empty">No chats found.</div>';
+                                    }
+                                    updateWhatsAppContactsCount();
+                                } else if (whatsappChatsList) {
+                                    whatsappChatsList.innerHTML = '<div class="whatsapp-sidebar-empty">Error loading chats</div>';
+                                }
+                            })
+                            .catch((err) => {
+                                whatsappContactsPollTimer = null;
+                                console.error('[!] WhatsApp contacts poll error:', err);
+                                if (whatsappChatsList) {
+                                    const msg = (err && err.message) ? err.message : 'Error loading chats';
+                                    whatsappChatsList.innerHTML = '<div class="whatsapp-sidebar-empty">' + String(msg).replace(/</g, '&lt;') + '<br><br>Click <strong>Refresh</strong> to try again.</div>';
+                                }
+                            })
+                            .finally(() => {
+                                if (whatsappShowButton) {
+                                    whatsappShowButton.disabled = false;
+                                    whatsappShowButton.textContent = 'Refresh';
+                                }
+                            });
+                    }
+                    whatsappContactsPollTimer = setTimeout(pollContactsFirstPage, WHATSAPP_CONTACTS_POLL_INTERVAL_MS);
+                    return;
+                }
+
                 if (contactsData.success && contactsData.contacts && contactsData.contacts.length > 0) {
                     whatsappContactsRetryCount = 0;
                     whatsappHasLoadedChats = true;
                     allWhatsAppContacts = contactsData.contacts.slice();
                     whatsappContactsOffset = contactsData.contacts.length;
                     whatsappContactsHasMore = !!contactsData.has_more;
+                    whatsappContactsTotalCount = contactsData.total_count != null ? contactsData.total_count : null;
                     if (whatsappChatsList) {
                         whatsappChatsList.innerHTML = '';
                         appendWhatsAppContactItems(contactsData.contacts);
                     }
+                    updateWhatsAppContactsCount();
 
                     // Auto-open the first chat (so history is visible immediately after connecting)
                     if (!currentWhatsAppChatId && contactsData.contacts[0] && contactsData.contacts[0].contact_id) {
@@ -4472,6 +4553,7 @@
                     allWhatsAppContacts = [];
                     whatsappContactsOffset = 0;
                     whatsappContactsHasMore = false;
+                    whatsappContactsTotalCount = contactsData.total_count != null ? contactsData.total_count : 0;
                     const isRetryableWarning = contactsData.warning && /could not be loaded yet|still loading|initializing/i.test(String(contactsData.warning));
                     if (whatsappChatsList) {
                         const emptyMsg = (contactsData.warning) ? contactsData.warning : 'No chats found';
@@ -4515,10 +4597,25 @@
                     }, WHATSAPP_CONTACTS_AUTO_RETRY_DELAY_MS);
                 }
             } finally {
-                if (whatsappShowButton) {
+                if (whatsappShowButton && !whatsappContactsPollTimer) {
                     whatsappShowButton.disabled = false;
                     whatsappShowButton.textContent = 'Refresh';
                 }
+            }
+        }
+
+        function updateWhatsAppContactsCount() {
+            const el = document.getElementById('whatsappContactsCount');
+            if (!el) return;
+            const shown = allWhatsAppContacts.length;
+            if (whatsappContactsTotalCount != null && whatsappContactsTotalCount > 0) {
+                el.style.display = '';
+                el.textContent = 'Showing ' + shown.toLocaleString() + ' of ' + whatsappContactsTotalCount.toLocaleString() + ' contacts';
+            } else if (shown > 0) {
+                el.style.display = '';
+                el.textContent = shown.toLocaleString() + ' contacts loaded';
+            } else {
+                el.style.display = 'none';
             }
         }
 
@@ -4603,6 +4700,7 @@
             }, { passive: true });
         }
 
+        const WHATSAPP_LOAD_MORE_RETRY_MS = 5000;
         async function loadMoreWhatsAppContacts() {
             if (whatsappContactsLoadingMore || !whatsappContactsHasMore || !whatsappChatsList) return;
             whatsappContactsLoadingMore = true;
@@ -4618,17 +4716,35 @@
                     body: JSON.stringify({ offset: whatsappContactsOffset, limit: WHATSAPP_CONTACTS_PAGE_SIZE }),
                     signal: AbortSignal.timeout(WHATSAPP_CONTACTS_LOAD_MORE_TIMEOUT_MS)
                 });
-                if (!response.ok) return;
-                const data = await response.json();
-                if (!data.success || !Array.isArray(data.contacts)) return;
-                if (data.contacts.length === 0) {
+                if (!response.ok) {
                     whatsappContactsHasMore = false;
+                    return;
+                }
+                const data = await response.json();
+                if (!data.success) return;
+                if (data.loading) {
+                    loaderEl.remove();
+                    whatsappContactsLoadingMore = false;
+                    setTimeout(loadMoreWhatsAppContacts, WHATSAPP_LOAD_MORE_RETRY_MS);
+                    return;
+                }
+                if (data.total_count != null) whatsappContactsTotalCount = data.total_count;
+                if (!Array.isArray(data.contacts)) return;
+                if (data.contacts.length === 0) {
+                    whatsappContactsHasMore = !!data.has_more;
+                    if (data.has_more) {
+                        loaderEl.remove();
+                        whatsappContactsLoadingMore = false;
+                        setTimeout(loadMoreWhatsAppContacts, WHATSAPP_LOAD_MORE_RETRY_MS);
+                        return;
+                    }
                     return;
                 }
                 data.contacts.forEach(c => allWhatsAppContacts.push(c));
                 whatsappContactsOffset += data.contacts.length;
                 whatsappContactsHasMore = !!data.has_more;
                 appendWhatsAppContactItems(data.contacts);
+                updateWhatsAppContactsCount();
                 scheduleWhatsAppAvatarLoad();
             } finally {
                 loaderEl.remove();
@@ -5221,6 +5337,12 @@
             if (whatsappMessagesRetryTimer) {
                 clearTimeout(whatsappMessagesRetryTimer);
                 whatsappMessagesRetryTimer = null;
+            }
+            const listEl = whatsappMessagesList || whatsappMessagesContainer;
+            if (listEl && whatsappEmptyState) {
+                whatsappEmptyState.style.display = 'none';
+                listEl.innerHTML = '<div class="whatsapp-sidebar-loading" style="padding: 24px; text-align: center;">Loading messages…<br><small>Chats with long history may take up to a few minutes.</small></div>';
+                if (whatsappMessagesList) whatsappMessagesList.style.display = 'flex';
             }
             try {
                 console.log(`[*] Loading messages for contact: ${contactName} (${contactId})`);
