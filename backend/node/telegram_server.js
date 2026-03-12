@@ -19,14 +19,24 @@ const envPath = path.join(__dirname, '..', '..', '.env');
 try { require('dotenv').config({ path: envPath }); } catch (e) { /* .env optional */ }
 
 const express = require('express');
-const { TelegramClient } = require('telegram');
-const { StringSession } = require('telegram/sessions');
-const { Api } = require('telegram/tl');
-const { NewMessage, Raw } = require('telegram/events');
 const fs = require('fs');
 const cors = require('cors');
 const http = require('http');
 const { Server } = require('socket.io');
+// Defer heavy GramJS requires until after server.listen() so the port binds immediately (avoids "not listening" on slow/copied dist)
+let TelegramClient, StringSession, Api, NewMessage, Raw;
+function loadTelegramDeps() {
+    if (TelegramClient) return;
+    const t = require('telegram');
+    TelegramClient = t.TelegramClient;
+    const sess = require('telegram/sessions');
+    StringSession = sess.StringSession;
+    const tl = require('telegram/tl');
+    Api = tl.Api;
+    const ev = require('telegram/events');
+    NewMessage = ev.NewMessage;
+    Raw = ev.Raw;
+}
 
 const app = express();
 const server = http.createServer(app);
@@ -394,6 +404,8 @@ if (fs.existsSync(SESSION_FILE)) {
  * Initialize Telegram client
  */
 function initializeTelegram() {
+    // Ensure GramJS dependencies are loaded before constructing client
+    loadTelegramDeps();
     if (client) {
         console.log('[Telegram] Client already initialized');
         return;
@@ -1649,6 +1661,7 @@ io.on('connection', (socket) => {
 
 // Start server - listen on all interfaces (0.0.0.0) for VPS compatibility
 server.listen(PORT, '0.0.0.0', () => {
+    loadTelegramDeps();
     console.log(`[Telegram Server] Server running on http://0.0.0.0:${PORT}`);
     console.log(`[Telegram Server] WebSocket server ready`);
     if (API_ID && API_HASH) {

@@ -4210,6 +4210,14 @@
                         whatsappJustScannedQR = true;
                         if (whatsappQrContainer) whatsappQrContainer.style.display = 'flex';
                         if (whatsappEmptyState) whatsappEmptyState.style.display = 'none';
+                        // Only hide image wrapper when we don't already have a QR (avoids broken image on first load).
+                        // Do NOT hide it on every 3s auth check or the QR would flicker off every 3 seconds.
+                        var alreadyHaveQr = whatsappQrImage && whatsappQrImage.src && whatsappQrImage.src.startsWith('data:');
+                        if (whatsappQrImageWrapper && !alreadyHaveQr) whatsappQrImageWrapper.style.display = 'none';
+                        if (whatsappQrStatus && !alreadyHaveQr) {
+                            whatsappQrStatus.textContent = 'Loading QR code...';
+                            whatsappQrStatus.style.color = '#8696a0';
+                        }
                         await loadWhatsAppQRCode();
                         if (!whatsappAuthCheckInterval) {
                             whatsappAuthCheckInterval = setInterval(async () => {
@@ -4320,7 +4328,9 @@
 
                 if (data.success && data.qr_code) {
                     if (whatsappQrImage) {
-                        whatsappQrImage.src = ''; // clear stale/cached so new QR is shown
+                        // Always clear the src first so the browser does not keep showing a broken or stale image
+                        whatsappQrImage.src = '';
+                        whatsappQrImage.removeAttribute('srcset');
                         whatsappQrImage.src = data.qr_code;
                     }
                     if (whatsappQrContainer) {
@@ -4401,9 +4411,33 @@
                             whatsappIsLoadingChats = false;
                         }
                     }
-                } else {
+                } else if (data.loading) {
+                    // Backend is still generating QR – show message and poll again soon; socket may also push QR
+                    if (whatsappQrImage) whatsappQrImage.src = '';
+                    if (whatsappQrImageWrapper) whatsappQrImageWrapper.style.display = 'none';
                     if (whatsappQrStatus) {
-                        whatsappQrStatus.textContent = data.message || 'QR code not available. Please wait...';
+                        whatsappQrStatus.textContent = data.message || 'Generating QR code... Please wait.';
+                        whatsappQrStatus.style.color = '#8696a0';
+                    }
+                    if (whatsappQrContainer) whatsappQrContainer.style.display = 'flex';
+                    if (whatsappEmptyState) whatsappEmptyState.style.display = 'none';
+                    // Poll again in 2s so we get the QR as soon as it's ready (socket may deliver it sooner)
+                    setTimeout(() => {
+                        if (!whatsappIsAuthenticated && whatsappQrContainer && whatsappQrContainer.style.display !== 'none') {
+                            loadWhatsAppQRCode(false);
+                        }
+                    }, 2000);
+                } else {
+                    // No QR code in response: hide the image to avoid showing a broken placeholder
+                    if (whatsappQrImage) {
+                        whatsappQrImage.src = '';
+                    }
+                    if (whatsappQrImageWrapper) {
+                        whatsappQrImageWrapper.style.display = 'none';
+                    }
+                    if (whatsappQrStatus) {
+                        const msg = data && (data.message || data.error) ? String(data.message || data.error) : 'QR code not available. Please wait...';
+                        whatsappQrStatus.textContent = msg;
                         whatsappQrStatus.style.color = '#8696a0';
                     }
                 }
@@ -4477,7 +4511,15 @@
                         }).then(r => r.ok ? r.json() : r.json().then(j => { throw new Error(j.error || r.statusText); }))
                             .then(async (data) => {
                                 if (data.loading) {
-                                    whatsappContactsPollTimer = setTimeout(pollContactsFirstPage, WHATSAPP_CONTACTS_POLL_INTERVAL_MS);
+                                    // Use server's wait_seconds so we poll at the right time (no need to refresh multiple times)
+                                    const waitMs = (data.wait_seconds != null && data.wait_seconds > 0)
+                                        ? Math.min(15000, Math.max(2000, data.wait_seconds * 1000))
+                                        : WHATSAPP_CONTACTS_POLL_INTERVAL_MS;
+                                    if (whatsappChatsList) {
+                                        const sec = Math.ceil(waitMs / 1000);
+                                        whatsappChatsList.innerHTML = '<div class="whatsapp-sidebar-loading">Loading your chats…<br><small>' + (data.message || '') + ' Retrying in ' + sec + 's.</small></div>';
+                                    }
+                                    whatsappContactsPollTimer = setTimeout(pollContactsFirstPage, waitMs);
                                     return;
                                 }
                                 whatsappContactsPollTimer = null;
@@ -4565,14 +4607,20 @@
                     whatsappContactsHasMore = false;
                     whatsappContactsTotalCount = contactsData.total_count != null ? contactsData.total_count : 0;
                     const isRetryableWarning = contactsData.warning && /could not be loaded yet|still loading|initializing/i.test(String(contactsData.warning));
+                    // Heuristic: right after connecting, the first contacts call can briefly return 0 with no warning
+                    // while the Node backend is still warming up. When that happens, treat it as "still loading"
+                    // instead of "No chats found" so the user is prompted to wait rather than click Refresh twice.
+                    const shouldTreatAsLoading =
+                        isRetryableWarning ||
+                        (!whatsappHasLoadedChats && (contactsData.total_count == null || contactsData.total_count === 0));
                     if (whatsappChatsList) {
                         const retrySec = WHATSAPP_CONTACTS_AUTO_RETRY_DELAY_MS / 1000;
-                        const msg = isRetryableWarning && whatsappContactsRetryCount < WHATSAPP_CONTACTS_AUTO_RETRY_MAX
+                        const msg = shouldTreatAsLoading && whatsappContactsRetryCount < WHATSAPP_CONTACTS_AUTO_RETRY_MAX
                             ? 'Chats still loading.<br><strong>Retrying automatically in ' + retrySec + ' seconds…</strong>'
                             : ((contactsData.warning) ? String(contactsData.warning).replace(/</g, '&lt;').replace(/\n/g, '<br>') : 'No chats found') + '<br><br>Click <strong>Refresh</strong> to try again.';
                         whatsappChatsList.innerHTML = '<div class="whatsapp-sidebar-empty">' + msg + '</div>';
                     }
-                    if (isRetryableWarning && whatsappContactsRetryCount < WHATSAPP_CONTACTS_AUTO_RETRY_MAX) {
+                    if (shouldTreatAsLoading && whatsappContactsRetryCount < WHATSAPP_CONTACTS_AUTO_RETRY_MAX) {
                         whatsappContactsRetryCount += 1;
                         whatsappContactsRetryTimer = setTimeout(() => {
                             whatsappContactsRetryTimer = null;
@@ -4840,6 +4888,27 @@
                         checkWhatsAppStatus();
                     }
                 }
+            });
+
+            // QR code pushed from server as soon as it's generated – show it immediately so user doesn't wait
+            whatsappSocket.on('whatsapp_qr_code', (data) => {
+                if (!data || !data.qr_code || whatsappIsAuthenticated) return;
+                console.log('[*] WhatsApp QR code received via WebSocket');
+                if (whatsappQrImage) {
+                    whatsappQrImage.src = '';
+                    whatsappQrImage.removeAttribute('srcset');
+                    whatsappQrImage.src = data.qr_code;
+                }
+                if (whatsappQrContainer) whatsappQrContainer.style.display = 'flex';
+                if (whatsappQrImageWrapper) whatsappQrImageWrapper.style.display = 'block';
+                if (whatsappEmptyState) whatsappEmptyState.style.display = 'none';
+                if (whatsappQrStatus) {
+                    whatsappQrStatus.textContent = data.message || 'Scan the QR code with WhatsApp to connect';
+                    whatsappQrStatus.style.color = '#8696a0';
+                }
+                if (whatsappQrTitle) whatsappQrTitle.textContent = 'Scan QR Code to Connect';
+                if (whatsappQrDescription) whatsappQrDescription.textContent = 'Open WhatsApp on your phone and scan this code';
+                if (whatsappQrRefreshBtn) whatsappQrRefreshBtn.style.display = 'inline-block';
             });
 
             // Listen for incoming messages (instant display)

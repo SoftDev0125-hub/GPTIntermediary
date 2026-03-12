@@ -3239,11 +3239,17 @@ body::before {
 .whatsapp-qr-image-wrapper {
     margin: 24px 0;
     display: flex;
+    align-items: center;
     justify-content: center;
+    width: 376px;   /* 300px image + 38px padding each side - fixed so size doesn't change when QR loads */
+    height: 376px;
+    min-width: 376px;
+    min-height: 376px;
     padding: 38px; /* Approximately 1cm padding (38px at 96 DPI) */
     background: white;
     border-radius: 8px;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+    box-sizing: border-box;
 }
 
 .whatsapp-qr-image {

@@ -19,12 +19,12 @@ const envPath = path.join(__dirname, '..', '..', '.env');
 try { require('dotenv').config({ path: envPath }); } catch (e) { /* .env optional */ }
 
 const express = require('express');
-const { WebClient } = require('@slack/web-api');
-const { SocketModeClient } = require('@slack/socket-mode');
 const fs = require('fs');
 const cors = require('cors');
 const http = require('http');
 const { Server } = require('socket.io');
+// Defer heavy Slack SDK requires until after server.listen() so the port binds immediately (avoids "not listening" on slow/copied dist)
+let WebClient, SocketModeClient;
 
 const app = express();
 const server = http.createServer(app);
@@ -87,6 +87,12 @@ if (!fs.existsSync(AVATAR_DIR)) {
  * Initialize Slack client
  */
 function initializeSlack() {
+    // Load heavy deps here (after server is already listening) so startup binds port quickly on slow/copied dist
+    if (!WebClient || !SocketModeClient) {
+        WebClient = require('@slack/web-api').WebClient;
+        SocketModeClient = require('@slack/socket-mode').SocketModeClient;
+    }
+
     // Prefer bot token if available (recommended for Socket Mode + Events)
     const token = process.env.SLACK_BOT_TOKEN || process.env.SLACK_USER_TOKEN;
     
@@ -1128,9 +1134,6 @@ io.on('connection', (socket) => {
     });
 });
 
-// Initialize on startup
-initializeSlack();
-
 // Cleanup on shutdown
 process.on('SIGINT', () => {
     console.log('\n[Slack] Shutting down...');
@@ -1146,9 +1149,10 @@ process.on('SIGTERM', () => {
     process.exit(0);
 });
 
-// Start server
+// Start server (init Slack client after listen so port binds immediately on slow/copied dist)
 server.listen(PORT, () => {
-    console.log(`[Slack] Server running on http://72.62.162.44:${PORT}`);
-    console.log(`[Slack] Health check: http://72.62.162.44:${PORT}/health`);
+    console.log(`[Slack] Server running on http://0.0.0.0:${PORT}`);
+    console.log(`[Slack] Health check: http://localhost:${PORT}/health`);
+    setImmediate(() => initializeSlack());
 });
 

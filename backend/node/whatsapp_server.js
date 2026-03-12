@@ -14,21 +14,16 @@ process.on('unhandledRejection', (reason, p) => {
 });
 
 const express = require('express');
-const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode');
 const path = require('path');
 const fs = require('fs');
 const cors = require('cors');
 const http = require('http');
 const { Server } = require('socket.io');
-let puppeteer = null;
-try {
-    // Optional dependency: if installed, we use its bundled Chromium for maximum portability.
-    // In dev, this lets us use Puppeteer's browser; in dist/, we prefer a bundled chrome.exe (see below).
-    puppeteer = require('puppeteer');
-} catch (e) {
-    puppeteer = null;
-}
+// Defer heavy requires until after server.listen() so the port binds immediately (avoids "not listening" on slow/copied dist)
+let Client = null;
+let LocalAuth = null;
+let puppeteer = undefined; // undefined = not loaded yet, null = load failed, object = loaded
 
 const app = express();
 const server = http.createServer(app);
@@ -57,8 +52,9 @@ let lastAuthenticatedAt = 0;
 let readyAt = 0;
 // Timeout for fallback when 'ready' never fires (whatsapp-web.js known issue)
 let readyFallbackTimeout = null;
-// Warmup delay: wait this many ms after 'ready' before allowing getChats/getChatById (WhatsApp Web needs time to initialize)
-const CHATS_WARMUP_MS = 45000; // 45s for large accounts (10k+ contacts)
+// Warmup delay: wait this many ms after 'ready' before allowing getChats/getChatById (WhatsApp Web needs time to initialize).
+// Large accounts (5k–10k+ contacts) need more time; set WHATSAPP_CHATS_WARMUP_MS=45000 if you see getChats retries/failures.
+const CHATS_WARMUP_MS = process.env.WHATSAPP_CHATS_WARMUP_MS ? Math.max(5000, parseInt(process.env.WHATSAPP_CHATS_WARMUP_MS, 10)) : 20000; // default 20s
 // Cache getChats() result for pagination (avoid repeated heavy getChats() calls)
 const CHATS_CACHE_MS = 300000; // 5 minutes (large accounts may scroll 10k+ contacts)
 let chatsCache = null;
@@ -247,6 +243,20 @@ function initializeWhatsApp() {
 
     console.log('[WhatsApp] Initializing WhatsApp client...');
 
+    // Load heavy deps here (after server is already listening) so startup binds port quickly on slow/copied dist
+    if (!Client || !LocalAuth) {
+        const wweb = require('whatsapp-web.js');
+        Client = wweb.Client;
+        LocalAuth = wweb.LocalAuth;
+    }
+    if (typeof puppeteer === 'undefined') {
+        try {
+            puppeteer = require('puppeteer');
+        } catch (e) {
+            puppeteer = null;
+        }
+    }
+
     // Ensure session directory exists (e.g. after user deleted whatsapp_session_node)
     if (!fs.existsSync(SESSION_DIR)) {
         fs.mkdirSync(SESSION_DIR, { recursive: true });
@@ -321,6 +331,15 @@ function initializeWhatsApp() {
                 type: 'image/png'
             });
             console.log('[WhatsApp] QR code generated successfully');
+            // Emit to all connected clients so the QR appears immediately without waiting for HTTP poll
+            try {
+                io.emit('whatsapp_qr_code', {
+                    qr_code: qrCodeData,
+                    message: 'Scan the QR code with WhatsApp to connect'
+                });
+            } catch (e) {
+                console.error('[WhatsApp] Error emitting QR to socket:', e && e.message);
+            }
         } catch (err) {
             console.error('[WhatsApp] Error generating QR code:', err);
             qrCodeData = null;
@@ -662,20 +681,13 @@ app.get('/api/whatsapp/qr-code', async (req, res) => {
         // Do NOT destroy client here when !hasSession && client: that client is the one showing the QR
         // and waiting for scan.
 
-        // If client is not initialized, initialize it now
+        // If client is not initialized, initialize it now (server may have already started it on startup)
         if (!client) {
             console.log('[WhatsApp] Client not initialized - initializing now...');
             initializeWhatsApp();
-            // Wait for QR code to be generated (up to 10 seconds)
-            for (let i = 0; i < 20; i++) {
-                await new Promise(resolve => setTimeout(resolve, 500));
-                if (qrCodeData) {
-                    break;
-                }
-            }
         }
 
-        // If QR code is available, return it
+        // If QR code is already available (e.g. client was pre-initialized on server start), return immediately
         if (qrCodeData) {
             console.log('[WhatsApp] Returning QR code to client');
             return res.json({
@@ -686,13 +698,12 @@ app.get('/api/whatsapp/qr-code', async (req, res) => {
             });
         }
 
-        // If no QR code yet, wait longer and check again (up to 15 seconds)
-        // This handles the case where client is still initializing (e.g. on VPS or after reinit)
-        console.log('[WhatsApp] QR code not available yet - waiting for client to initialize...');
-        for (let i = 0; i < 30; i++) {
+        // Short wait only (3s) so the request doesn't block; frontend will get QR via socket or poll again
+        const maxShortWait = 6;
+        for (let i = 0; i < maxShortWait; i++) {
             await new Promise(resolve => setTimeout(resolve, 500));
             if (qrCodeData) {
-                console.log('[WhatsApp] QR code became available after waiting');
+                console.log('[WhatsApp] QR code became available after short wait');
                 return res.json({
                     success: true,
                     qr_code: qrCodeData,
@@ -700,19 +711,16 @@ app.get('/api/whatsapp/qr-code', async (req, res) => {
                     message: 'Scan the QR code with WhatsApp to connect'
                 });
             }
-            if (!client) {
-                console.log('[WhatsApp] Client not ready - initializing...');
-                initializeWhatsApp();
-            }
         }
-        
-        // Still no QR code after waiting - return error
-        console.error('[WhatsApp] QR code not available after waiting - client may have failed to initialize');
+
+        // QR not ready yet – return loading so frontend can show "Generating..." and poll or use socket
+        console.log('[WhatsApp] QR code not ready yet - returning loading (client will get it via socket or next poll)');
         return res.json({
             success: false,
+            loading: true,
             is_authenticated: false,
-            message: 'QR code generation failed. Please try refreshing the page or check server logs.',
-            error: 'qr_generation_timeout'
+            message: 'Generating QR code... Please wait a moment or keep this tab open.',
+            error: 'qr_loading'
         });
     } catch (error) {
         console.error('[WhatsApp] Error getting QR code:', error);
@@ -865,12 +873,23 @@ app.post('/api/whatsapp/contacts', async (req, res) => {
             });
         }
 
-        // Wait for warmup period after 'ready' before allowing getChats (WhatsApp Web needs time to initialize)
+        // During warmup after 'ready', respond immediately with loading: true so the proxy does not timeout.
+        // The client polls when loading is true; warmup and background getChats are already scheduled on 'ready'.
         const timeSinceReady = readyAt ? (Date.now() - readyAt) : 0;
         if (timeSinceReady < CHATS_WARMUP_MS) {
             const waitMs = CHATS_WARMUP_MS - timeSinceReady;
-            console.log(`[WhatsApp] Waiting ${waitMs}ms for WhatsApp Web to fully initialize before getChats...`);
-            await new Promise(r => setTimeout(r, waitMs));
+            const waitSeconds = Math.max(2, Math.ceil(waitMs / 1000));
+            console.log(`[WhatsApp] Still in warmup (${waitMs}ms remaining) - returning loading so client can poll`);
+            return res.json({
+                success: true,
+                count: 0,
+                total_count: null,
+                has_more: true,
+                loading: true,
+                wait_seconds: waitSeconds,
+                contacts: [],
+                message: `WhatsApp is initializing. Chats will load in about ${waitSeconds}s.`
+            });
         }
 
         const limit = Math.min(Math.max(parseInt(req.body.limit, 10) || 20, 1), 100);
@@ -882,12 +901,15 @@ app.post('/api/whatsapp/contacts', async (req, res) => {
             if ((!cacheValid && !chatsCache) || (chatsCache && chatsCache.length === 0)) {
                 if (!chatsCacheLoading) startBackgroundGetChats();
             }
+            const warmupRemaining = readyAt ? Math.max(0, CHATS_WARMUP_MS - (Date.now() - readyAt)) : 0;
+            const waitSeconds = warmupRemaining > 0 ? Math.max(2, Math.ceil(warmupRemaining / 1000)) : 5;
             return res.json({
                 success: true,
                 count: 0,
                 total_count: null,
                 has_more: true,
                 loading: true,
+                wait_seconds: waitSeconds,
                 contacts: []
             });
         }
@@ -1537,12 +1559,22 @@ app.post('/api/whatsapp/messages', async (req, res) => {
             });
         }
 
-        // Wait for warmup period after 'ready' before allowing getChatById (WhatsApp Web needs time to initialize)
+        // During warmup, respond immediately so the proxy does not timeout; client can retry.
         const timeSinceReady = readyAt ? (Date.now() - readyAt) : 0;
         if (timeSinceReady < CHATS_WARMUP_MS) {
             const waitMs = CHATS_WARMUP_MS - timeSinceReady;
-            console.log(`[WhatsApp] Waiting ${waitMs}ms for WhatsApp Web to fully initialize before getChatById...`);
-            await new Promise(r => setTimeout(r, waitMs));
+            console.log(`[WhatsApp] Still in warmup (${waitMs}ms remaining) - returning empty messages for contact`);
+            return res.status(200).json({
+                success: true,
+                contact_id: req.body.contact_id || '',
+                contact_name: 'Unknown',
+                count: 0,
+                messages: [],
+                warning: 'WhatsApp is still initializing. Try again in a moment.',
+                reached_start: true,
+                oldest_id: null,
+                oldest_timestamp: null
+            });
         }
 
         const { contact_id, limit = 50, include_media, before_id, before_timestamp } = req.body;

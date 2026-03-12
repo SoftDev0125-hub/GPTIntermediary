@@ -524,9 +524,18 @@ def start_servers():
         slack_server_file = os.path.join("backend", "node", "slack_server.js")
         if os.path.exists(os.path.join(script_dir, slack_server_file)):
             try:
-                # Check if port 3002 is already in use and kill the process
+                # Check if port 3002 is already in use and kill the process (only run netstat when needed)
                 print("[*] Checking if port 3002 is available...")
-                if kill_process_by_port(3002):
+                port_3002_in_use = False
+                try:
+                    import socket
+                    test_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    test_sock.settimeout(0.5)
+                    port_3002_in_use = (test_sock.connect_ex(('localhost', 3002)) == 0)
+                    test_sock.close()
+                except Exception:
+                    pass
+                if port_3002_in_use and kill_process_by_port(3002):
                     print("[*] Killed existing process on port 3002")
                     time.sleep(1)  # Wait a moment for port to be released
                 
@@ -587,7 +596,7 @@ def start_servers():
         else:
             print(f"[!] Slack server file not found: {slack_server_file} (skipping)")
         
-        print("[OK] All servers started successfully!")
+        print("[OK] Startup complete.")
         print("[*] Server status:")
         print(f"    - Backend API: http://localhost:8000")
         print(f"    - Chat Server: http://localhost:5000")
@@ -646,7 +655,7 @@ def kill_process_by_port(port):
                     ['netstat', '-ano'],
                     capture_output=True,
                     text=True,
-                    timeout=5
+                    timeout=15
                 )
                 found_any = False
                 pids_to_kill = set()  # Use set to avoid killing same PID multiple times
@@ -695,7 +704,7 @@ def kill_process_by_port(port):
                 ['lsof', '-ti', f':{port}'],
                 capture_output=True,
                 text=True,
-                timeout=5
+                timeout=15
             )
             if result.returncode == 0 and result.stdout.strip():
                 pids = result.stdout.strip().split('\n')
