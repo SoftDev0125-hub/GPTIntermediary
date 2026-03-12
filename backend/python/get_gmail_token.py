@@ -176,13 +176,16 @@ def get_gmail_credentials(use_second_account=False, start_port=None):
     return creds
 
 if __name__ == '__main__':
-    # Modes: no arg or "1" = primary only; "2" = second only; "all" or "both" = both accounts in one run
+    # Modes: no arg / "all" / "both" = BOTH accounts (first Gmail → first Cloud, second Gmail → second Cloud); "1" = primary only; "2" = second only
     arg = (sys.argv[1] if len(sys.argv) > 1 else '').strip().lower()
-    run_both = arg in ('all', 'both')
+    run_both = arg in ('all', 'both', '')  # default: no arg = both (so double-click exe in copied dist gets both tokens)
     use_second = arg == '2' or (os.getenv('GMAIL_ACCOUNT') or '').strip() == '2'
 
     if run_both:
-        print("📧 Obtaining tokens for BOTH Gmail accounts (primary, then second). You will sign in twice.\n")
+        print("📧 Obtaining tokens for BOTH Gmail accounts.")
+        print("   1st sign-in → first Gmail account (uses GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET from .env)")
+        print("   2nd sign-in → second Gmail account (uses GOOGLE_CLIENT_ID_2 / GOOGLE_CLIENT_SECRET_2 from .env)")
+        print("   You will sign in twice.\n")
     elif use_second:
         print("📧 Second Gmail account (EMAIL2) – using GOOGLE_CLIENT_ID_2 / GOOGLE_CLIENT_SECRET_2")
 
@@ -191,7 +194,8 @@ if __name__ == '__main__':
             print("——— 1/2 Primary account ———")
             get_gmail_credentials(use_second_account=False)
             print("\n——— 2/2 Second account (EMAIL2) ———")
-            print("Using port 8086 for this flow. Ensure http://localhost:8086/ is in the redirect URIs for your second OAuth client (GOOGLE_CLIENT_ID_2) in Google Cloud Console.\n")
+            print("Sign in with your second Gmail; tokens will use GOOGLE_CLIENT_ID_2 / GOOGLE_CLIENT_SECRET_2 (second Gmail's Google Cloud Console).")
+            print("Ensure http://localhost:8086/ is in that OAuth client's Authorized redirect URIs.\n")
             # Use port 8086 for second flow to avoid CSRF "mismatching_state" when both use 8085
             get_gmail_credentials(use_second_account=True, start_port=8086)
             print("\n✅ Done. Both token sets saved to .env. Restart your app.")
