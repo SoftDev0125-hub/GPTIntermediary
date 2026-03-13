@@ -267,7 +267,12 @@ def message_email_not_found(name: str) -> str:
     return (
         f'No email address could be found for "{name}". '
         "Possible reasons: the person's email is not publicly available, search results did not contain a valid address, "
-        "or the name is too generic. Try adding more context (e.g. company name) or add the contact manually in Settings."
+        "or the name is too generic. To try to find it yourself, you can:\n"
+        "- Check the organization's official website (About/Team/Contact pages)\n"
+        "- Look for the person on LinkedIn or other professional profiles\n"
+        "- Use the company's generic contact form or info@ address to request the email\n"
+        "- Call the organization's main phone number and ask for a direct email\n\n"
+        "You can also try again here with more context (for example, include the company name) or add the contact manually in Settings if you already know the address."
     )
 
 

@@ -280,6 +280,18 @@ def _person_contact_triple_source(user_message, request_id):
     then return the most accurate and most recent. Returns response string or None on failure.
     """
     try:
+        # First, when this is clearly an email lookup ("email address of X", etc.),
+        # reuse the structured email-finder pipeline so we search contacts + web
+        # and return user-friendly reasons when nothing is found.
+        try:
+            action_data = parse_command(user_message)
+            if isinstance(action_data, dict) and action_data.get("action") == "find_email":
+                result = execute_action(action_data)
+                if isinstance(result, dict) and isinstance(result.get("response"), str):
+                    return result["response"]
+        except Exception as e_parse:
+            logger.debug(f"[CHAT-{request_id}] Email-finder shortcut failed, falling back to triple-source: {e_parse}")
+
         client = get_openai_client()
         person_query = user_message.strip()[:200]
 
