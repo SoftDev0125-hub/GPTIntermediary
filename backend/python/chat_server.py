@@ -1322,6 +1322,18 @@ def chat():
                     if ask_phrase:
                         return ("send", None, _asking_to_msg(ask_phrase) or ask_phrase)
 
+                # "Send <recipient> a message on WhatsApp [content]" — recipient first, then content (no "to" in between)
+                m = re.search(
+                    r"\bsend\s+(.+?)\s+a\s+message\s+(?:on|via)\s+(?:whats\s*app|whatsapp)\b\s*(?:\s*[:\-]\s*|\s+)([\s\S]+)\s*$",
+                    msg,
+                    re.IGNORECASE,
+                )
+                if m:
+                    rec = m.group(1).strip().strip('"\'.')
+                    body = m.group(2).strip().strip()
+                    if rec and body:
+                        return ("send", rec, body)
+
                 m = re.search(
                     r"\b(?:send|text|message|dm|tell|notify)\s+(?:a\s+)?(?:whats\s*app\s+)?(?:message|text)?\s*(?:with(?:\s+the)?\s+(?:message|text|content)\s+)?(.+?)\s+to\s+(.+?)\s*$",
                     msg,
@@ -1359,6 +1371,36 @@ def chat():
                     return ("send", m.group(1).strip().strip('"\'.'), m.group(2).strip().strip())
 
                 return (None, None, None)
+
+            def _wa_friendly_message(raw_content: str, recipient_name: str) -> str:
+                """
+                Turn the user's message intent into a short, friendly WhatsApp message.
+                Returns the polished text or the original if AI is unavailable.
+                """
+                if not (raw_content or "").strip():
+                    return (raw_content or "").strip()
+                try:
+                    client_ai = get_openai_client()
+                    sys_content = (
+                        "You are a helpful assistant that turns a user's instruction into a single, natural WhatsApp message. "
+                        "Output only the message text: no quotes, no 'Message:', no preamble. Keep it concise and friendly (1-3 sentences). "
+                        "If the instruction is already a ready-to-send phrase, lightly polish it; if it's a brief (e.g. 'ask when the meeting is'), expand it into a natural sentence."
+                    )
+                    user_content = f"Recipient: {recipient_name}\nInstruction or content to send: {raw_content.strip()}\n\nSingle friendly WhatsApp message (text only):"
+                    gen = client_ai.chat.completions.create(
+                        model="gpt-3.5-turbo",
+                        messages=[{"role": "system", "content": sys_content}, {"role": "user", "content": user_content}],
+                        max_tokens=300,
+                        temperature=0.4,
+                        stream=False,
+                    )
+                    if gen and gen.choices:
+                        out = (gen.choices[0].message.content or "").strip()
+                        if out:
+                            return out
+                except Exception as ai_err:
+                    logger.warning(f"WhatsApp friendly-message AI failed: {ai_err}")
+                return (raw_content or "").strip()
 
             def _wa_validate_send(recipient: str, text: str):
                 """
@@ -1484,7 +1526,10 @@ def chat():
                 elif contact_name != recipient and recipient:
                     contact_name = f"{contact_name} (matched '{recipient}')"
 
-                send_res = _wa_call('POST', 'send', {'contact_id': contact_id, 'text': text}, timeout_sec=60)
+                # Resolve contact first (correct address), then turn content into a friendly message before sending
+                display_name = (match.get('name') or '').strip() or recipient
+                text_to_send = _wa_friendly_message(text, display_name)
+                send_res = _wa_call('POST', 'send', {'contact_id': contact_id, 'text': text_to_send}, timeout_sec=60)
                 if isinstance(send_res, dict) and send_res.get('success'):
                     return jsonify({'response': f"✅ Sent WhatsApp message to **{contact_name}**.", 'function_called': 'whatsapp_send'})
                 err = (send_res or {}).get('error') or (send_res or {}).get('message') or 'Failed to send'

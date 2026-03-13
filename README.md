@@ -12,6 +12,7 @@ A comprehensive desktop application that combines AI chat capabilities with real
 
 ### 📧 Email Management
 - **Gmail Integration**: Send, receive, and manage emails through Gmail API
+- **Dual Gmail Accounts**: Use two Gmail accounts at once (primary + second/EMAIL2 tab), each with its own Google Cloud OAuth client
 - **OAuth 2.0 Authentication**: Secure authentication using Google OAuth
 - **Unread Email Retrieval**: View and manage unread emails
 - **Email Replies**: Quick reply functionality
@@ -130,9 +131,13 @@ Create a `.env` file in the root directory:
 # OpenAI Configuration
 OPENAI_API_KEY=sk-your-openai-api-key-here
 
-# Google OAuth (for Gmail)
+# Google OAuth (for Gmail – primary account)
 GOOGLE_CLIENT_ID=your-google-client-id
 GOOGLE_CLIENT_SECRET=your-google-client-secret
+
+# Second Gmail account (optional – for EMAIL2 tab)
+# GOOGLE_CLIENT_ID_2=your-second-google-client-id
+# GOOGLE_CLIENT_SECRET_2=your-second-google-client-secret
 
 # Telegram Configuration
 TELEGRAM_API_ID=your-telegram-api-id
@@ -155,16 +160,30 @@ DJANGO_PORT=8001
 ```
 
 ### 5. Set Up Gmail API (Optional)
+Run the Gmail token setup to authorize one or two Gmail accounts. Tokens are saved to `.env`.
+
+**Option A – From project root (Python):**
 ```bash
-# Run the Gmail token setup script
-python get_gmail_token.py
+# Obtain tokens for BOTH accounts (primary then second). You will sign in twice.
+python backend/python/get_gmail_token.py
+
+# Or use the batch file (uses get_gmail_token.exe from dist if built, else Python)
+run_get_gmail_token.bat
 ```
 
-This will:
-1. Open your browser
-2. Ask you to sign into Gmail
-3. Grant permissions
-4. Save OAuth tokens to `.env`
+**Option B – Standalone exe (e.g. copied `dist` folder):**  
+Put `.env` in the **same folder** as `get_gmail_token.exe`, with at least `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` (and for the second account, `GOOGLE_CLIENT_ID_2` and `GOOGLE_CLIENT_SECRET_2`). Then run:
+```bash
+get_gmail_token.exe
+```
+Running with no arguments obtains tokens for **both** accounts (first Gmail → first Cloud client, second Gmail → second Cloud client). Sign in twice when prompted.
+
+**What the script does:**
+1. Opens your browser for the primary Gmail (port 8085)
+2. Optionally opens again for the second Gmail (port 8086)
+3. Saves `USER_ACCESS_TOKEN` / `USER_REFRESH_TOKEN` and (if used) `USER_ACCESS_TOKEN_2` / `USER_REFRESH_TOKEN_2` to `.env`
+
+**Two Gmail accounts:** Use two OAuth 2.0 Client IDs (one per Gmail/Cloud project). Add `http://localhost:8085/` to the first client’s redirect URIs and `http://localhost:8086/` to the second client’s redirect URIs in Google Cloud Console.
 
 ### 6. Set Up Database (Optional)
 ```bash
@@ -252,9 +271,9 @@ Then open `frontend/chat_interface.html` (or `http://72.62.162.44:5000/chat_inte
 4. Save your spreadsheet
 
 ### Email Management
-1. Set up Gmail API credentials
-2. Authorize your Gmail account
-3. Use the AI chat to send emails:
+1. Set up Gmail API credentials in `.env` (and optionally second account: `GOOGLE_CLIENT_ID_2`, `GOOGLE_CLIENT_SECRET_2`)
+2. Run `run_get_gmail_token.bat` or `python backend/python/get_gmail_token.py` to authorize (one or both accounts)
+3. Use the AI chat or the **EMAIL** / **EMAIL2** tabs to send and read emails:
    - "Send an email to user@example.com saying Hello"
    - "Show me my unread emails"
    - "Reply to the email from boss@company.com"
@@ -314,7 +333,9 @@ GPTIntermediary/
 ├── package.json                 # Node.js dependencies
 ├── requirements.txt             # Python dependencies
 ├── .env                         # Environment variables (create this)
+├── run_get_gmail_token.bat      # Run Gmail OAuth (both accounts); uses dist\get_gmail_token.exe if present
 │
+├── dist/                        # Optional: get_gmail_token.exe (build from backend/python/get_gmail_token.py)
 ├── telegram_session/           # Telegram session files
 └── logs/                        # Application logs
 ```
@@ -382,8 +403,10 @@ GPTIntermediary/
 - **Session expired**: Delete `telegram_session/telegram_session.session` and re-authenticate
 
 ### Email Issues
-- **Gmail API errors**: Verify OAuth credentials and re-run `get_gmail_token.py`
+- **Gmail API errors**: Verify OAuth credentials and re-run `run_get_gmail_token.bat` or `python backend/python/get_gmail_token.py`
 - **Token expired**: Refresh tokens are handled automatically
+- **Second account (EMAIL2)**: Ensure `http://localhost:8086/` is in the second OAuth client’s Authorized redirect URIs in Google Cloud Console
+- **Copied dist folder**: Put `.env` (with client IDs/secrets) in the same folder as `get_gmail_token.exe`; run the exe once to get tokens for both accounts
 
 ### Database Issues
 - **Connection failed**: Check `DATABASE_URL` in `.env`
