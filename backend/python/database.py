@@ -6,6 +6,7 @@ import os
 import sys
 from pathlib import Path
 from sqlalchemy import create_engine
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import NullPool
@@ -82,6 +83,25 @@ if DATABASE_URL.startswith('sqlite:'):
     engine = create_engine(DATABASE_URL, poolclass=NullPool, **engine_kwargs)
 else:
     engine = create_engine(DATABASE_URL, poolclass=NullPool, echo=False, pool_pre_ping=True)
+    # Test connection; if PostgreSQL is not running or unreachable, fall back to SQLite
+    try:
+        with engine.connect():
+            pass
+    except (OperationalError, Exception) as e:
+        _pg_fail_msg = str(e)
+        engine.dispose()
+        data_dir = root_dir / 'data'
+        data_dir.mkdir(parents=True, exist_ok=True)
+        sqlite_path = data_dir / 'gptintermediary.sqlite3'
+        DATABASE_URL = f"sqlite:///{sqlite_path.as_posix()}"
+        print("[DATABASE] PostgreSQL connection failed - falling back to SQLite.")
+        print(f"[DATABASE] Reason: {_pg_fail_msg}")
+        print(f"[DATABASE] Using SQLite at: {sqlite_path}")
+        print("[DATABASE] To use PostgreSQL: start the server, ensure the DB exists, and set DATABASE_URL in .env")
+        engine = create_engine(
+            DATABASE_URL, poolclass=NullPool, echo=False,
+            connect_args={'check_same_thread': False}
+        )
 
 # Create session factory
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

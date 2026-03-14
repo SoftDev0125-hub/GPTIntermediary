@@ -835,9 +835,10 @@ async def login_user(request: LoginRequest, db: Session = Depends(get_db)):
         if not request.password:
             raise HTTPException(status_code=400, detail="Password is required")
         
-        # Find user by email - catch database connection errors
+        # Find user by email (normalize to lowercase to match registration)
+        email_normalized = request.email.strip().lower()
         try:
-            user = db.query(User).filter(User.email == request.email.strip()).first()
+            user = db.query(User).filter(func.lower(User.email) == email_normalized).first()
         except Exception as db_error:
             error_str = str(db_error).lower()
             logger.error(f"Database connection error during login: {db_error}")
