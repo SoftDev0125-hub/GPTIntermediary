@@ -151,6 +151,7 @@ body::before {
     display: none;
     flex-direction: column;
     height: 100%;
+    min-width: 0; /* allow tab content to shrink with window */
     overflow: hidden;
     order: 2;
     background: transparent;
@@ -2542,6 +2543,8 @@ body::before {
     flex-direction: row;
     height: 100%;
     width: 100%;
+    min-width: 0; /* allow container to shrink with window */
+    overflow: hidden;
     background: #212121 !important;
     color: #e4e4e4;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
@@ -2735,9 +2738,11 @@ body::before {
 /* WhatsApp Main Area */
 .whatsapp-main {
     flex: 1;
+    min-width: 0; /* allow main area to shrink so messages respect width */
     display: flex;
     flex-direction: column;
     height: 100%;
+    overflow: hidden;
     background: #212121 !important;
 }
 
@@ -2770,7 +2775,9 @@ body::before {
 
 .whatsapp-messages-container {
     flex: 1;
+    min-width: 0; /* constrain width so message bubbles scale with window */
     overflow-y: auto;
+    overflow-x: hidden;
     background: #212121 !important;
     background-image: 
         repeating-linear-gradient(0deg, transparent, transparent 40px, rgba(255,255,255,.02) 40px, rgba(255,255,255,.02) 41px),
@@ -2818,12 +2825,23 @@ body::before {
     color: #707579;
 }
 
+/* Messages list: fill available width and constrain children */
+.whatsapp-messages-list {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
 .whatsapp-message {
     display: flex;
     flex-direction: column;
     margin-bottom: 8px;
-    max-width: 70%;
+    max-width: min(70%, 420px); /* scale with window, cap for very wide */
     word-wrap: break-word;
+    overflow-wrap: break-word;
     position: relative;
 }
 
@@ -2901,6 +2919,7 @@ body::before {
     display: flex;
     margin-bottom: 2px;
     padding: 0 5px;
+    max-width: 100%; /* keep row within container */
 }
 
 .whatsapp-message-wrapper.sent {
@@ -2912,11 +2931,12 @@ body::before {
 }
 
 .whatsapp-message-bubble {
-    max-width: 70%;
+    max-width: min(70%, 420px); /* scale with window, cap for very wide */
     padding: 8px 12px;
     border-radius: 12px;
     position: relative;
     word-wrap: break-word;
+    overflow-wrap: break-word;
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
 }
 
@@ -5219,6 +5239,12 @@ body::before {
     .whatsapp-main,
     .slack-main {
         height: calc(60vh - 60px);
+    }
+
+    /* WhatsApp messages: use more width on narrow screens */
+    .whatsapp-message,
+    .whatsapp-message-bubble {
+        max-width: min(85%, 420px);
     }
 
     /* Email header adjustments */
