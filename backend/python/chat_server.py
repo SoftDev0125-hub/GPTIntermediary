@@ -261,7 +261,7 @@ Possible intents:
 Entities to extract when relevant (use null if not present):
 - sender: who they want to reply to (name or email)
 - recipient: who to send to (name or email/phone)
-- message_content: brief content to send
+- message_content: the exact text the user wants to send (verbatim when they provided a literal message; for WhatsApp send use the full quoted or stated content)
 - account: "first", "second", or "both" when they specify which Gmail/account
 
 User message: """
@@ -1411,26 +1411,54 @@ def chat():
 
                 return (None, None, None)
 
+            def _wa_content_is_literal_message(content: str) -> bool:
+                """
+                True if the user provided a complete message to send as-is (exact wording),
+                so we should not rewrite it with the friendly-message AI.
+                """
+                if not (content or "").strip():
+                    return False
+                c = content.strip()
+                c_lower = c.lower()
+                # User asked for exact wording
+                if any(phrase in c_lower for phrase in ("exactly", "word for word", "as follows", "verbatim", "as I said")):
+                    return True
+                # Content in quotes is literal
+                if (c.startswith('"') and c.endswith('"')) or (c.startswith("'") and c.endswith("'")):
+                    return True
+                # Short instruction phrases that should be expanded by AI (not literal)
+                brief_instruction_starts = ("ask ", "tell ", "say ", "remind ", "let him know ", "let her know ", "let them know ", "ask him ", "ask her ", "tell him ", "tell her ")
+                if c_lower.startswith(brief_instruction_starts) and len(c.split()) <= 12:
+                    return False
+                # Full sentence(s) or reasonably long content: send as-is
+                if len(c) >= 40:
+                    return True
+                if re.search(r"[.!?]", c):
+                    return True
+                return False
+
             def _wa_friendly_message(raw_content: str, recipient_name: str) -> str:
                 """
-                Turn the user's message intent into a short, friendly WhatsApp message.
-                Returns the polished text or the original if AI is unavailable.
+                Expand a brief instruction into a single natural WhatsApp message.
+                Preserve the user's exact wording when they gave a complete message.
+                Returns the message to send, or the original if AI is unavailable.
                 """
                 if not (raw_content or "").strip():
                     return (raw_content or "").strip()
                 try:
                     client_ai = get_openai_client()
                     sys_content = (
-                        "You are a helpful assistant that turns a user's instruction into a single, natural WhatsApp message. "
-                        "Output only the message text: no quotes, no 'Message:', no preamble. Keep it concise and friendly (1-3 sentences). "
-                        "If the instruction is already a ready-to-send phrase, lightly polish it; if it's a brief (e.g. 'ask when the meeting is'), expand it into a natural sentence."
+                        "You output the exact WhatsApp message text to send. Rules: "
+                        "(1) If the user provided a complete, literal message (full sentence or quoted text), output it VERBATIM with no changes. "
+                        "(2) Only if they gave a brief instruction (e.g. 'ask when the meeting is', 'tell her I'm on my way') turn it into one natural sentence. "
+                        "Output only the message: no quotes around it, no 'Message:', no preamble or explanation."
                     )
-                    user_content = f"Recipient: {recipient_name}\nInstruction or content to send: {raw_content.strip()}\n\nSingle friendly WhatsApp message (text only):"
+                    user_content = f"Recipient: {recipient_name}\nInstruction or content to send: {raw_content.strip()}\n\nMessage text only:"
                     gen = client_ai.chat.completions.create(
                         model="gpt-3.5-turbo",
                         messages=[{"role": "system", "content": sys_content}, {"role": "user", "content": user_content}],
                         max_tokens=300,
-                        temperature=0.4,
+                        temperature=0.3,
                         stream=False,
                     )
                     if gen and gen.choices:
@@ -1464,15 +1492,48 @@ def chat():
                     return (None, None)
                 return (recipient, text)
 
+            def _wa_normalize_recipient(recipient: str) -> str:
+                """
+                Strip common trailing/leading phrases so the resolve API gets a clean name or phone.
+                Helps avoid 'John on WhatsApp' or 'Maria and tell him' being matched incorrectly.
+                """
+                if not recipient:
+                    return recipient
+                s = (recipient or "").strip().strip('"\'.')
+                # Trailing phrases that are not part of the name
+                s = re.sub(r"\s+(?:on|via|in)\s+(?:my\s+)?(?:whats\s*app|whatsapp)\s*$", "", s, flags=re.IGNORECASE).strip()
+                s = re.sub(r"\s+(?:and\s+)?(?:tell|ask|message|text)\s+(?:him|her|them)\s*$", "", s, flags=re.IGNORECASE).strip()
+                s = re.sub(r"\s+please\s*$", "", s, flags=re.IGNORECASE).strip()
+                s = re.sub(r"\s+to\s+ask\s*$", "", s, flags=re.IGNORECASE).strip()
+                # Leading phrases
+                s = re.sub(r"^(?:to|for)\s+", "", s, flags=re.IGNORECASE).strip()
+                s = re.sub(r"^\s*(?:message|text|send\s+to)\s+", "", s, flags=re.IGNORECASE).strip()
+                s = re.sub(r"\s+", " ", s).strip()
+                return s or recipient
+
             # 0) Reply / Send message (more flexible extraction)
             kind, recipient, text = _wa_extract_send_or_reply(user_message)
             if kind == "send" and recipient and text:
                 recipient, text = _wa_validate_send(recipient, text)
                 if not recipient or not text:
                     kind, recipient, text = None, None, None
+            # Prefer LLM-extracted recipient when intent is WhatsApp send/reply (often cleaner than regex)
+            if kind and recipient and use_analyzed and analyzed_intent in ("whatsapp_send", "whatsapp_reply"):
+                analyzed_rec = (analyzed_entities.get("recipient") or "").strip().strip('"\'.')
+                if analyzed_rec and len(analyzed_rec) >= 1:
+                    recipient = analyzed_rec
+            # Prefer LLM-extracted message content when intent is WhatsApp send (preserves exact intended text)
+            if kind == "send" and text and use_analyzed and analyzed_intent == "whatsapp_send":
+                analyzed_msg = (analyzed_entities.get("message_content") or "").strip().strip('"\'.')
+                if analyzed_msg:
+                    text = analyzed_msg
+            # Normalize recipient before resolve so resolve API gets a clean name/phone
+            def _wa_resolve_query(recipient_str: str) -> str:
+                return _wa_normalize_recipient(recipient_str) or recipient_str
+
             if kind == "reply" and recipient and text:
                 # Explicit reply text provided by user -> send as-is
-                resolved = _wa_call('POST', 'resolve', {'query': recipient, 'include_groups': True, 'max_candidates': 5}, timeout_sec=60)
+                resolved = _wa_call('POST', 'resolve', {'query': _wa_resolve_query(recipient), 'include_groups': True, 'max_candidates': 5}, timeout_sec=60)
                 if not isinstance(resolved, dict) or not resolved.get('success') or not resolved.get('match'):
                     err = (resolved or {}).get('error') or 'Could not resolve contact'
                     return jsonify({'response': f"WhatsApp: {err}.", 'error': True})
@@ -1489,7 +1550,7 @@ def chat():
             if kind == "reply" and recipient and text is None:
                 # AI reply flow: analyze last message, synthesize reply, send
                 who = recipient
-                resolved = _wa_call('POST', 'resolve', {'query': who, 'include_groups': True, 'max_candidates': 5}, timeout_sec=60)
+                resolved = _wa_call('POST', 'resolve', {'query': _wa_resolve_query(who), 'include_groups': True, 'max_candidates': 5}, timeout_sec=60)
                 if not isinstance(resolved, dict) or not resolved.get('success') or not resolved.get('match'):
                     err = (resolved or {}).get('error') or 'Could not resolve contact'
                     return jsonify({'response': f"WhatsApp: {err}.", 'error': True})
@@ -1546,7 +1607,7 @@ def chat():
                 })
 
             if kind == "send" and recipient and text:
-                resolved = _wa_call('POST', 'resolve', {'query': recipient, 'include_groups': True, 'max_candidates': 5}, timeout_sec=60)
+                resolved = _wa_call('POST', 'resolve', {'query': _wa_resolve_query(recipient), 'include_groups': True, 'max_candidates': 5}, timeout_sec=60)
                 if not isinstance(resolved, dict) or not resolved.get('success') or not resolved.get('match'):
                     err = (resolved or {}).get('error') or 'Could not resolve contact'
                     return jsonify({'response': f"WhatsApp: {err}.", 'error': True})
@@ -1565,9 +1626,12 @@ def chat():
                 elif contact_name != recipient and recipient:
                     contact_name = f"{contact_name} (matched '{recipient}')"
 
-                # Resolve contact first (correct address), then turn content into a friendly message before sending
+                # Use exact content when user gave a literal message; otherwise expand brief instructions via AI
                 display_name = (match.get('name') or '').strip() or recipient
-                text_to_send = _wa_friendly_message(text, display_name)
+                if _wa_content_is_literal_message(text):
+                    text_to_send = text.strip()
+                else:
+                    text_to_send = _wa_friendly_message(text, display_name)
                 send_res = _wa_call('POST', 'send', {'contact_id': contact_id, 'text': text_to_send}, timeout_sec=60)
                 if isinstance(send_res, dict) and send_res.get('success'):
                     return jsonify({'response': f"✅ Sent WhatsApp message to **{contact_name}**.", 'function_called': 'whatsapp_send'})
@@ -1581,7 +1645,7 @@ def chat():
             )
             if m_hist:
                 who = m_hist.group(1).strip().strip('"\'.')
-                resolved = _wa_call('POST', 'resolve', {'query': who, 'include_groups': True, 'max_candidates': 5}, timeout_sec=60)
+                resolved = _wa_call('POST', 'resolve', {'query': _wa_resolve_query(who), 'include_groups': True, 'max_candidates': 5}, timeout_sec=60)
                 if not isinstance(resolved, dict) or not resolved.get('success') or not resolved.get('match'):
                     err = (resolved or {}).get('error') or 'Could not resolve contact'
                     return jsonify({'response': f"WhatsApp: {err}.", 'error': True})
@@ -1616,7 +1680,7 @@ def chat():
                 )
             if m_last:
                 who = m_last.group(1).strip().strip('"\'.')
-                resolved = _wa_call('POST', 'resolve', {'query': who, 'include_groups': True, 'max_candidates': 5}, timeout_sec=60)
+                resolved = _wa_call('POST', 'resolve', {'query': _wa_resolve_query(who), 'include_groups': True, 'max_candidates': 5}, timeout_sec=60)
                 if not isinstance(resolved, dict) or not resolved.get('success') or not resolved.get('match'):
                     err = (resolved or {}).get('error') or 'Could not resolve contact'
                     return jsonify({'response': f"WhatsApp: {err}.", 'error': True})
@@ -1656,7 +1720,7 @@ def chat():
 
             if m_from:
                 who = m_from.group(1).strip().strip('"\'.')
-                chk = _wa_call('POST', 'unread/last', {'query': who}, timeout_sec=60)
+                chk = _wa_call('POST', 'unread/last', {'query': _wa_resolve_query(who)}, timeout_sec=60)
                 if not isinstance(chk, dict) or not chk.get('success'):
                     err = (chk or {}).get('error') or 'Failed to check unread'
                     return jsonify({'response': f"WhatsApp: {err}.", 'error': True}), 500

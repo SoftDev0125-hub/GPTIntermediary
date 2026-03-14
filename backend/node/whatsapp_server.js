@@ -1076,7 +1076,10 @@ app.post('/api/whatsapp/resolve', async (req, res) => {
         await ensureChatsWarmupReady();
 
         const rawQuery = (req.body && req.body.query != null) ? String(req.body.query) : '';
-        const query = rawQuery.trim();
+        // Normalize: trim, collapse spaces, strip trailing " on whatsapp" etc. so we match the intended contact
+        let query = rawQuery.trim().replace(/\s+/g, ' ');
+        query = query.replace(/\s+(?:on|via|in)\s+(?:my\s+)?(?:whats\s*app|whatsapp)\s*$/i, '').trim();
+        query = query.replace(/\s+please\s*$/i, '').trim();
         const includeGroups = (req.body && req.body.include_groups != null) ? !!req.body.include_groups : true;
         const maxCandidates = Math.min(Math.max(parseInt(req.body && req.body.max_candidates, 10) || 5, 1), 20);
 
@@ -1108,6 +1111,7 @@ app.post('/api/whatsapp/resolve', async (req, res) => {
 
         const chats = await getChatsWithRetryAndCache();
         const qLower = query.toLowerCase();
+        const queryWords = qLower.split(/\s+/).filter(Boolean);
         const scored = [];
 
         for (const chat of (chats || [])) {
@@ -1118,8 +1122,14 @@ app.post('/api/whatsapp/resolve', async (req, res) => {
                 if (!nameLower) continue;
                 let score = 0;
                 if (nameLower === qLower) score += 1000;
+                // Prefer "John Smith" over "Johnny" when user said "John": first word of name equals query
+                const firstWord = nameLower.split(/\s+/)[0] || '';
+                if (firstWord === qLower) score += 700;
                 if (nameLower.startsWith(qLower)) score += 500;
                 if (nameLower.includes(qLower)) score += 200;
+                // Prefer 1:1 chats when query looks like a person name (1–2 words, no digits)
+                const looksLikePerson = queryWords.length <= 2 && !/\d{5,}/.test(query);
+                if (looksLikePerson && !chat.isGroup) score += 100;
                 const ts = chat.lastMessage && typeof chat.lastMessage.timestamp === 'number' ? chat.lastMessage.timestamp : 0;
                 score += Math.min(ts / 1000000, 50); // tiny recency tiebreaker
                 if (score > 0) scored.push({ score, chat });
