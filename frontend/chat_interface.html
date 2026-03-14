@@ -450,6 +450,7 @@
                     <div class="telegram-header">
                         <div class="telegram-header-content">
                             <h2 id="telegramCurrentChat">Select a chat</h2>
+                            <div id="telegramCurrentChatAddress" class="telegram-header-address" aria-hidden="true"></div>
                             <div class="telegram-header-info" id="telegramCount">-- messages</div>
                             <div class="telegram-header-actions">
                                 <button id="telegramEditLastBtn" class="telegram-header-btn" disabled>Edit last</button>
@@ -3031,6 +3032,9 @@
             ];
             return colors[Math.abs(hash) % colors.length];
         }
+
+        // Person silhouette SVG for contacts with no name (WhatsApp-style fallback)
+        const TELEGRAM_AVATAR_SILHOUETTE_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="rgba(255,255,255,0.9)" class="telegram-avatar-silhouette"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 4-6 8-6s8 2 8 6"/></svg>';
         
         function formatTelegramTimestamp(timestamp) {
             if (!timestamp) return '';
@@ -3084,20 +3088,22 @@
                 const avatarColor = getTelegramAvatarColor(chat.name);
                 const lastMessageTime = chat.last_message_time ? formatTelegramTimestamp(chat.last_message_time) : '';
                 const lastMessage = chat.last_message ? (chat.last_message.length > 40 ? chat.last_message.substring(0, 40) + '...' : chat.last_message) : '';
-                const unreadBadge = chat.unread_count > 0 ? `<span class="telegram-unread-badge">${chat.unread_count}</span>` : '';
+                const unreadBadge = (chat.unread_count > 0) ? `<span class="telegram-chat-unread">${chat.unread_count}</span>` : '';
                 const avatarImgStyle = chat.avatar_url ? '' : 'display:none;';
                 const avatarFallbackStyle = chat.avatar_url ? 'display:none;' : '';
+                const fallbackContent = initials === '?' ? TELEGRAM_AVATAR_SILHOUETTE_SVG : escapeHtml(initials);
                 const avatarHtml = `
                     <div class="telegram-avatar-wrap">
                         <img
-                            src="${chat.avatar_url ? chat.avatar_url : ''}"
+                            src="${chat.avatar_url ? chat.avatar_url : 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>')}"
                             alt="${escapeHtml(chat.name)}"
                             class="telegram-avatar-img"
                             data-contact-id="${chat.contact_id}"
                             style="${avatarImgStyle}"
                             loading="lazy"
+                            onerror="var w=this.closest('.telegram-avatar-wrap'); if(w){ this.style.display='none'; var f=w.querySelector('.telegram-avatar'); if(f) f.style.display=''; }"
                         >
-                        <div class="telegram-avatar" style="background-color: ${avatarColor}; ${avatarFallbackStyle}">${initials}</div>
+                        <div class="telegram-avatar" style="background-color: ${avatarColor}; ${avatarFallbackStyle}">${fallbackContent}</div>
                     </div>
                 `;
                 
@@ -3262,7 +3268,15 @@
             const chatInfo = telegramChats.find(c => c.contact_id === chatId);
             if (!chatInfo) return;
 
-            if (telegramCurrentChat) telegramCurrentChat.textContent = chatInfo.name;
+            if (telegramCurrentChat) telegramCurrentChat.textContent = chatInfo.name || 'Unknown';
+            const telegramCurrentChatAddress = document.getElementById('telegramCurrentChatAddress');
+            if (telegramCurrentChatAddress) {
+                const addressParts = [];
+                if (chatInfo.username) addressParts.push('@' + chatInfo.username);
+                if (chatInfo.phone) addressParts.push(chatInfo.phone);
+                telegramCurrentChatAddress.textContent = addressParts.join(' · ') || '';
+                telegramCurrentChatAddress.setAttribute('aria-hidden', addressParts.length ? 'false' : 'true');
+            }
             if (telegramMessagesContainer) {
                 telegramMessagesContainer.innerHTML = '<div class="telegram-empty-state"><p>Loading messages...</p></div>';
             }
