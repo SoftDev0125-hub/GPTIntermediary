@@ -55,8 +55,12 @@ NEWSAPI_KEY = _read_env_key_from_dotenv('NEWSAPI_KEY')
 if not NEWSAPI_KEY:
     logging.warning('NEWSAPI_KEY not configured; news features may be limited')
 
+# When user asks for "recent news", fetch articles from at least this many days back (user requirement: at least 1 month)
+NEWS_LOOKBACK_DAYS = int(os.getenv("NEWS_LOOKBACK_DAYS", "30"))
+
+
 def fetch_latest_news(q=None, country='us', pageSize=10):
-    """Fetch news using NewsAPI; use 'everything' for topic queries (newest first, last 7 days) and 'top-headlines' otherwise.
+    """Fetch news using NewsAPI; use 'everything' for topic queries (newest first, last NEWS_LOOKBACK_DAYS) and 'top-headlines' otherwise.
     If 'everything' fails (e.g. 426 on free tier in production), falls back to top-headlines so the user still gets news."""
     if not NEWSAPI_KEY:
         return []
@@ -78,7 +82,7 @@ def fetch_latest_news(q=None, country='us', pageSize=10):
     if q:
         try:
             from datetime import datetime, timedelta
-            from_date = (datetime.utcnow() - timedelta(days=7)).strftime('%Y-%m-%d')
+            from_date = (datetime.utcnow() - timedelta(days=NEWS_LOOKBACK_DAYS)).strftime('%Y-%m-%d')
             params = {
                 'apiKey': NEWSAPI_KEY,
                 'q': q.strip(),
@@ -99,7 +103,30 @@ def fetch_latest_news(q=None, country='us', pageSize=10):
         except Exception as e:
             log.warning(f"NewsAPI everything request failed: {e}; falling back to top-headlines")
 
-    # Use top-headlines (works on free tier; no topic filter)
+    # When no topic: try "everything" with broad query over past month so user gets coverage beyond today/yesterday
+    if not q:
+        try:
+            from datetime import datetime, timedelta
+            from_date = (datetime.utcnow() - timedelta(days=NEWS_LOOKBACK_DAYS)).strftime('%Y-%m-%d')
+            params = {
+                'apiKey': NEWSAPI_KEY,
+                'q': 'news',
+                'pageSize': min(pageSize, 20),
+                'sortBy': 'publishedAt',
+                'language': 'en',
+                'from': from_date,
+            }
+            resp = requests.get('https://newsapi.org/v2/everything', params=params, timeout=10)
+            data = resp.json()
+            if data.get('status') == 'ok':
+                articles = _parse_articles(data)
+                if articles:
+                    log.info(f"NewsAPI everything (broad): fetched {len(articles)} articles from past {NEWS_LOOKBACK_DAYS} days")
+                    return articles
+        except Exception as e:
+            log.debug(f"NewsAPI everything (no topic) failed: {e}; falling back to top-headlines")
+
+    # Use top-headlines (works on free tier; no topic filter) as fallback
     try:
         params = {
             'apiKey': NEWSAPI_KEY,
@@ -2040,6 +2067,7 @@ Be conversational and helpful, like ChatGPT.
         grounding_parts = []
         needs_up_to_date = False
         topic = None
+        is_explicit_news = False
 
         # Single path for latest news: detect when user wants current info, get topic, fetch once
         try:
@@ -2065,6 +2093,9 @@ Be conversational and helpful, like ChatGPT.
                     topic = groups[-1].strip().strip('?.!')
             if not topic and len(user_message.strip()) > 8:
                 topic = _extract_news_topic_from_question(user_message)
+            # For generic "news for today" / "news today", use top headlines instead of searching for "today"
+            if topic and topic.lower().strip() in ('today', 'for today', 'this week', 'this morning', 'right now', 'now'):
+                topic = None
 
             if needs_up_to_date and NEWSAPI_KEY:
                 # When user asks for news/updates, fetch at least 10 items (recent news, not just a few)
@@ -2073,7 +2104,11 @@ Be conversational and helpful, like ChatGPT.
                 if not articles and topic:
                     articles = fetch_latest_news(q=None, country='us', pageSize=page_size)
                 if articles:
-                    instruction = "Use the NewsAPI articles below to answer. Cite source and date. If the articles do not contain the answer, say so."
+                    instruction = (
+                        "Summarize the news articles below for the user. Cite source and date. "
+                        "Present information covering the past month (not just today or yesterday): include recent developments across this period. "
+                        "Give a helpful summary; do not reply with 'I don't know' when articles are provided."
+                    )
                     max_arts = MAX_NEWS_ARTICLES_NEWS_QUERY if is_explicit_news else None
                     max_desc = MAX_NEWS_DESC_CHARS_NEWS_QUERY if is_explicit_news else None
                     snippet, n = _format_news_articles_for_grounding(articles, instruction, max_articles=max_arts, max_desc_chars=max_desc)
@@ -2084,16 +2119,20 @@ Be conversational and helpful, like ChatGPT.
             logger.debug(f"[CHAT-{request_id}] News: %s", e)
 
         # Bing grounding: inject web search results for up-to-date answers when Bing key is set (critical for "who is current X" etc.)
+        # When user explicitly asked for news but NewsAPI had no results (or no key), use Bing with a news-focused query
         try:
             from services.contact_resolver import bing_web_search_grounding, email_finder_keys_status
             if email_finder_keys_status().get("bing_configured"):
                 q = user_message.strip()
+                if is_explicit_news and not grounding_parts:
+                    q = "recent news past month headlines"
                 # Use Bing for questions or when query suggests current info; always use for "who is the current X"
                 is_who_current = bool(re.search(r"\bwho\s+is\s+(?:the\s+)?(current\s+)?", q, re.IGNORECASE))
                 is_searchy = (
                     is_who_current or
                     q.endswith("?") or
                     needs_up_to_date or
+                    is_explicit_news or
                     re.search(r"\b(what|who|when|where|why|how|which|current|latest|recent|today)\b", q, re.IGNORECASE)
                 )
                 if is_searchy and len(q) > 5:
@@ -2120,7 +2159,7 @@ Be conversational and helpful, like ChatGPT.
             today = datetime.utcnow().strftime("%Y-%m-%d")
             combined_grounding = (
                 f"Today (UTC): {today}. The user asked: \"{user_message.strip()[:300].replace(chr(34), chr(39))}\"\n\n"
-                "Answer using the sources below. Cite source and date. If the sources do not contain the answer, say so.\n\n"
+                "Answer using the sources below. Cite source and date. For recent-news questions, present information covering at least the past month (not just today or yesterday). When news or web results are provided, summarize them helpfully; do not reply with 'I don't know'.\n\n"
                 + "\n\n---\n\n".join(grounding_parts)
             )
             if len(combined_grounding) > MAX_GROUNDING_CHARS:
