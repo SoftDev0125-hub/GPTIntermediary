@@ -1730,6 +1730,7 @@
         let ttsCooldownUntil = 0; // After TTS ends, ignore recognition until this timestamp (avoids echo from speaker)
         let silenceTimer = null; // timer for detecting silence
         let currentTranscript = ''; // accumulated transcript while mic is ON
+        const SILENCE_WINDOW_MS = 5000; // Treat 5s of silence as end of voice input
 
         // Ensure TTS voices are loaded (Chrome populates asynchronously)
         if (window.speechSynthesis) {
@@ -1777,13 +1778,25 @@
             }
         }
 
+        function scheduleSilenceSend() {
+            if (silenceTimer) clearTimeout(silenceTimer);
+            silenceTimer = setTimeout(() => {
+                silenceTimer = null;
+                if (messageInput.value.trim()) {
+                    console.log('[VOICE] Silence detected (5s) — sending current input');
+                    sendMessage(true);
+                    currentTranscript = '';
+                }
+            }, SILENCE_WINDOW_MS);
+        }
+
         // Check if Web Speech API is available and we're in a secure context
         if (('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) && isSecureContext) {
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
             recognition = new SpeechRecognition();
             
             recognition.continuous = true; // Keep listening until user toggles mic off
-            recognition.interimResults = false; // Only return final results
+            recognition.interimResults = true; // Use interim updates to more accurately detect ongoing speech
             recognition.lang = 'en-US'; // Set language (can be made configurable)
 
             // When recognition starts
@@ -1804,29 +1817,47 @@
                 return false;
             }
 
+            recognition.onsoundstart = () => {
+                if (silenceTimer) {
+                    clearTimeout(silenceTimer);
+                    silenceTimer = null;
+                }
+            };
+
+            recognition.onsoundend = () => {
+                // Start silence countdown only after sound stops.
+                scheduleSilenceSend();
+            };
+
             // Final results from speech recognition
             recognition.onresult = (event) => {
                 try {
-                    const transcript = Array.from(event.results)
-                        .slice(event.resultIndex)
-                        .map(r => r[0].transcript)
-                        .join(' ')
-                        .trim();
+                    const chunks = [];
+                    for (let i = event.resultIndex; i < event.results.length; i++) {
+                        const r = event.results[i];
+                        if (!r || !r[0]) continue;
+                        const chunk = (r[0].transcript || '').trim();
+                        if (!chunk) continue;
+                        if (r.isFinal) chunks.push(chunk);
+                    }
+                    const transcript = chunks.join(' ').trim();
 
                     if (!transcript) return;
 
-                    // While TTS is playing, only honor stop commands — stop TTS immediately and wait for next command
+                    // While TTS is playing, interrupt immediately on any user speech.
                     if (ttsPlaying) {
                         const transcriptLower = transcript.toLowerCase().trim();
-                        if (isStopVoiceCommand(transcriptLower)) {
-                            if ('speechSynthesis' in window && window.speechSynthesis.speaking) {
-                                window.speechSynthesis.cancel();
-                                ttsPlaying = false;
-                                ttsCooldownUntil = Date.now() + 800; // brief cooldown after stop
+                        if ('speechSynthesis' in window && window.speechSynthesis.speaking) {
+                            window.speechSynthesis.cancel();
+                            ttsPlaying = false;
+                            // Do not apply cooldown here: this is intentional user interruption.
+                            ttsCooldownUntil = 0;
+                            if (isStopVoiceCommand(transcriptLower)) {
                                 console.log('[VOICE] Voice response stopped by voice command');
+                                return;
                             }
+                            console.log('[VOICE] Voice response interrupted by new voice query');
                         }
-                        return; // Discard all other input while TTS is playing (prevents echo)
                     }
 
                     // After TTS just ended, cooldown period to avoid laptop mic picking up residual speaker output
@@ -1844,18 +1875,8 @@
                     messageInput.value += transcript;
                     try { if (typeof updateTextareaSize === 'function') updateTextareaSize(); } catch (e) {}
 
-                    // Reset silence timer: if no further speech for 5s, treat input as complete
-                    if (silenceTimer) clearTimeout(silenceTimer);
-                    silenceTimer = setTimeout(() => {
-                        silenceTimer = null;
-                        // Send the current input as a question
-                        if (messageInput.value.trim()) {
-                            console.log('[VOICE] Silence detected (5s) — sending current input');
-                            sendMessage(true);
-                            // Clear accumulated transcript so next phrase starts fresh
-                            currentTranscript = '';
-                        }
-                    }, 5000);
+                    // Start/refresh silence timer after final recognized text.
+                    scheduleSilenceSend();
                 } catch (e) {
                     console.error('[VOICE] onresult error', e);
                 }

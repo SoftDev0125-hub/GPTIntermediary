@@ -1098,10 +1098,29 @@ async def send_email(
         targets = []
         resolved_contacts = []
 
+        # First, normalize recipient text to remove account-selection directives that may be appended
+        # in natural language (e.g. "alice@example.com using second gmail account").
+        import re
+        raw_to_input = (request.to or '').strip()
+        normalized_to_input = re.sub(
+            r"(?:[\s,]+(?:(?:from|using|with|via)\s+(?:my\s+)?(?:the\s+)?)?"
+            r"(?:(?:first|second|1st|2nd|one|two|\d+(?:st|nd|rd|th)?)\s+)?"
+            r"(?:gmail\s+|email\s+)?account(?:\s*[12])?[\s,\.]*)+$",
+            "",
+            raw_to_input,
+            flags=re.IGNORECASE
+        ).strip()
+
         # First, try to parse an email address directly from `to` (handles "Name <email>" and raw emails)
         from email.utils import parseaddr
-        parsed_name, parsed_email = parseaddr(request.to or '')
+        parsed_name, parsed_email = parseaddr(normalized_to_input or raw_to_input)
         parsed_email = parsed_email.strip() if parsed_email else ''
+
+        # Fallback: extract any standalone email from the normalized string.
+        if not parsed_email:
+            extracted = re.search(r"\b[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[A-Za-z]{2,}\b", normalized_to_input or raw_to_input)
+            if extracted:
+                parsed_email = extracted.group(0).strip()
 
         # If parsed_email looks like a placeholder (example.com etc.) or obviously fake, ignore it
         placeholder_domains = {"example.com", "example.org", "example.net"}
@@ -1121,11 +1140,10 @@ async def send_email(
         else:
             # Attempt name-based lookup in `contacts` table (case-insensitive substring match)
             # Try to extract a name from natural language like "send hi to Abel"
-            raw_to = (request.to or '').strip()
-            import re
+            raw_to = normalized_to_input or raw_to_input
             m = re.search(r"\bto\s+(.+)$", raw_to, flags=re.IGNORECASE)
             if m:
-                query_name = m.group(1).strip().strip('"\'\.,')
+                query_name = m.group(1).strip().strip("\"'.,")
             else:
                 query_name = raw_to
             if not query_name:

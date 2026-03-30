@@ -916,6 +916,24 @@ def chat():
     analyzed_confidence = (analyzed.get("confidence") or "low").strip().lower() if analyzed else "low"
     use_analyzed = analyzed and analyzed_confidence == "high" and analyzed_intent != "general_chat"
 
+    def _is_likely_capability_question(text: str) -> bool:
+        msg = (text or "").strip().lower()
+        if not msg:
+            return False
+        capability_starters = (
+            "can you", "can u", "are you able to", "are you capable of",
+            "do you know how to", "is it possible to"
+        )
+        if msg.endswith("?") and any(msg.startswith(s) for s in capability_starters):
+            return True
+        return False
+
+    def _yes_no_for_capability(text: str) -> str:
+        msg = (text or "").lower()
+        if any(k in msg for k in ("email", "gmail", "send email", "reply email", "unread email", "mark as read", "clear gmail", "clean gmail")):
+            return "Yes."
+        return "No."
+
     # Person/contact query: answer from OpenAI, then News API, then Bing; return most accurate and most recent
     if _is_person_contact_query(user_message) or (use_analyzed and analyzed_intent == "person_contact_query"):
         triple_resp = _person_contact_triple_source(user_message, request_id)
@@ -1086,10 +1104,13 @@ def chat():
         want_whatsapp = bool(re.search(r"\b(whats\s*app|whatsapp|on\s+whatsapp|via\s+whatsapp)\b", user_message, re.IGNORECASE))
         m_cmd = None
         if not want_whatsapp:
+            # Capability questions should be answered, not executed.
+            if _is_likely_capability_question(user_message) and re.search(r"\bsend\b.+\b(email|gmail)\b", user_message, re.IGNORECASE):
+                return jsonify({'response': _yes_no_for_capability(user_message), 'function_called': None})
             # Match "send X to Y" at start, or "Can you / Please / I want to send X to Y"
             m_cmd = re.match(r"^\s*send\s+(.+?)\s+to\s+(.+)$", user_message, re.IGNORECASE)
             if not m_cmd:
-                m_cmd = re.match(r"^\s*(?:can you|please|could you|would you|i want to|i'd like to)\s+send\s+(.+?)\s+to\s+(.+)$", user_message, re.IGNORECASE)
+                m_cmd = re.match(r"^\s*(?:could you|would you|please|i want to|i'd like to)\s+send\s+(.+?)\s+to\s+(.+)$", user_message, re.IGNORECASE)
         # Deep analysis: treat as send_email when intent is send_email and we have recipient (and not WhatsApp)
         send_from_analysis = False
         send_analysis_orig = None
@@ -1110,23 +1131,27 @@ def chat():
 
             # Detect second-account send and strip that phrase from recipient BEFORE composing,
             # so we create the email the same way as for the first account (clean recipient + same content).
-            second_account_pattern = re.compile(
-                r"\b(from\s+the\s+second\s+account|from\s+second\s+account|from\s+EMAIL2|from\s+account\s+2"
-                r"|using\s+(?:my\s+)?(?:the\s+)?second\s+account|with\s+(?:my\s+)?(?:the\s+)?second\s+account"
-                r"|(?:using|with)\s+my\s+second\s+account|my\s+second\s+account)\b",
+            account_directive_pattern = re.compile(
+                r"\b(?:(?:from|using|with|via)\s+(?:my\s+)?(?:the\s+)?)?"
+                r"(?:(?:first|second|1st|2nd|one|two|\d+(?:st|nd|rd|th)?)\s+)?"
+                r"(?:gmail\s+|email\s+)?account(?:\s*[12])?"
+                r"\b",
                 re.IGNORECASE
             )
             send_from_second = data.get('send_from_second_account', False) if isinstance(data, dict) else False
-            if second_account_pattern.search(user_message):
+            if re.search(r"\b(second|2nd|two|account\s*2|email2|gmail2|email\s*2)\b", user_message, re.IGNORECASE):
                 send_from_second = True
+            # Remove trailing account directives from recipient to avoid malformed addresses like
+            # "alice@example.com using second gmail account".
             recipient_stripped = re.sub(
-                r"\s+(?:from\s+the\s+second\s+account|from\s+second\s+account|from\s+EMAIL2|from\s+account\s+2"
-                r"|using\s+(?:my\s+)?(?:the\s+)?second\s+account|with\s+(?:my\s+)?(?:the\s+)?second\s+account"
-                r"|(?:using|with)\s+my\s+second\s+account|my\s+second\s+account)\s*$",
+                r"(?:[\s,]+(?:(?:from|using|with|via)\s+(?:my\s+)?(?:the\s+)?)?"
+                r"(?:(?:first|second|1st|2nd|one|two|\d+(?:st|nd|rd|th)?)\s+)?"
+                r"(?:gmail\s+|email\s+)?account(?:\s*[12])?[\s,\.]*)+$",
                 "",
                 recipient,
                 flags=re.IGNORECASE
             ).strip()
+            recipient_stripped = account_directive_pattern.sub(" ", recipient_stripped).strip(" ,.")
             recipient_for_compose = recipient_stripped or recipient
 
             # Prepare a prompt for the OpenAI client to generate a friendly subject and body
@@ -2355,6 +2380,9 @@ Be conversational and helpful, like ChatGPT.
 
             # Map frontend/function account flags to backend use_second_gmail (always send a boolean)
             if function_name == 'send_email':
+                # Never auto-execute capability questions (e.g. "Can you send ...?").
+                if _is_likely_capability_question(user_message):
+                    return jsonify({'response': _yes_no_for_capability(user_message), 'function_called': None})
                 from_second = function_args.get('from_second_account')
                 from_second = from_second is True or (isinstance(from_second, str) and from_second.strip().lower() == 'true')
                 from_ui = bool(data.get('send_from_second_account', False)) if isinstance(data, dict) else False
