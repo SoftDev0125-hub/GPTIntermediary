@@ -4,10 +4,28 @@ Replaces reading from .env file with per-user database storage
 """
 from typing import Optional, Dict
 from sqlalchemy.orm import Session
-from db_models import GmailInfo, TelegramSession, SlackInfo, APIKey
+from db_models import GmailInfo, GmailSecondaryInfo, TelegramSession, SlackInfo, APIKey
 
 import logging
 logger = logging.getLogger(__name__)
+
+
+def get_gmail_secondary_config(db: Session, user_id: int) -> Optional[Dict[str, Optional[str]]]:
+    """Second Gmail (EMAIL2) for a user."""
+    try:
+        row = db.query(GmailSecondaryInfo).filter(GmailSecondaryInfo.user_id == user_id).first()
+        if not row:
+            return None
+        return {
+            "google_client_id": row.google_client_id,
+            "google_client_secret": row.google_client_secret,
+            "user_access_token": row.user_access_token,
+            "user_refresh_token": row.user_refresh_token,
+            "user_email": row.user_email,
+        }
+    except Exception as e:
+        logger.error(f"Error getting Gmail secondary config for user {user_id}: {e}")
+        return None
 
 
 def get_gmail_config(db: Session, user_id: int) -> Optional[Dict[str, Optional[str]]]:
@@ -125,6 +143,32 @@ def update_gmail_config(db: Session, user_id: int, **kwargs) -> bool:
     except Exception as e:
         db.rollback()
         logger.error(f"Error updating Gmail config for user {user_id}: {e}")
+        return False
+
+
+def update_gmail_secondary_config(db: Session, user_id: int, **kwargs) -> bool:
+    """Create or update second Gmail row for user."""
+    try:
+        row = db.query(GmailSecondaryInfo).filter(GmailSecondaryInfo.user_id == user_id).first()
+        if not row:
+            row = GmailSecondaryInfo(user_id=user_id)
+            db.add(row)
+        if "google_client_id" in kwargs:
+            row.google_client_id = kwargs["google_client_id"]
+        if "google_client_secret" in kwargs:
+            row.google_client_secret = kwargs["google_client_secret"]
+        if "user_access_token" in kwargs:
+            row.user_access_token = kwargs["user_access_token"]
+        if "user_refresh_token" in kwargs:
+            row.user_refresh_token = kwargs["user_refresh_token"]
+        if "user_email" in kwargs:
+            row.user_email = kwargs["user_email"]
+        db.commit()
+        db.refresh(row)
+        return True
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error updating Gmail secondary config for user {user_id}: {e}")
         return False
 
 

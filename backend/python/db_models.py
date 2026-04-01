@@ -264,6 +264,29 @@ class GmailInfo(Base):
         return f"<GmailInfo(id={self.id}, user_id={self.user_id}, email='{self.user_email}')>"
 
 
+class GmailSecondaryInfo(Base):
+    """Second Gmail account (EMAIL2) per user — used when MULTI_TENANT_MODE avoids shared .env tokens."""
+
+    __tablename__ = "gmail_secondary_info"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
+
+    google_client_id = Column(String(500), nullable=True)
+    google_client_secret = Column(String(500), nullable=True)
+    user_access_token = Column(Text, nullable=True)
+    user_refresh_token = Column(Text, nullable=True)
+    user_email = Column(String(255), nullable=True)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    user = relationship("User", foreign_keys=[user_id])
+
+    def __repr__(self):
+        return f"<GmailSecondaryInfo(id={self.id}, user_id={self.user_id}, email='{self.user_email}')>"
+
+
 class Contact(Base):
     """Simple contacts table to store name -> email mappings for quick lookup from UI"""
     __tablename__ = "contacts"

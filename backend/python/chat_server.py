@@ -693,22 +693,32 @@ FUNCTIONS = [
 ]
 
 
-def call_backend_function(function_name, arguments, caller_credentials=None):
-    """Call the backend API with function arguments"""
-    
-    # Add user credentials to email functions (first account only). When sending from second account, backend uses .env.
-    if function_name in ['send_email', 'get_unread_emails', 'reply_to_email', 'clean_gmail', 'mark_all_read']:
-        use_second = arguments.get('use_second_gmail') is True or (
-            isinstance(arguments.get('use_second_gmail'), str) and str(arguments.get('use_second_gmail')).strip().lower() == 'true'
-        )
-        if not use_second:
-            creds = None
-            if caller_credentials and isinstance(caller_credentials, dict) and caller_credentials.get('access_token'):
-                creds = caller_credentials
-            elif USER_CREDENTIALS and USER_CREDENTIALS.get('access_token') and 'mock' not in (USER_CREDENTIALS.get('access_token') or '').lower():
-                creds = USER_CREDENTIALS
-            if creds:
-                arguments['user_credentials'] = creds
+def call_backend_function(function_name, arguments, caller_credentials=None, auth_header=None):
+    """Call the backend API with function arguments. Forward Authorization when set (required for MULTI_TENANT_MODE Gmail)."""
+    try:
+        from services.gmail_oauth_resolver import is_multi_tenant_deployment
+    except ImportError:
+        def is_multi_tenant_deployment():
+            return False
+
+    email_funcs = {'send_email', 'get_unread_emails', 'reply_to_email', 'clean_gmail', 'mark_all_read'}
+    if function_name in email_funcs:
+        arguments = dict(arguments or {})
+        if is_multi_tenant_deployment():
+            arguments.pop('user_credentials', None)
+        else:
+            use_second = arguments.get('use_second_gmail') is True or (
+                isinstance(arguments.get('use_second_gmail'), str)
+                and str(arguments.get('use_second_gmail')).strip().lower() == 'true'
+            )
+            if not use_second:
+                creds = None
+                if caller_credentials and isinstance(caller_credentials, dict) and caller_credentials.get('access_token'):
+                    creds = caller_credentials
+                elif USER_CREDENTIALS and USER_CREDENTIALS.get('access_token') and 'mock' not in (USER_CREDENTIALS.get('access_token') or '').lower():
+                    creds = USER_CREDENTIALS
+                if creds:
+                    arguments['user_credentials'] = creds
     
     # Map function names to endpoints
     endpoint_map = {
@@ -739,7 +749,10 @@ def call_backend_function(function_name, arguments, caller_credentials=None):
             timeout_sec = 120  # Mark-all-read may process many messages
         import time as _time
         t0 = _time.time()
-        response = requests.post(url, json=arguments, timeout=timeout_sec)
+        req_headers = {}
+        if auth_header and str(auth_header).strip():
+            req_headers['Authorization'] = auth_header.strip()
+        response = requests.post(url, json=arguments, timeout=timeout_sec, headers=req_headers or None)
         duration = _time.time() - t0
         print(f"Backend call duration: {duration:.2f}s")
         try:
@@ -816,22 +829,28 @@ def proxy_whatsapp(subpath):
     if request.query_string:
         url = f"{url}?{request.query_string.decode('utf-8')}"
     try:
-        kwargs = {"timeout": 30}
+        fwd_headers = {}
+        auth = request.headers.get("Authorization")
+        if auth:
+            fwd_headers["Authorization"] = auth
+        kwargs = {"timeout": 30, "headers": fwd_headers}
         if request.method == 'GET':
             r = requests.get(url, **kwargs)
         elif request.method in ('POST', 'PUT'):
             # Forward JSON body so Node server receives it correctly
             body = request.get_data(as_text=True)
+            h = dict(fwd_headers)
             try:
                 payload = request.get_json(silent=True)
                 if payload is not None:
                     kwargs["json"] = payload
                 else:
                     kwargs["data"] = body
-                    kwargs["headers"] = {"Content-Type": request.headers.get("Content-Type", "application/json")}
+                    h["Content-Type"] = request.headers.get("Content-Type", "application/json")
             except Exception:
                 kwargs["data"] = body
-                kwargs["headers"] = {"Content-Type": request.headers.get("Content-Type", "application/json")}
+                h["Content-Type"] = request.headers.get("Content-Type", "application/json")
+            kwargs["headers"] = h
             if request.method == 'POST':
                 r = requests.post(url, **kwargs)
             else:
@@ -858,7 +877,21 @@ def health():
 
 @app.route('/get_user_credentials', methods=['GET'])
 def get_user_credentials():
-    """Get user credentials for frontend"""
+    """Get user credentials for frontend (single-tenant .env). In MULTI_TENANT_MODE, tokens are not exposed here."""
+    try:
+        from services.gmail_oauth_resolver import is_multi_tenant_deployment
+
+        if is_multi_tenant_deployment():
+            return jsonify(
+                {
+                    "access_token": None,
+                    "refresh_token": None,
+                    "email": None,
+                    "multi_tenant": True,
+                }
+            )
+    except ImportError:
+        pass
     return jsonify({
         "access_token": USER_CREDENTIALS.get("access_token"),
         "refresh_token": USER_CREDENTIALS.get("refresh_token"),
@@ -895,6 +928,8 @@ def chat():
             user_id = None
     else:
         logger.warning(f"[CHAT] No user_id provided in request. Data keys: {list(data.keys()) if data else 'None'}")
+
+    backend_auth_header = request.headers.get("Authorization")
     
     current_key = _current_openai_key()
     if not current_key or current_key == 'your_openai_api_key_here':
@@ -967,7 +1002,7 @@ def chat():
             mark_read_payload = {}
             if use_analyzed and (analyzed_entities.get("account") or "").strip().lower() == "second":
                 mark_read_payload["use_second_gmail"] = True
-            result = call_backend_function('mark_all_read', mark_read_payload, caller_credentials=caller_creds)
+            result = call_backend_function('mark_all_read', mark_read_payload, caller_credentials=caller_creds, auth_header=backend_auth_header)
             if isinstance(result, dict) and result.get('success'):
                 count = result.get('data', {}).get('marked_count', 0)
                 msg = result.get('message', f'Marked {count} unread email(s) as read.')
@@ -979,7 +1014,7 @@ def chat():
             clean_payload = {}
             if use_analyzed and (analyzed_entities.get("account") or "").strip().lower() == "second":
                 clean_payload["use_second_gmail"] = True
-            result = call_backend_function('clean_gmail', clean_payload, caller_credentials=caller_creds)
+            result = call_backend_function('clean_gmail', clean_payload, caller_credentials=caller_creds, auth_header=backend_auth_header)
             if isinstance(result, dict) and result.get('success'):
                 count = result.get('data', {}).get('deleted_count', 0)
                 msg = result.get('message', f'Permanently deleted {count} emails from your Gmail account.')
@@ -1019,8 +1054,8 @@ def chat():
                 caller_creds = data.get('user_credentials') if isinstance(data, dict) else None
                 # Fetch unread from both accounts to find an email from this sender
                 base_query = "in:inbox category:primary is:unread"
-                res1 = call_backend_function("get_unread_emails", {"limit": 30, "query": base_query}, caller_credentials=caller_creds)
-                res2 = call_backend_function("get_unread_emails", {"limit": 30, "query": base_query, "use_second_gmail": True}, caller_credentials=caller_creds)
+                res1 = call_backend_function("get_unread_emails", {"limit": 30, "query": base_query}, caller_credentials=caller_creds, auth_header=backend_auth_header)
+                res2 = call_backend_function("get_unread_emails", {"limit": 30, "query": base_query, "use_second_gmail": True}, caller_credentials=caller_creds, auth_header=backend_auth_header)
                 emails1 = [dict(e, account="EMAIL1") for e in (res1.get("emails") or []) if isinstance(e, dict)] if isinstance(res1, dict) and res1.get("success") else []
                 emails2 = [dict(e, account="EMAIL2") for e in (res2.get("emails") or []) if isinstance(e, dict)] if isinstance(res2, dict) and res2.get("success") else []
                 combined = emails1 + emails2
@@ -1085,7 +1120,7 @@ def chat():
                 reply_args = {"sender_email": from_email, "body": draft}
                 if use_second:
                     reply_args["use_second_gmail"] = True
-                result = call_backend_function("reply_to_email", reply_args, caller_credentials=caller_creds if not use_second else None)
+                result = call_backend_function("reply_to_email", reply_args, caller_credentials=caller_creds, auth_header=backend_auth_header)
                 if isinstance(result, dict) and result.get("success"):
                     display_name = from_name or from_email
                     return jsonify({
@@ -1227,7 +1262,7 @@ def chat():
                 args['use_second_gmail'] = True
 
             caller_creds = data.get('user_credentials') if isinstance(data, dict) else None
-            result = call_backend_function('send_email', args, caller_credentials=caller_creds)
+            result = call_backend_function('send_email', args, caller_credentials=caller_creds, auth_header=backend_auth_header)
 
             # Build friendly feedback for the user
             try:
@@ -1878,7 +1913,7 @@ def chat():
                     a['page_token'] = page_tok
                 if use_second:
                     a['use_second_gmail'] = True
-                return call_backend_function('get_unread_emails', a, caller_credentials=caller_creds)
+                return call_backend_function('get_unread_emails', a, caller_credentials=caller_creds, auth_header=backend_auth_header)
 
             if want_second_only:
                 result1 = None
@@ -2435,14 +2470,14 @@ Be conversational and helpful, like ChatGPT.
                     args2 = {'limit': limit_per, 'query': query, 'use_second_gmail': True}
                     if page2:
                         args2['page_token'] = page2
-                    function_result = call_backend_function('get_unread_emails', args2, caller_credentials=caller_creds)
+                    function_result = call_backend_function('get_unread_emails', args2, caller_credentials=caller_creds, auth_header=backend_auth_header)
                     if isinstance(function_result, dict) and function_result.get('emails'):
                         function_result['emails'] = [dict(e, account='EMAIL2') for e in function_result['emails'] if isinstance(e, dict)]
                 elif account == 'first':
                     args1 = {'limit': limit_per, 'query': query}
                     if page1:
                         args1['page_token'] = page1
-                    function_result = call_backend_function('get_unread_emails', args1, caller_credentials=caller_creds)
+                    function_result = call_backend_function('get_unread_emails', args1, caller_credentials=caller_creds, auth_header=backend_auth_header)
                     if isinstance(function_result, dict) and function_result.get('emails'):
                         function_result['emails'] = [dict(e, account='EMAIL1') for e in function_result['emails'] if isinstance(e, dict)]
                 else:
@@ -2452,8 +2487,8 @@ Be conversational and helpful, like ChatGPT.
                     args2 = {'limit': limit_per, 'query': query, 'use_second_gmail': True}
                     if page2:
                         args2['page_token'] = page2
-                    res1 = call_backend_function('get_unread_emails', args1, caller_credentials=caller_creds)
-                    res2 = call_backend_function('get_unread_emails', args2, caller_credentials=caller_creds)
+                    res1 = call_backend_function('get_unread_emails', args1, caller_credentials=caller_creds, auth_header=backend_auth_header)
+                    res2 = call_backend_function('get_unread_emails', args2, caller_credentials=caller_creds, auth_header=backend_auth_header)
                     emails1 = [dict(e, account='EMAIL1') for e in (res1.get('emails') or []) if isinstance(e, dict)]
                     emails2 = [dict(e, account='EMAIL2') for e in (res2.get('emails') or []) if isinstance(e, dict)] if isinstance(res2, dict) and res2.get('success') else []
                     function_result = {
@@ -2466,7 +2501,7 @@ Be conversational and helpful, like ChatGPT.
                     if not res1.get('success'):
                         function_result['error'] = res1.get('detail') or res1.get('message') or res1.get('error') or 'Failed to fetch emails'
             else:
-                function_result = call_backend_function(function_name, function_args, caller_credentials=data.get('user_credentials'))
+                function_result = call_backend_function(function_name, function_args, caller_credentials=data.get('user_credentials'), auth_header=backend_auth_header)
             
             # For app launches, return immediately without second OpenAI call for speed
             if function_name == 'launch_app':
