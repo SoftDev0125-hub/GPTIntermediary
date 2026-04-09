@@ -19,7 +19,7 @@ import sys
 import random
 import uuid
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime
 import requests
 from pathlib import Path
 from dotenv import load_dotenv
@@ -137,10 +137,7 @@ def _write_env_key_to_dotenv(key_name, value):
         logger.warning(f"Failed to write {key_name} to .env: {e}")
         return False
 
-# Read NewsAPI key from environment (set in .env or system env)
-NEWSAPI_KEY = _read_env_key_from_dotenv('NEWSAPI_KEY')
-if not NEWSAPI_KEY:
-    logger.warning('NEWSAPI_KEY not found in environment or .env; news endpoints will return error')
+# NEWSAPI_KEY may still be present in .env for compatibility; news is served via Google Custom Search when configured.
 
 from services.email_service import EmailService
 from services.app_launcher import AppLauncher
@@ -590,64 +587,35 @@ async def root():
 @app.get("/api/news")
 async def get_latest_news(country: Optional[str] = 'us', q: Optional[str] = None, pageSize: int = 5):
     """
-    Fetch latest news using NewsAPI.org. Returns newest first; response is not cached.
-    Query params:
-      - country: 2-letter country code (default 'us')
-      - q: optional search query
-      - pageSize: number of articles to return (default 5)
+    Returns web search results as articles (Google Custom Search). Same response shape as before for clients.
+    Requires GOOGLE_CUSTOM_SEARCH_API_KEY and GOOGLE_CUSTOM_SEARCH_ENGINE_ID in .env.
+    Query params: q (search query), pageSize (max 10 for CSE).
     """
-    if not NEWSAPI_KEY or NEWSAPI_KEY == '':
-        raise HTTPException(status_code=503, detail="NewsAPI key not configured")
+    from services.google_cse import google_custom_search, is_google_cse_configured
 
-    url = 'https://newsapi.org/v2/top-headlines'
-    # If a specific query/topic is provided, use the 'everything' endpoint (newest first, last 7 days)
-    if q:
-        url = 'https://newsapi.org/v2/everything'
-        from_date = (datetime.utcnow() - timedelta(days=7)).strftime('%Y-%m-%d')
-        params = {
-            'apiKey': NEWSAPI_KEY,
-            'q': q,
-            'pageSize': min(pageSize, 20),
-            'sortBy': 'publishedAt',
-            'language': 'en',
-            'from': from_date,
-        }
-    else:
-        params = {
-            'apiKey': NEWSAPI_KEY,
-            'country': country,
-            'pageSize': min(pageSize, 20)
-        }
-
-    try:
-        resp = requests.get(url, params=params, timeout=10)
-        data = resp.json()
-
-        if data.get('status') != 'ok':
-            msg = data.get('message', 'Unknown error from NewsAPI')
-            logger.error(f"NewsAPI returned error: {msg}")
-            raise HTTPException(status_code=500, detail=f"NewsAPI error: {msg}")
-
-        articles = []
-        for a in data.get('articles', []):
-            articles.append({
-                'title': a.get('title'),
-                'source': (a.get('source') or {}).get('name'),
-                'url': a.get('url'),
-                'publishedAt': a.get('publishedAt'),
-                'description': a.get('description')
-            })
-
-        from fastapi.responses import JSONResponse
-        return JSONResponse(
-            content={'success': True, 'articles': articles},
-            headers={'Cache-Control': 'no-store, no-cache, must-revalidate'},
+    if not is_google_cse_configured():
+        raise HTTPException(
+            status_code=503,
+            detail="Google Custom Search not configured (set GOOGLE_CUSTOM_SEARCH_API_KEY and GOOGLE_CUSTOM_SEARCH_ENGINE_ID)",
         )
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error fetching news: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to fetch news: {str(e)}")
+
+    search_q = (q or '').strip() or f'top news {country or "us"}'
+    items = google_custom_search(search_q, num=min(max(pageSize, 1), 10))
+    articles = []
+    for it in items:
+        articles.append({
+            'title': it.get('title'),
+            'source': it.get('displayLink') or 'web',
+            'url': it.get('url'),
+            'publishedAt': None,
+            'description': it.get('snippet'),
+        })
+
+    from fastapi.responses import JSONResponse
+    return JSONResponse(
+        content={'success': True, 'articles': articles},
+        headers={'Cache-Control': 'no-store, no-cache, must-revalidate'},
+    )
 
 
 # ==================== AUTHENTICATION ENDPOINTS ====================
@@ -3300,6 +3268,8 @@ class EnvVariablesRequest(BaseModel):
     user_refresh_token_2: Optional[str] = None
     bing_search_api_key: Optional[str] = None
     people_api_key: Optional[str] = None
+    google_custom_search_api_key: Optional[str] = None
+    google_custom_search_engine_id: Optional[str] = None
 
 
 # Keys shown in the Settings tab: read from and written to .env only (not the database).
@@ -3313,6 +3283,7 @@ SETTINGS_ENV_KEYS = [
     "USER_ACCESS_TOKEN_2", "USER_REFRESH_TOKEN_2",
     "TELEGRAM_API_ID", "TELEGRAM_API_HASH", "TELEGRAM_PHONE_NUMBER",
     "SLACK_USER_TOKEN", "BING_API_KEY", "BING_SEARCH_API_KEY", "PEOPLE_API_KEY",
+    "GOOGLE_CUSTOM_SEARCH_API_KEY", "GOOGLE_CUSTOM_SEARCH_ENGINE_ID",
 ]
 
 
@@ -3368,6 +3339,8 @@ _REQUEST_TO_ENV_KEY = {
     "slack_user_token": "SLACK_USER_TOKEN",
     "bing_search_api_key": "BING_API_KEY",  # primary key used by contact_resolver
     "people_api_key": "PEOPLE_API_KEY",
+    "google_custom_search_api_key": "GOOGLE_CUSTOM_SEARCH_API_KEY",
+    "google_custom_search_engine_id": "GOOGLE_CUSTOM_SEARCH_ENGINE_ID",
 }
 
 

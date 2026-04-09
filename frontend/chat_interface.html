@@ -174,6 +174,11 @@
                         <option value="child">Child</option>
                         <option value="elderly">Elderly</option>
                     </select>
+                    <select id="voiceEngineSelect" class="voice-engine-select" title="Voice engine: browser, Realtime WebRTC, or Whisper + chat + TTS">
+                        <option value="browser">Browser voice</option>
+                        <option value="openai_realtime">OpenAI Realtime</option>
+                        <option value="openai_pipeline">OpenAI: STT → chat → TTS</option>
+                    </select>
                     <button id="voiceRecognitionButton" class="voice-recognition-btn" title="Voice Recognition">
                         <svg id="voiceIcon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
@@ -1598,6 +1603,96 @@
         let isListening = false;
         let listeningActive = false;
 
+        /** OpenAI Realtime (WebRTC) session handles — cleaned by teardownOpenAiRealtimeSession */
+        let realtimePc = null;
+        let realtimeLocalStream = null;
+        let realtimeRemoteAudio = null;
+        let realtimeDc = null;
+
+        function teardownOpenAiRealtimeSession() {
+            try {
+                if (realtimeDc) {
+                    realtimeDc.close();
+                }
+            } catch (e) { /* ignore */ }
+            realtimeDc = null;
+            try {
+                if (realtimePc) {
+                    realtimePc.getSenders().forEach(function (s) {
+                        try {
+                            if (s.track) {
+                                s.track.stop();
+                            }
+                        } catch (e) { /* ignore */ }
+                    });
+                    realtimePc.close();
+                }
+            } catch (e) { /* ignore */ }
+            realtimePc = null;
+            try {
+                if (realtimeLocalStream) {
+                    realtimeLocalStream.getTracks().forEach(function (t) {
+                        t.stop();
+                    });
+                }
+            } catch (e) { /* ignore */ }
+            realtimeLocalStream = null;
+            try {
+                if (realtimeRemoteAudio) {
+                    realtimeRemoteAudio.pause();
+                    realtimeRemoteAudio.srcObject = null;
+                    if (realtimeRemoteAudio.parentNode) {
+                        realtimeRemoteAudio.parentNode.removeChild(realtimeRemoteAudio);
+                    }
+                }
+            } catch (e) { /* ignore */ }
+            realtimeRemoteAudio = null;
+        }
+
+        function isOpenAiRealtimeEngineSelected() {
+            const el = document.getElementById('voiceEngineSelect');
+            return el && el.value === 'openai_realtime';
+        }
+
+        /** Whisper + /chat + OpenAI TTS (push-to-talk: click to record, click again to send) */
+        let pipelineMediaRecorder = null;
+        let pipelineStream = null;
+        let pipelineChunks = null;
+        let pipelineRecording = false;
+        let pipelineAudioEl = null;
+        /** When true, MediaRecorder onstop discards upload (engine switch / cancel). */
+        let pipelineSkipNextUpload = false;
+
+        function teardownOpenAiPipelineRecording() {
+            pipelineRecording = false;
+            pipelineSkipNextUpload = true;
+            try {
+                if (pipelineMediaRecorder && pipelineMediaRecorder.state !== 'inactive') {
+                    pipelineMediaRecorder.stop();
+                }
+            } catch (e) { /* ignore */ }
+            pipelineMediaRecorder = null;
+            try {
+                if (pipelineStream) {
+                    pipelineStream.getTracks().forEach(function (t) {
+                        t.stop();
+                    });
+                }
+            } catch (e) { /* ignore */ }
+            pipelineStream = null;
+            pipelineChunks = null;
+            const btn = document.getElementById('voiceRecognitionButton');
+            if (btn) {
+                btn.classList.remove('listening');
+                btn.title = 'Voice / microphone';
+            }
+        }
+
+        function isOpenAiPipelineSelected() {
+            const el = document.getElementById('voiceEngineSelect');
+            return el && el.value === 'openai_pipeline';
+        }
+
         function isTtsActive() {
             return !!(('speechSynthesis' in window && window.speechSynthesis.speaking) || ttsPlaying);
         }
@@ -1629,6 +1724,7 @@
 
         function exitVoiceModeAfterResponseSilence() {
             if (!listeningActive) return;
+            teardownOpenAiRealtimeSession();
             postTtsSilenceExitPending = false;
             listeningActive = false;
             try {
@@ -1637,7 +1733,7 @@
             const btn = document.getElementById('voiceRecognitionButton');
             if (btn) {
                 btn.classList.remove('listening');
-                btn.title = 'Voice Recognition';
+                btn.title = 'Voice / microphone';
             }
             isListening = false;
             if (silenceTimer) {
@@ -1982,8 +2078,392 @@
             }
         }
 
-        // Check if Web Speech API is available and we're in a secure context
-        if (('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) && isSecureContext) {
+        const hasBrowserSpeech = ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) && isSecureContext;
+        const hasWebRtc = typeof RTCPeerConnection !== 'undefined';
+
+        function stopVoiceResponseIfPlaying() {
+            if ('speechSynthesis' in window && window.speechSynthesis.speaking) {
+                window.speechSynthesis.cancel();
+                ttsPlaying = false;
+                console.log('[VOICE] Voice response stopped by user');
+            }
+        }
+
+        (function initVoiceEngineSelect() {
+            const sel = document.getElementById('voiceEngineSelect');
+            if (!sel) return;
+            try {
+                const v = localStorage.getItem('voice_engine');
+                if (v === 'openai_realtime' || v === 'browser' || v === 'openai_pipeline') {
+                    sel.value = v;
+                }
+            } catch (e) { /* ignore */ }
+            sel.addEventListener('change', function () {
+                try {
+                    localStorage.setItem('voice_engine', sel.value);
+                } catch (e) { /* ignore */ }
+                try {
+                    if (pipelineAudioEl) {
+                        pipelineAudioEl.pause();
+                        if (pipelineAudioEl.parentNode) pipelineAudioEl.parentNode.removeChild(pipelineAudioEl);
+                        pipelineAudioEl = null;
+                    }
+                } catch (e) { /* ignore */ }
+                const wasVoiceBusy = listeningActive || pipelineRecording;
+                teardownOpenAiPipelineRecording();
+                if (!wasVoiceBusy) return;
+                listeningActive = false;
+                postTtsSilenceExitPending = false;
+                teardownOpenAiRealtimeSession();
+                try {
+                    if (recognition) recognition.stop();
+                } catch (e) { /* ignore */ }
+                if (silenceTimer) {
+                    clearTimeout(silenceTimer);
+                    silenceTimer = null;
+                }
+                clearPostTtsSilenceExitTimer();
+                clearVoiceSessionIdleTimer();
+                voiceRecognitionButton.classList.remove('listening');
+                voiceRecognitionButton.title = 'Voice / microphone';
+            });
+        })();
+
+        async function startOpenAiRealtimeVoice() {
+            if (!hasWebRtc) {
+                addMessage('WebRTC is not available in this browser.', 'error');
+                return;
+            }
+            if (!isSecureContext) {
+                addMessage('OpenAI Realtime voice requires HTTPS or http://localhost.', 'error');
+                return;
+            }
+            listeningActive = true;
+            voiceRecognitionButton.classList.add('listening');
+            voiceRecognitionButton.title = 'OpenAI Realtime (click to stop)';
+            try {
+                const pc = new RTCPeerConnection();
+                realtimePc = pc;
+                realtimeRemoteAudio = document.createElement('audio');
+                realtimeRemoteAudio.setAttribute('playsinline', 'true');
+                realtimeRemoteAudio.autoplay = true;
+                document.body.appendChild(realtimeRemoteAudio);
+                pc.ontrack = function (e) {
+                    if (e.streams && e.streams[0] && realtimeRemoteAudio) {
+                        realtimeRemoteAudio.srcObject = e.streams[0];
+                    }
+                };
+                const ms = await navigator.mediaDevices.getUserMedia({ audio: true });
+                realtimeLocalStream = ms;
+                ms.getTracks().forEach(function (t) {
+                    pc.addTrack(t, ms);
+                });
+                const dc = pc.createDataChannel('oai-events');
+                realtimeDc = dc;
+                dc.addEventListener('message', function (e) {
+                    try {
+                        const ev = JSON.parse(e.data);
+                        console.log('[REALTIME] event', ev.type || ev);
+                    } catch (err) { /* ignore */ }
+                });
+                const offer = await pc.createOffer();
+                await pc.setLocalDescription(offer);
+                const chatHeaders = { 'Content-Type': 'application/sdp' };
+                const chatAuth = localStorage.getItem('auth_token');
+                if (chatAuth) {
+                    chatHeaders['Authorization'] = 'Bearer ' + chatAuth;
+                }
+                const sdpResponse = await fetch(`${CHAT_SERVER_URL}/realtime/calls`, {
+                    method: 'POST',
+                    headers: chatHeaders,
+                    body: offer.sdp
+                });
+                if (!sdpResponse.ok) {
+                    let errText = await sdpResponse.text();
+                    try {
+                        const ej = JSON.parse(errText);
+                        errText = (typeof ej.error === 'string' ? ej.error : (ej.error && ej.error.message)) || ej.message || errText;
+                    } catch (e2) { /* keep */ }
+                    throw new Error(errText || sdpResponse.statusText);
+                }
+                const answerSdp = await sdpResponse.text();
+                await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
+                pc.onconnectionstatechange = function () {
+                    if (pc.connectionState !== 'failed' && pc.connectionState !== 'closed') return;
+                    if (realtimePc !== pc) return;
+                    listeningActive = false;
+                    teardownOpenAiRealtimeSession();
+                    voiceRecognitionButton.classList.remove('listening');
+                    voiceRecognitionButton.title = 'Voice / microphone';
+                };
+            } catch (err) {
+                console.error('[REALTIME]', err);
+                addMessage('OpenAI Realtime failed: ' + (err.message || String(err)), 'error');
+                listeningActive = false;
+                teardownOpenAiRealtimeSession();
+                voiceRecognitionButton.classList.remove('listening');
+                voiceRecognitionButton.title = 'Voice / microphone';
+            }
+        }
+
+        async function uploadOpenAiVoicePipeline(blob) {
+            typingIndicator.classList.add('active');
+            let userIdInt = null;
+            try {
+                const uid = localStorage.getItem('user_id');
+                if (uid) {
+                    const p = parseInt(uid, 10);
+                    if (!isNaN(p) && p > 0) userIdInt = p;
+                }
+                if (!userIdInt) {
+                    const authToken = localStorage.getItem('auth_token');
+                    if (authToken) {
+                        try {
+                            const parts = authToken.split('.');
+                            if (parts.length === 3) {
+                                let payload = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+                                while (payload.length % 4) payload += '=';
+                                const obj = JSON.parse(atob(payload));
+                                if (obj && obj.user_id) {
+                                    userIdInt = parseInt(obj.user_id, 10);
+                                    localStorage.setItem('user_id', userIdInt.toString());
+                                }
+                            }
+                        } catch (e) { /* ignore */ }
+                    }
+                }
+            } catch (e) { /* ignore */ }
+
+            const fd = new FormData();
+            fd.append('audio', blob, 'recording.webm');
+            fd.append('meta', JSON.stringify({
+                user_id: userIdInt,
+                user_email: localStorage.getItem('user_email') || undefined,
+                history: conversationHistory,
+                email_page_token: lastEmailPageToken || undefined,
+                email_page_token_2: lastEmailPageToken2 || undefined,
+                send_from_second_account: (localStorage.getItem('chat_send_from_account') === '2')
+            }));
+            const headers = {};
+            const chatAuth = localStorage.getItem('auth_token');
+            if (chatAuth) headers['Authorization'] = 'Bearer ' + chatAuth;
+            const CHAT_REQUEST_TIMEOUT_MS = 120000;
+            const controller = new AbortController();
+            const timeoutId = setTimeout(function () { controller.abort(); }, CHAT_REQUEST_TIMEOUT_MS);
+            try {
+                const res = await fetch(`${CHAT_SERVER_URL}/voice/process`, {
+                    method: 'POST',
+                    headers: headers,
+                    body: fd,
+                    signal: controller.signal
+                });
+                clearTimeout(timeoutId);
+                const data = await res.json().catch(function () { return {}; });
+                typingIndicator.classList.remove('active');
+                if (data.transcript) {
+                    console.log('[VOICE] intent:', data.intent, 'confidence:', data.confidence, 'transcript:', data.transcript);
+                    addMessage(data.transcript, 'user');
+                    messageInput.value = '';
+                    try { if (typeof updateTextareaSize === 'function') updateTextareaSize(); } catch (e) {}
+                }
+                if (data.response) {
+                    addMessage(data.response, 'assistant');
+                    if (data.function_called === 'get_unread_emails') {
+                        if (data.next_page_token !== undefined) lastEmailPageToken = data.next_page_token;
+                        if (data.next_page_token_2 !== undefined) lastEmailPageToken2 = data.next_page_token_2;
+                    } else {
+                        lastEmailPageToken = null;
+                        lastEmailPageToken2 = null;
+                    }
+                }
+                if (!data.response && (data.error || !res.ok)) {
+                    const errMsg = (typeof data.error === 'string' && data.error) ? data.error : (typeof data.response === 'string' ? data.response : 'Voice processing failed');
+                    addMessage('ERROR: ' + errMsg, 'error');
+                }
+                if (data.audio_base64 && data.audio_mime) {
+                    try {
+                        if (pipelineAudioEl) {
+                            pipelineAudioEl.pause();
+                            if (pipelineAudioEl.parentNode) pipelineAudioEl.parentNode.removeChild(pipelineAudioEl);
+                        }
+                    } catch (e) { /* ignore */ }
+                    const au = document.createElement('audio');
+                    au.setAttribute('playsinline', 'true');
+                    au.autoplay = true;
+                    au.src = 'data:' + data.audio_mime + ';base64,' + data.audio_base64;
+                    pipelineAudioEl = au;
+                    document.body.appendChild(au);
+                    au.onended = function () {
+                        try {
+                            if (au.parentNode) au.parentNode.removeChild(au);
+                        } catch (e) { /* ignore */ }
+                        if (pipelineAudioEl === au) pipelineAudioEl = null;
+                    };
+                }
+            } catch (e) {
+                clearTimeout(timeoutId);
+                typingIndicator.classList.remove('active');
+                if (e.name === 'AbortError') {
+                    addMessage('Voice request timed out.', 'error');
+                } else {
+                    addMessage('Voice request failed: ' + (e.message || String(e)), 'error');
+                }
+            }
+        }
+
+        if (voiceRecognitionButton) {
+            if (!isSecureContext) {
+                voiceRecognitionButton.title = 'Voice requires HTTPS or localhost';
+                voiceRecognitionButton.addEventListener('click', function () {
+                    addMessage('Voice only works over HTTPS or when you open the app at http://localhost.', 'error');
+                });
+            } else {
+                voiceRecognitionButton.addEventListener('click', async function () {
+                    if (isOpenAiRealtimeEngineSelected()) {
+                        stopVoiceResponseIfPlaying();
+                        if (listeningActive) {
+                            listeningActive = false;
+                            postTtsSilenceExitPending = false;
+                            teardownOpenAiRealtimeSession();
+                            if (silenceTimer) {
+                                clearTimeout(silenceTimer);
+                                silenceTimer = null;
+                            }
+                            clearPostTtsSilenceExitTimer();
+                            clearVoiceSessionIdleTimer();
+                            voiceRecognitionButton.classList.remove('listening');
+                            voiceRecognitionButton.title = 'Voice / microphone';
+                            console.log('[REALTIME] Session stopped');
+                        } else {
+                            await startOpenAiRealtimeVoice();
+                        }
+                        return;
+                    }
+                    if (isOpenAiPipelineSelected()) {
+                        stopVoiceResponseIfPlaying();
+                        if (typeof MediaRecorder === 'undefined') {
+                            addMessage('Audio recording is not supported in this browser.', 'error');
+                            return;
+                        }
+                        if (pipelineRecording) {
+                            pipelineRecording = false;
+                            voiceRecognitionButton.title = 'Voice / microphone';
+                            voiceRecognitionButton.classList.remove('listening');
+                            try {
+                                if (pipelineMediaRecorder && pipelineMediaRecorder.state !== 'inactive') {
+                                    pipelineMediaRecorder.stop();
+                                }
+                            } catch (e) {
+                                teardownOpenAiPipelineRecording();
+                            }
+                            return;
+                        }
+                        pipelineSkipNextUpload = false;
+                        pipelineRecording = true;
+                        pipelineChunks = [];
+                        voiceRecognitionButton.classList.add('listening');
+                        voiceRecognitionButton.title = 'Recording… click again to send';
+                        navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
+                            pipelineStream = stream;
+                            var mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : (MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : '');
+                            var mr = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+                            pipelineMediaRecorder = mr;
+                            mr.ondataavailable = function (e) {
+                                if (e.data && e.data.size) pipelineChunks.push(e.data);
+                            };
+                            mr.onstop = function () {
+                                var chunks = pipelineChunks ? pipelineChunks.slice() : [];
+                                var mimeType = mr.mimeType || 'audio/webm';
+                                pipelineRecording = false;
+                                if (pipelineSkipNextUpload) {
+                                    pipelineSkipNextUpload = false;
+                                    try {
+                                        if (pipelineStream) {
+                                            pipelineStream.getTracks().forEach(function (t) { t.stop(); });
+                                        }
+                                    } catch (e) { /* ignore */ }
+                                    pipelineStream = null;
+                                    pipelineMediaRecorder = null;
+                                    pipelineChunks = null;
+                                    return;
+                                }
+                                try {
+                                    if (pipelineStream) {
+                                        pipelineStream.getTracks().forEach(function (t) { t.stop(); });
+                                    }
+                                } catch (e) { /* ignore */ }
+                                pipelineStream = null;
+                                pipelineMediaRecorder = null;
+                                pipelineChunks = null;
+                                voiceRecognitionButton.classList.remove('listening');
+                                voiceRecognitionButton.title = 'Voice / microphone';
+                                var blob = new Blob(chunks, { type: mimeType });
+                                if (blob.size < 200) {
+                                    addMessage('Recording was too short.', 'error');
+                                    return;
+                                }
+                                uploadOpenAiVoicePipeline(blob);
+                            };
+                            mr.start(100);
+                        }).catch(function (err) {
+                            pipelineRecording = false;
+                            voiceRecognitionButton.classList.remove('listening');
+                            voiceRecognitionButton.title = 'Voice / microphone';
+                            addMessage('Microphone error: ' + (err && err.message ? err.message : String(err)), 'error');
+                        });
+                        return;
+                    }
+                    if (!hasBrowserSpeech) {
+                        addMessage('Browser speech recognition is not available. Choose OpenAI Realtime or OpenAI STT → chat → TTS in the voice engine menu.', 'error');
+                        return;
+                    }
+                    stopVoiceResponseIfPlaying();
+                    if (listeningActive) {
+                        listeningActive = false;
+                        postTtsSilenceExitPending = false;
+                        try {
+                            recognition.stop();
+                        } catch (e) {}
+                        console.log('[VOICE] Microphone toggled OFF');
+                        if (silenceTimer) {
+                            clearTimeout(silenceTimer);
+                            silenceTimer = null;
+                        }
+                        clearPostTtsSilenceExitTimer();
+                        clearVoiceSessionIdleTimer();
+                        if (messageInput.value.trim()) {
+                            console.log('[VOICE] Sending pending input on mic OFF');
+                            sendMessage(true);
+                            currentTranscript = '';
+                        }
+                    } else {
+                        listeningActive = true;
+                        postTtsSilenceExitPending = false;
+                        clearPostTtsSilenceExitTimer();
+                        bumpVoiceSessionIdleTimer();
+                        try {
+                            recognition.start();
+                            console.log('[VOICE] Microphone toggled ON');
+                        } catch (error) {
+                            console.error('[VOICE] Error starting recognition:', error);
+                            listeningActive = false;
+                            clearVoiceSessionIdleTimer();
+                            if (error.message && error.message.includes('already started')) {
+                                try { recognition.stop(); } catch (e) {}
+                            } else {
+                                const msg = (error.name === 'SecurityError' || error.message.includes('secure'))
+                                    ? 'Voice recognition requires a secure connection. Open this app via https:// or http://localhost.'
+                                    : 'Error starting voice recognition. Check microphone permission and try again.';
+                                addMessage(msg, 'error');
+                            }
+                        }
+                    }
+                });
+            }
+        }
+
+        // Browser Web Speech API (when voice engine = Browser voice)
+        if (hasBrowserSpeech) {
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
             recognition = new SpeechRecognition();
             
@@ -2169,7 +2649,7 @@
                 clearPostTtsSilenceExitTimer();
                 clearVoiceSessionIdleTimer();
                 voiceRecognitionButton.classList.remove('listening');
-                voiceRecognitionButton.title = 'Voice Recognition';
+                voiceRecognitionButton.title = 'Voice / microphone';
                 
                 let errorMessage = 'Voice recognition error: ';
                 switch(event.error) {
@@ -2193,12 +2673,13 @@
                 console.log('[VOICE] Voice recognition ended');
                 isListening = false;
                 voiceRecognitionButton.classList.remove('listening');
-                voiceRecognitionButton.title = 'Voice Recognition';
+                voiceRecognitionButton.title = 'Voice / microphone';
 
                 // If user left mic ON, restart listening after a short delay (avoids "already started" in Chrome)
                 if (listeningActive) {
                     setTimeout(() => {
                         if (!listeningActive) return;
+                        if (isOpenAiRealtimeEngineSelected()) return;
                         try {
                             recognition.start();
                             console.log('[VOICE] Restarting voice recognition (mic still ON)');
@@ -2209,81 +2690,9 @@
                 }
             };
 
-            // Helper: stop TTS if currently speaking (used by mic click and voice "stop" command)
-            function stopVoiceResponseIfPlaying() {
-                if ('speechSynthesis' in window && window.speechSynthesis.speaking) {
-                    window.speechSynthesis.cancel();
-                    ttsPlaying = false;
-                    console.log('[VOICE] Voice response stopped by user');
-                }
-            }
-
-            // Handle button click: toggle listeningActive
-            voiceRecognitionButton.addEventListener('click', () => {
-                // If a voice response is playing, stop it (user interrupts by pressing mic)
-                stopVoiceResponseIfPlaying();
-
-                if (listeningActive) {
-                    // Turn mic OFF
-                    listeningActive = false;
-                    postTtsSilenceExitPending = false;
-                    try {
-                        recognition.stop();
-                    } catch (e) {}
-                    console.log('[VOICE] Microphone toggled OFF');
-
-                    // If there's a pending silence timer, clear it
-                    if (silenceTimer) {
-                        clearTimeout(silenceTimer);
-                        silenceTimer = null;
-                    }
-                    clearPostTtsSilenceExitTimer();
-                    clearVoiceSessionIdleTimer();
-
-                    // If there's any text in the input, send it before fully stopping
-                    if (messageInput.value.trim()) {
-                        console.log('[VOICE] Sending pending input on mic OFF');
-                        sendMessage(true);
-                        currentTranscript = '';
-                    }
-                } else {
-                    // Turn mic ON
-                    listeningActive = true;
-                    postTtsSilenceExitPending = false;
-                    clearPostTtsSilenceExitTimer();
-                    bumpVoiceSessionIdleTimer();
-                    try {
-                        recognition.start();
-                        console.log('[VOICE] Microphone toggled ON');
-                    } catch (error) {
-                        console.error('[VOICE] Error starting recognition:', error);
-                        listeningActive = false;
-                        clearVoiceSessionIdleTimer();
-                        if (error.message && error.message.includes('already started')) {
-                            try { recognition.stop(); } catch (e) {}
-                        } else {
-                            const msg = (error.name === 'SecurityError' || error.message.includes('secure'))
-                                ? 'Voice recognition requires a secure connection. Open this app via https:// or http://localhost.'
-                                : 'Error starting voice recognition. Check microphone permission and try again.';
-                            addMessage(msg, 'error');
-                        }
-                    }
-                }
-            });
-        } else {
-            // Web Speech API not supported or not in secure context
-            if (voiceRecognitionButton) {
-                if (!isSecureContext) {
-                    console.warn('[VOICE] Voice recognition requires HTTPS or localhost (current: ' + (window.location ? window.location.origin : 'unknown') + ')');
-                    voiceRecognitionButton.title = 'Voice recognition requires HTTPS or localhost';
-                    voiceRecognitionButton.addEventListener('click', () => {
-                        addMessage('Voice recognition only works over HTTPS or when you open the app at http://localhost. Use https:// or open from this machine at http://localhost.', 'error');
-                    });
-                } else {
-                    console.warn('[VOICE] Web Speech API not supported in this browser (Chrome/Edge recommended)');
-                    voiceRecognitionButton.style.display = 'none';
-                }
-            }
+        } else if (isSecureContext && hasWebRtc && voiceRecognitionButton) {
+            console.warn('[VOICE] Web Speech API not supported — select OpenAI Realtime in the voice engine menu for mic voice, or use Chrome/Edge for browser voice.');
+            voiceRecognitionButton.title = 'OpenAI Realtime or Chrome/Edge for browser voice';
         }
 
         const unreadButton = document.getElementById('unreadButton');

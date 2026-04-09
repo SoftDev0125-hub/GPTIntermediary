@@ -16,6 +16,15 @@ from pathlib import Path
 from dotenv import load_dotenv
 from datetime import datetime
 import sys
+import base64
+import tempfile
+
+from services.google_cse import (
+    google_custom_search,
+    format_cse_results_for_grounding,
+    is_google_cse_configured,
+    is_core_integration_message,
+)
 
 def _get_project_root():
     """Project root: when frozen (PyInstaller exe), use exe directory; otherwise backend/python/../.."""
@@ -49,102 +58,6 @@ def _read_env_key_from_dotenv(key_name):
         logger = logging.getLogger(__name__)
         logger.warning(f"Failed to read .env fallback for {key_name}: {e}")
     return ''
-
-# Read NewsAPI key
-NEWSAPI_KEY = _read_env_key_from_dotenv('NEWSAPI_KEY')
-if not NEWSAPI_KEY:
-    logging.warning('NEWSAPI_KEY not configured; news features may be limited')
-
-# When user asks for "recent news", fetch articles from at least this many days back (user requirement: at least 1 month)
-NEWS_LOOKBACK_DAYS = int(os.getenv("NEWS_LOOKBACK_DAYS", "30"))
-
-
-def fetch_latest_news(q=None, country='us', pageSize=10):
-    """Fetch news using NewsAPI; use 'everything' for topic queries (newest first, last NEWS_LOOKBACK_DAYS) and 'top-headlines' otherwise.
-    If 'everything' fails (e.g. 426 on free tier in production), falls back to top-headlines so the user still gets news."""
-    if not NEWSAPI_KEY:
-        return []
-    log = logging.getLogger(__name__)
-
-    def _parse_articles(data):
-        articles = []
-        for a in data.get('articles', []):
-            articles.append({
-                'title': a.get('title'),
-                'source': (a.get('source') or {}).get('name'),
-                'url': a.get('url'),
-                'publishedAt': a.get('publishedAt'),
-                'description': a.get('description')
-            })
-        return articles
-
-    # Try topic-specific search first when q is provided
-    if q:
-        try:
-            from datetime import datetime, timedelta
-            from_date = (datetime.utcnow() - timedelta(days=NEWS_LOOKBACK_DAYS)).strftime('%Y-%m-%d')
-            params = {
-                'apiKey': NEWSAPI_KEY,
-                'q': q.strip(),
-                'pageSize': min(pageSize, 20),
-                'sortBy': 'publishedAt',
-                'language': 'en',
-                'from': from_date,
-            }
-            resp = requests.get('https://newsapi.org/v2/everything', params=params, timeout=10)
-            data = resp.json()
-            if data.get('status') == 'ok':
-                articles = _parse_articles(data)
-                log.info(f"NewsAPI everything: fetched {len(articles)} articles for query='{q}'")
-                return articles
-            # Log actual API error (e.g. 426 upgrade required on free tier in production)
-            msg = data.get('message', resp.reason or 'unknown')
-            log.warning(f"NewsAPI everything failed (status_code={resp.status_code}, message={msg}); falling back to top-headlines")
-        except Exception as e:
-            log.warning(f"NewsAPI everything request failed: {e}; falling back to top-headlines")
-
-    # When no topic: try "everything" with broad query over past month so user gets coverage beyond today/yesterday
-    if not q:
-        try:
-            from datetime import datetime, timedelta
-            from_date = (datetime.utcnow() - timedelta(days=NEWS_LOOKBACK_DAYS)).strftime('%Y-%m-%d')
-            params = {
-                'apiKey': NEWSAPI_KEY,
-                'q': 'news',
-                'pageSize': min(pageSize, 20),
-                'sortBy': 'publishedAt',
-                'language': 'en',
-                'from': from_date,
-            }
-            resp = requests.get('https://newsapi.org/v2/everything', params=params, timeout=10)
-            data = resp.json()
-            if data.get('status') == 'ok':
-                articles = _parse_articles(data)
-                if articles:
-                    log.info(f"NewsAPI everything (broad): fetched {len(articles)} articles from past {NEWS_LOOKBACK_DAYS} days")
-                    return articles
-        except Exception as e:
-            log.debug(f"NewsAPI everything (no topic) failed: {e}; falling back to top-headlines")
-
-    # Use top-headlines (works on free tier; no topic filter) as fallback
-    try:
-        params = {
-            'apiKey': NEWSAPI_KEY,
-            'country': country,
-            'pageSize': min(pageSize, 20)
-        }
-        resp = requests.get('https://newsapi.org/v2/top-headlines', params=params, timeout=8)
-        data = resp.json()
-        if data.get('status') != 'ok':
-            log.warning(f"NewsAPI top-headlines returned non-ok: status_code={resp.status_code}, message={data.get('message', 'unknown')}")
-            return []
-        articles = _parse_articles(data)
-        log.info(f"NewsAPI top-headlines: fetched {len(articles)} articles (country={country})")
-        return articles
-    except Exception as e:
-        log.error(f"Failed to fetch news: {e}")
-        return []
-
 
 def _extract_news_topic_from_question(message):
     """Extract a short search topic from a user question for News API. Returns None if nothing useful."""
@@ -187,35 +100,12 @@ def _extract_news_topic_from_question(message):
 
 # Max grounding size to stay under model context (gpt-3.5-turbo ~16k tokens). ~1 token ≈ 4 chars.
 MAX_GROUNDING_CHARS = int(os.getenv("CHAT_MAX_GROUNDING_CHARS", "5500"))
-MAX_NEWS_ARTICLES = 5
-MAX_NEWS_ARTICLES_NEWS_QUERY = 10  # When user asks for news/updates, provide at least 10 recent items
-MAX_NEWS_DESC_CHARS = 250
-MAX_NEWS_DESC_CHARS_NEWS_QUERY = 380  # When user explicitly asks about news, longer snippets
+MAX_CSE_RESULTS = 8
+MAX_CSE_RESULTS_NEWS_QUERY = 10
+MAX_CSE_SNIP_CHARS = 280
+MAX_CSE_SNIP_CHARS_NEWS_QUERY = 380
 MAX_BING_SNIPPETS = 4
 MAX_BING_SNIP_CHARS = 220
-
-
-def _format_news_articles_for_grounding(articles, instruction_prefix, max_articles=None, max_desc_chars=None):
-    """Build grounding text from articles; cap count and description length to avoid context overflow."""
-    max_articles = max_articles if max_articles is not None else MAX_NEWS_ARTICLES
-    max_desc = max_desc_chars if max_desc_chars is not None else MAX_NEWS_DESC_CHARS
-    lines = []
-    for a in articles[:max_articles]:
-        title = (a.get("title") or "").strip()[:200]
-        src = (a.get("source") or "").strip()
-        desc = (a.get("description") or "").strip()
-        if len(desc) > max_desc:
-            desc = desc[:max_desc].rsplit(" ", 1)[0] + "..."
-        url = (a.get("url") or "").strip()
-        pub = (a.get("publishedAt") or "").strip()
-        if pub:
-            lines.append(f"- {title} ({src}) — {pub}\n  {desc}\n  {url}")
-        else:
-            lines.append(f"- {title} ({src})\n  {desc}\n  {url}")
-    if not lines:
-        return "", 0
-    text = instruction_prefix + "\n\nNewsAPI (most recent first; use these for up-to-date facts):\n" + "\n".join(lines)
-    return text, len(lines)
 
 
 def _is_person_contact_query(msg):
@@ -301,10 +191,40 @@ User message: """
         return None
 
 
+def _is_technical_topic_message(user_message: str, request_id: str) -> bool:
+    """If True, chat uses model knowledge only (no Google Custom Search / Bing grounding)."""
+    if not (user_message or '').strip():
+        return False
+    try:
+        client = get_openai_client()
+        r = client.chat.completions.create(
+            model=os.getenv('OPENAI_TECHNICAL_CLASSIFIER_MODEL', 'gpt-4o-mini'),
+            response_format={'type': 'json_object'},
+            messages=[
+                {'role': 'system', 'content': (
+                    'Reply with JSON only: {"technical":true|false}.\n'
+                    'technical=true: programming, software engineering, source code, debugging, APIs, algorithms, data structures, '
+                    'DevOps, Kubernetes/Docker, databases/SQL, networking protocols, OS internals, electronics, cybersecurity details, STEM math.\n'
+                    'technical=false: general news, history, sports, business, health, travel, hobbies, law, politics, '
+                    'or non-software "how does X work".'
+                )},
+                {'role': 'user', 'content': user_message.strip()[:2000]},
+            ],
+            temperature=0,
+            max_tokens=50,
+        )
+        raw = (r.choices[0].message.content or '').strip()
+        data = json.loads(raw)
+        return bool(data.get('technical', False))
+    except Exception as e:
+        logger.debug(f'[CHAT-{request_id}] Technical classifier: {e}')
+        return False
+
+
 def _person_contact_triple_source(user_message, request_id):
     """
-    For person/contact queries: get answers from OpenAI, then News API, then Bing;
-    then return the most accurate and most recent. Returns response string or None on failure.
+    For person/contact queries: OpenAI knowledge, then Google Custom Search, then Bing;
+    synthesize the best answer. Returns response string or None on failure.
     """
     try:
         # First, when this is clearly an email lookup ("email address of X", etc.),
@@ -339,25 +259,27 @@ def _person_contact_triple_source(user_message, request_id):
         except Exception as e:
             logger.debug(f"[CHAT-{request_id}] Person contact OpenAI step: {e}")
 
-        # 2) News API: fetch articles about the person, format as text
-        news_answer = ""
-        if NEWSAPI_KEY:
+        # 2) Google Custom Search
+        google_answer = ""
+        if is_google_cse_configured():
             try:
-                topic = _extract_news_topic_from_question(user_message) or re.sub(r"\b(email|address|contact|phone|number|of|for|what is|find|get)\b", "", person_query, flags=re.IGNORECASE).strip()[:60]
+                topic = _extract_news_topic_from_question(user_message) or re.sub(
+                    r"\b(email|address|contact|phone|number|of|for|what is|find|get)\b", "", person_query, flags=re.IGNORECASE
+                ).strip()[:60]
                 if not topic:
                     topic = person_query[:50]
-                articles = fetch_latest_news(q=topic, country='us', pageSize=5)
-                if articles:
+                q = (topic + " contact email phone").strip()[:200]
+                items = google_custom_search(q, num=6)
+                if items:
                     bits = []
-                    for a in articles[:5]:
-                        title = (a.get("title") or "").strip()
-                        src = (a.get("source") or "").strip()
-                        pub = (a.get("publishedAt") or "").strip()
-                        desc = (a.get("description") or "").strip()[:200]
-                        bits.append(f"- {title} ({src}) {pub}\n  {desc}")
-                    news_answer = "NewsAPI results:\n" + "\n".join(bits)
+                    for it in items[:6]:
+                        title = (it.get("title") or "").strip()
+                        snip = (it.get("snippet") or "").strip()[:220]
+                        url = (it.get("url") or "").strip()
+                        bits.append(f"- {title}\n  {snip}\n  {url}")
+                    google_answer = "Google Custom Search results:\n" + "\n".join(bits)
             except Exception as e:
-                logger.debug(f"[CHAT-{request_id}] Person contact News API step: {e}")
+                logger.debug(f"[CHAT-{request_id}] Person contact Google CSE step: {e}")
 
         # 3) Bing: web search for contact/email/phone/address
         bing_answer = ""
@@ -375,7 +297,7 @@ def _person_contact_triple_source(user_message, request_id):
         # 4) Synthesize: pick the most accurate and most recent from the three
         combined = f"User asked: \"{person_query}\"\n\n"
         combined += "Source 1 (OpenAI knowledge):\n" + (openai_answer or "(no answer)") + "\n\n"
-        combined += "Source 2 (NewsAPI):\n" + (news_answer or "(no results)") + "\n\n"
+        combined += "Source 2 (Google Custom Search):\n" + (google_answer or "(no results)") + "\n\n"
         combined += "Source 3 (Bing search):\n" + (bing_answer or "(no results)") + "\n\n"
         combined += "Instructions: From the three sources above, output only the most accurate and most recent contact information (email, address, phone) for the user's question. Cite which source you used. If none are reliable, say so briefly."
 
@@ -873,6 +795,248 @@ def proxy_whatsapp(subpath):
 def health():
     """Health check endpoint"""
     return jsonify({"status": "running", "service": "ChatGPT Interface Server"})
+
+
+def _markdown_to_plain_for_tts(text: str, max_len: int = 4096) -> str:
+    """Strip markdown/noise for spoken output (OpenAI TTS)."""
+    if not text:
+        return ""
+    s = str(text)
+    s = re.sub(r'```[\s\S]*?```', ' ', s)
+    s = re.sub(r'`([^`]+)`', r'\1', s)
+    s = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', s)
+    s = re.sub(r'#{1,6}\s*', '', s)
+    s = re.sub(r'\*\*([^*]+)\*\*', r'\1', s)
+    s = re.sub(r'\*([^*]+)\*', r'\1', s)
+    s = re.sub(r'[_~|]+', ' ', s)
+    s = re.sub(r'\s+', ' ', s).strip()
+    if len(s) > max_len:
+        s = s[: max_len - 1].rsplit(' ', 1)[0] + '…'
+    return s
+
+
+def _classify_voice_utterance_intent(transcript: str, request_id: str) -> dict:
+    """Return {intent: 'question'|'command', confidence: float}."""
+    t = (transcript or '').strip()
+    if not t:
+        return {'intent': 'question', 'confidence': 0.0}
+    try:
+        client = get_openai_client()
+        r = client.chat.completions.create(
+            model=os.getenv('OPENAI_INTENT_MODEL', 'gpt-4o-mini'),
+            response_format={'type': 'json_object'},
+            messages=[
+                {'role': 'system', 'content': (
+                    'Classify the user\'s spoken message. Reply with JSON only: {"intent":"question"|"command","confidence":0.0-1.0}\n'
+                    '- command: the user wants an ACTION performed (launch/open apps, send/read email, WhatsApp/Slack, clear/mark inbox, '
+                    'automation, Word/Excel, calendar/reminders when phrased as a task, "do X", imperative requests).\n'
+                    '- question: the user seeks information, explanation, how/why/what, conversation, or opinion without a concrete system action.\n'
+                    'If imperative ("open…", "send…", "show my…"), lean command; if purely informational, lean question.'
+                )},
+                {'role': 'user', 'content': t[:4000]},
+            ],
+            temperature=0.2,
+            max_tokens=120,
+        )
+        raw = (r.choices[0].message.content or '').strip()
+        data = json.loads(raw)
+        intent = (data.get('intent') or 'question').strip().lower()
+        if intent not in ('question', 'command'):
+            intent = 'question'
+        conf = float(data.get('confidence', 0.7))
+        return {'intent': intent, 'confidence': max(0.0, min(1.0, conf))}
+    except Exception as e:
+        logger.warning(f'[VOICE-{request_id}] Intent classification failed: {e}')
+        return {'intent': 'question', 'confidence': 0.5}
+
+
+def _invoke_chat_internal(chat_payload: dict, auth_header=None):
+    """Run /chat in-process (same tools and commands as the text UI)."""
+    tc = app.test_client()
+    headers = {'Content-Type': 'application/json'}
+    if auth_header:
+        headers['Authorization'] = auth_header
+    resp = tc.post('/chat', json=chat_payload, headers=headers)
+    try:
+        data = resp.get_json()
+    except Exception:
+        data = {'response': resp.get_data(as_text=True), 'error': True}
+    return data, resp.status_code
+
+
+@app.route('/voice/process', methods=['POST'])
+def voice_process():
+    """Whisper STT → classify question vs command → /chat (execute or answer) → OpenAI TTS."""
+    request_id = f"voice-{int(datetime.utcnow().timestamp() * 1000)}"
+    auth_header = request.headers.get('Authorization')
+    current_key = _current_openai_key()
+    if not current_key or current_key == 'your_openai_api_key_here':
+        return jsonify({'response': 'OpenAI API key not configured.', 'error': 'missing_api_key'}), 503
+
+    f = request.files.get('audio') or request.files.get('file')
+    if not f:
+        return jsonify({'response': 'No audio file.', 'error': True}), 400
+
+    try:
+        meta = json.loads(request.form.get('meta') or '{}')
+    except json.JSONDecodeError:
+        meta = {}
+
+    raw = f.read()
+    if not raw or len(raw) < 100:
+        return jsonify({'response': 'Audio too short or empty.', 'error': True}), 400
+    max_bytes = int(os.getenv('VOICE_MAX_UPLOAD_BYTES', str(25 * 1024 * 1024)))
+    if len(raw) > max_bytes:
+        return jsonify({'response': 'Audio file too large.', 'error': True}), 413
+
+    ct = (getattr(f, 'content_type', None) or '').lower()
+    suffix = '.webm'
+    if 'wav' in ct:
+        suffix = '.wav'
+    elif 'mpeg' in ct or 'mp3' in ct:
+        suffix = '.mp3'
+    elif 'mp4' in ct or 'm4a' in ct or 'x-m4a' in ct:
+        suffix = '.m4a'
+
+    tmp_path = None
+    transcript = ''
+    try:
+        fd, tmp_path = tempfile.mkstemp(suffix=suffix, prefix='voice_')
+        os.write(fd, raw)
+        os.close(fd)
+        client = get_openai_client()
+        whisper_model = (os.getenv('OPENAI_WHISPER_MODEL') or 'whisper-1').strip()
+        with open(tmp_path, 'rb') as audio_file:
+            tr = client.audio.transcriptions.create(model=whisper_model, file=audio_file)
+        transcript = (getattr(tr, 'text', None) or '').strip()
+    except Exception as e:
+        logger.exception(f'[{request_id}] Whisper failed: {e}')
+        return jsonify({'response': f'Speech recognition failed: {e}', 'error': True}), 500
+    finally:
+        if tmp_path:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+    if not transcript:
+        return jsonify({'response': 'Could not understand speech.', 'error': True, 'transcript': ''}), 200
+
+    intent_info = _classify_voice_utterance_intent(transcript, request_id)
+    intent = intent_info.get('intent', 'question')
+    confidence = intent_info.get('confidence', 0.5)
+
+    chat_payload = {
+        'message': transcript,
+        'user_id': meta.get('user_id'),
+        'user_email': meta.get('user_email'),
+        'history': meta.get('history') if isinstance(meta.get('history'), list) else [],
+        'email_page_token': meta.get('email_page_token'),
+        'email_page_token_2': meta.get('email_page_token_2'),
+        'send_from_second_account': bool(meta.get('send_from_second_account', False)),
+    }
+
+    chat_data, status_code = _invoke_chat_internal(chat_payload, auth_header)
+    reply_text = ''
+    if isinstance(chat_data, dict):
+        reply_text = (chat_data.get('response') or '').strip()
+
+    if not reply_text:
+        err = {
+            'transcript': transcript,
+            'intent': intent,
+            'confidence': confidence,
+            'response': (chat_data.get('response') if isinstance(chat_data, dict) else None) or 'Assistant returned no text.',
+            'error': (chat_data.get('error', True) if isinstance(chat_data, dict) else True),
+            'function_called': (chat_data.get('function_called') if isinstance(chat_data, dict) else None),
+        }
+        code = status_code if status_code >= 400 else 502
+        return jsonify(err), code
+
+    plain = _markdown_to_plain_for_tts(reply_text)
+    audio_b64 = None
+    audio_mime = 'audio/mpeg'
+    try:
+        client = get_openai_client()
+        tts_model = (os.getenv('OPENAI_TTS_MODEL') or 'tts-1').strip()
+        tts_voice = (os.getenv('OPENAI_TTS_VOICE') or 'alloy').strip()
+        speech = client.audio.speech.create(
+            model=tts_model,
+            voice=tts_voice,
+            input=plain,
+            response_format='mp3',
+        )
+        audio_bytes = getattr(speech, 'content', None)
+        if audio_bytes is None and hasattr(speech, 'read'):
+            audio_bytes = speech.read()
+        if audio_bytes is None:
+            try:
+                audio_bytes = bytes(speech)
+            except Exception:
+                audio_bytes = b''
+        if audio_bytes:
+            audio_b64 = base64.standard_b64encode(audio_bytes).decode('ascii')
+    except Exception as e:
+        logger.warning(f'[{request_id}] TTS failed: {e}', exc_info=True)
+
+    out = {
+        'transcript': transcript,
+        'intent': intent,
+        'confidence': confidence,
+        'response': reply_text,
+        'function_called': chat_data.get('function_called') if isinstance(chat_data, dict) else None,
+        'audio_base64': audio_b64,
+        'audio_mime': audio_mime,
+    }
+    if isinstance(chat_data, dict):
+        if chat_data.get('next_page_token') is not None:
+            out['next_page_token'] = chat_data.get('next_page_token')
+        if chat_data.get('next_page_token_2') is not None:
+            out['next_page_token_2'] = chat_data.get('next_page_token_2')
+    return jsonify(out)
+
+
+@app.route('/realtime/calls', methods=['POST'])
+def realtime_calls():
+    """Proxy WebRTC SDP to OpenAI Realtime unified calls API (browser sends offer SDP; server uses OPENAI_API_KEY)."""
+    sdp = request.get_data(as_text=True)
+    if not sdp or not sdp.strip():
+        return jsonify({'error': 'Missing SDP body'}), 400
+    api_key = _current_openai_key()
+    if not api_key or api_key == 'your_openai_api_key_here':
+        return jsonify({'error': 'OpenAI API key not configured'}), 503
+    model = (os.getenv('OPENAI_REALTIME_MODEL') or 'gpt-realtime').strip()
+    voice = (os.getenv('OPENAI_REALTIME_VOICE') or 'marin').strip()
+    session_config = json.dumps({
+        'type': 'realtime',
+        'model': model,
+        'audio': {'output': {'voice': voice}},
+    })
+    url = 'https://api.openai.com/v1/realtime/calls'
+    try:
+        resp = requests.post(
+            url,
+            headers={'Authorization': f'Bearer {api_key}'},
+            files={
+                'sdp': (None, sdp, 'application/sdp'),
+                'session': (None, session_config, 'application/json'),
+            },
+            timeout=90,
+        )
+    except requests.RequestException as e:
+        logger.error(f'[REALTIME] Request to OpenAI failed: {e}', exc_info=True)
+        return jsonify({'error': str(e)}), 502
+    if not resp.ok:
+        err_body = resp.text or resp.reason
+        logger.warning(f'[REALTIME] OpenAI returned {resp.status_code}: {err_body[:500]}')
+        try:
+            return jsonify(resp.json()), resp.status_code
+        except Exception:
+            return jsonify({'error': err_body}), resp.status_code
+    ct = (resp.headers.get('Content-Type') or '').lower()
+    if 'application/sdp' in ct or resp.text.lstrip().startswith('v='):
+        return resp.text, 200, {'Content-Type': 'application/sdp'}
+    return resp.text, 200, {'Content-Type': ct or 'text/plain'}
 
 
 @app.route('/get_user_credentials', methods=['GET'])
@@ -2154,7 +2318,7 @@ When asked for lists, provide complete lists with proper formatting (numbered or
 Use markdown formatting for better readability (bold, lists, code blocks, etc.).
 Be conversational and helpful, like ChatGPT.
 
-**Up-to-date information:** When the next message includes NewsAPI or web search results, base your answer on that content and cite source and date. If those sources do not contain the answer, say so before adding general knowledge.
+**Up-to-date information:** When the next message includes Google Custom Search or Bing web results, base your answer on that content and cite source. If those sources do not contain the answer, say so before adding general knowledge. For technical topics (programming, engineering, etc.), answer from your training without requiring web results.
 
 **Two Gmail accounts — always distinguish first vs second from the user's words:**
 - **First account** = EMAIL1. Treat as first when the user says: first account, my first account, account 1, 1st account, email 1, primary account, main account, first Gmail, only first, first only, "in my first account", "from the first account".
@@ -2192,8 +2356,15 @@ Be conversational and helpful, like ChatGPT.
         needs_up_to_date = False
         topic = None
         is_explicit_news = False
+        skip_external_grounding = is_core_integration_message(user_message, analyzed)
+        is_technical = False
+        if not skip_external_grounding:
+            try:
+                is_technical = _is_technical_topic_message(user_message, request_id)
+            except Exception:
+                is_technical = False
 
-        # Single path for latest news: detect when user wants current info, get topic, fetch once
+        # Detect when user wants current / general web info (not Gmail/Telegram/WhatsApp/Slack/launch flows)
         try:
             is_explicit_news = bool(re.search(
                 r"\b(news|headlines?|latest\s+news|recent\s+news|recent\s+updates|updates|breaking|in\s+the\s+news)\b",
@@ -2217,40 +2388,45 @@ Be conversational and helpful, like ChatGPT.
                     topic = groups[-1].strip().strip('?.!')
             if not topic and len(user_message.strip()) > 8:
                 topic = _extract_news_topic_from_question(user_message)
-            # For generic "news for today" / "news today", use top headlines instead of searching for "today"
             if topic and topic.lower().strip() in ('today', 'for today', 'this week', 'this morning', 'right now', 'now'):
                 topic = None
 
-            if needs_up_to_date and NEWSAPI_KEY:
-                # When user asks for news/updates, fetch at least 10 items (recent news, not just a few)
-                page_size = max(MAX_NEWS_ARTICLES_NEWS_QUERY, 10) if is_explicit_news else MAX_NEWS_ARTICLES
-                articles = fetch_latest_news(q=topic, country='us', pageSize=page_size)
-                if not articles and topic:
-                    articles = fetch_latest_news(q=None, country='us', pageSize=page_size)
-                if articles:
+            # Google Custom Search: non-technical general / current-info queries only
+            use_web_grounding = needs_up_to_date and not skip_external_grounding and not is_technical
+            if use_web_grounding and is_google_cse_configured():
+                search_q = (topic or user_message.strip())[:500]
+                if is_explicit_news and not topic:
+                    search_q = "latest news headlines today"
+                num_fetch = MAX_CSE_RESULTS_NEWS_QUERY if is_explicit_news else MAX_CSE_RESULTS
+                items = google_custom_search(search_q, num=min(max(num_fetch, 1), 10))
+                if items:
                     instruction = (
-                        "Summarize the news articles below for the user. Cite source and date. "
-                        "Present information covering the past month (not just today or yesterday): include recent developments across this period. "
-                        "Give a helpful summary; do not reply with 'I don't know' when articles are provided."
+                        "Summarize using the web results below. Cite title or URL when you use a fact. "
+                        "Give a helpful answer; do not reply with 'I don't know' when results are provided."
                     )
-                    max_arts = MAX_NEWS_ARTICLES_NEWS_QUERY if is_explicit_news else None
-                    max_desc = MAX_NEWS_DESC_CHARS_NEWS_QUERY if is_explicit_news else None
-                    snippet, n = _format_news_articles_for_grounding(articles, instruction, max_articles=max_arts, max_desc_chars=max_desc)
+                    snippet, n = format_cse_results_for_grounding(
+                        items,
+                        instruction,
+                        max_items=(MAX_CSE_RESULTS_NEWS_QUERY if is_explicit_news else MAX_CSE_RESULTS),
+                        max_snip=(MAX_CSE_SNIP_CHARS_NEWS_QUERY if is_explicit_news else MAX_CSE_SNIP_CHARS),
+                    )
                     if snippet:
                         grounding_parts.append(snippet)
-                        logger.info(f"[CHAT-{request_id}] News: {n} articles (topic=%s)", topic or "headlines")
+                        logger.info(f"[CHAT-{request_id}] Google CSE: {n} results (q=%s)", (search_q or "")[:100])
         except Exception as e:
-            logger.debug(f"[CHAT-{request_id}] News: %s", e)
+            logger.debug(f"[CHAT-{request_id}] Google CSE grounding: %s", e)
 
-        # Bing grounding: inject web search results for up-to-date answers when Bing key is set (critical for "who is current X" etc.)
-        # When user explicitly asked for news but NewsAPI had no results (or no key), use Bing with a news-focused query
+        # Bing fallback when Google CSE is unavailable or returned nothing
         try:
             from services.contact_resolver import bing_web_search_grounding, email_finder_keys_status
-            if email_finder_keys_status().get("bing_configured"):
+            if skip_external_grounding or is_technical:
+                pass
+            elif grounding_parts:
+                pass
+            elif email_finder_keys_status().get("bing_configured"):
                 q = user_message.strip()
-                if is_explicit_news and not grounding_parts:
+                if is_explicit_news:
                     q = "recent news past month headlines"
-                # Use Bing for questions or when query suggests current info; always use for "who is the current X"
                 is_who_current = bool(re.search(r"\bwho\s+is\s+(?:the\s+)?(current\s+)?", q, re.IGNORECASE))
                 is_searchy = (
                     is_who_current or

@@ -108,104 +108,7 @@ def _read_env_key_from_dotenv(key_name):
         logger.warning(f"Failed to read .env fallback for {key_name}: {e}")
     return None
 
-# NewsAPI configuration
-NEWSAPI_KEY = _read_env_key_from_dotenv('NEWSAPI_KEY')
-USE_NEWSAPI = bool(NEWSAPI_KEY)
-if not NEWSAPI_KEY:
-    logger.warning('NEWSAPI_KEY is not configured; news features will be disabled')
-
-def fetch_latest_news(q=None, country='us', pageSize=5):
-    """Fetch top headlines from NewsAPI and return a list of simplified articles."""
-    if not NEWSAPI_KEY:
-        return []
-    try:
-        # Try multiple strategies to get the most relevant and recent articles.
-        articles = []
-
-        # 1) If topic provided, prefer `everything` with qInTitle for specificity
-        if q:
-            params = {
-                'apiKey': NEWSAPI_KEY,
-                'qInTitle': q,
-                'pageSize': min(pageSize, 20),
-                'sortBy': 'publishedAt'
-            }
-            resp = requests.get('https://newsapi.org/v2/everything', params=params, timeout=10)
-            data = resp.json()
-            if data.get('status') == 'ok' and data.get('articles'):
-                for a in data.get('articles', []):
-                    articles.append({
-                        'title': a.get('title'),
-                        'source': (a.get('source') or {}).get('name'),
-                        'url': a.get('url'),
-                        'publishedAt': a.get('publishedAt'),
-                        'description': a.get('description')
-                    })
-
-        # 2) If still empty and q provided, try `everything` without qInTitle (broader)
-        if q and not articles:
-            params = {
-                'apiKey': NEWSAPI_KEY,
-                'q': q,
-                'pageSize': min(pageSize * 2, 50),
-                'sortBy': 'publishedAt',
-                'language': 'en'
-            }
-            resp = requests.get('https://newsapi.org/v2/everything', params=params, timeout=10)
-            data = resp.json()
-            if data.get('status') == 'ok' and data.get('articles'):
-                for a in data.get('articles', []):
-                    articles.append({
-                        'title': a.get('title'),
-                        'source': (a.get('source') or {}).get('name'),
-                        'url': a.get('url'),
-                        'publishedAt': a.get('publishedAt'),
-                        'description': a.get('description')
-                    })
-
-        # 3) If no topic provided or still empty, try top-headlines (country) first
-        if not q and not articles:
-            params = {
-                'apiKey': NEWSAPI_KEY,
-                'country': country,
-                'pageSize': min(pageSize, 20)
-            }
-            resp = requests.get('https://newsapi.org/v2/top-headlines', params=params, timeout=8)
-            data = resp.json()
-            if data.get('status') == 'ok' and data.get('articles'):
-                for a in data.get('articles', []):
-                    articles.append({
-                        'title': a.get('title'),
-                        'source': (a.get('source') or {}).get('name'),
-                        'url': a.get('url'),
-                        'publishedAt': a.get('publishedAt'),
-                        'description': a.get('description')
-                    })
-
-        # 4) Final fallback: if still empty and we had a topic, try top-headlines without country
-        if q and not articles:
-            params = {
-                'apiKey': NEWSAPI_KEY,
-                'q': q,
-                'pageSize': min(pageSize, 20)
-            }
-            resp = requests.get('https://newsapi.org/v2/top-headlines', params=params, timeout=8)
-            data = resp.json()
-            if data.get('status') == 'ok' and data.get('articles'):
-                for a in data.get('articles', []):
-                    articles.append({
-                        'title': a.get('title'),
-                        'source': (a.get('source') or {}).get('name'),
-                        'url': a.get('url'),
-                        'publishedAt': a.get('publishedAt'),
-                        'description': a.get('description')
-                    })
-
-        logger.info(f"Fetched {len(articles)} news articles for query='{q}' country='{country}' via NewsAPI")
-        return articles
-    except Exception as e:
-        logger.error(f"Failed to fetch news: {e}")
-        return []
+from services.google_cse import google_custom_search, is_google_cse_configured
 
 # User credentials (mock)
 USER_CREDENTIALS = {
@@ -751,22 +654,26 @@ def get_user_credentials():
 
 @app.route('/news', methods=['GET'])
 def news_endpoint():
-    """Simple endpoint to return NewsAPI articles for a query. Useful for testing and verification.
-
-    Query params:
-    - q: optional search topic (string)
-    - pageSize: optional number of articles (int)
-    """
+    """Return Google Custom Search results in a news-like shape (testing)."""
     q = request.args.get('q')
     try:
         pageSize = int(request.args.get('pageSize', 5))
     except Exception:
         pageSize = 5
 
-    if not NEWSAPI_KEY:
-        return jsonify({'success': False, 'error': 'NEWSAPI_KEY not configured', 'articles': []}), 400
+    if not is_google_cse_configured():
+        return jsonify({'success': False, 'error': 'Google Custom Search not configured', 'articles': []}), 400
 
-    articles = fetch_latest_news(q=q, pageSize=pageSize)
+    items = google_custom_search((q or 'latest news').strip(), num=min(max(pageSize, 1), 10))
+    articles = []
+    for it in items:
+        articles.append({
+            'title': it.get('title'),
+            'source': it.get('displayLink') or 'web',
+            'url': it.get('url'),
+            'publishedAt': None,
+            'description': it.get('snippet'),
+        })
     return jsonify({'success': True, 'count': len(articles), 'articles': articles})
 
 
@@ -861,26 +768,22 @@ You can discuss any topic freely - science, math, programming, history, creative
                     if topic:
                         topic = topic.strip().strip('?.!')
 
-                news_articles = []
-                if is_news_query and USE_NEWSAPI:
+                news_snippet = None
+                if is_news_query and is_google_cse_configured():
                     try:
-                        news_articles = fetch_latest_news(q=topic, country='us', pageSize=5)
+                        sq = (topic or user_message.strip())[:200] if topic else (user_message.strip()[:200] or 'latest news headlines')
+                        items = google_custom_search(sq, num=5)
+                        if items:
+                            news_lines = []
+                            for it in items:
+                                title = it.get('title') or ''
+                                src = it.get('displayLink') or ''
+                                desc = (it.get('snippet') or '')[:400]
+                                url = it.get('url') or ''
+                                news_lines.append(f"- {title} ({src})\n  {desc}\n  {url}")
+                            news_snippet = "\n\nGoogle Custom Search — related pages:\n" + "\n".join(news_lines)
                     except Exception:
-                        news_articles = []
-
-                if news_articles:
-                    # Build a compact news summary to include in the system context for the model
-                    news_lines = []
-                    for a in news_articles:
-                        title = a.get('title') or ''
-                        src = a.get('source') or ''
-                        desc = a.get('description') or ''
-                        url = a.get('url') or ''
-                        news_lines.append(f"- {title} ({src})\n  {desc}\n  {url}")
-
-                    news_snippet = "\n\nNewsAPI - Latest articles:\n" + "\n".join(news_lines)
-                else:
-                    news_snippet = None
+                        news_snippet = None
             except Exception as e:
                 logger.warning(f"News integration failed: {e}")
                 news_snippet = None

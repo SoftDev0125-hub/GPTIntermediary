@@ -741,6 +741,28 @@ body::before {
     border-color: rgba(99, 102, 241, 0.6);
 }
 
+/* Voice engine (browser Web Speech vs OpenAI Realtime WebRTC) */
+.voice-engine-select {
+    height: 40px;
+    padding: 0 10px;
+    background: rgba(30, 41, 59, 0.8);
+    border: 1px solid rgba(99, 102, 241, 0.3);
+    border-radius: 10px;
+    color: #e2e8f0;
+    font-size: 12px;
+    cursor: pointer;
+    flex-shrink: 0;
+    min-width: 0;
+    max-width: 200px;
+}
+.voice-engine-select:hover {
+    border-color: rgba(99, 102, 241, 0.5);
+}
+.voice-engine-select:focus {
+    outline: none;
+    border-color: rgba(99, 102, 241, 0.6);
+}
+
 /* Buttons */
 .btn {
     padding: 10px 20px;
@@ -5200,6 +5222,13 @@ body::before {
         padding: 0 8px;
         font-size: 12px;
         max-width: 82px;
+    }
+
+    .voice-engine-select {
+        height: 36px;
+        padding: 0 6px;
+        font-size: 11px;
+        max-width: 120px;
     }
 
     .voice-recognition-btn {
