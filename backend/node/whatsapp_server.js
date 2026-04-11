@@ -138,14 +138,91 @@ function serializeChatId(chat) {
  */
 function serializeMessageId(msg) {
     try {
-        if (!msg || !msg.id) return null;
-        const id = msg.id;
-        if (typeof id === 'string') return id;
-        if (id._serialized) return String(id._serialized);
+        if (!msg) return null;
+        if (msg.id) {
+            const id = msg.id;
+            if (typeof id === 'string') return id;
+            if (id._serialized) return String(id._serialized);
+            if (typeof id === 'object' && id.remote != null && id.id != null) {
+                const remote = typeof id.remote === 'string'
+                    ? id.remote
+                    : (id.remote && id.remote._serialized ? String(id.remote._serialized) : '');
+                const part = id.id;
+                let mid = '';
+                if (typeof part === 'string' && part.length) mid = part;
+                else if (typeof part === 'number' && !Number.isNaN(part)) mid = String(part);
+                else if (part && typeof part === 'object' && part._serialized) mid = String(part._serialized);
+                const fromMe = id.fromMe === true ? 'true' : 'false';
+                if (remote && mid) return `${fromMe}_${remote}_${mid}`;
+            }
+            if (typeof id === 'object' && id.id != null) {
+                const inner = id.id;
+                if (typeof inner === 'string' && inner.length) return inner.includes('@') ? inner : String(inner);
+                if (typeof inner === 'number' && !Number.isNaN(inner)) return String(inner);
+                if (inner && typeof inner === 'object' && inner._serialized) return String(inner._serialized);
+            }
+            if (typeof id.toString === 'function') {
+                const s = id.toString();
+                if (s && s !== '[object Object]') return s;
+            }
+        }
+        // whatsapp-web.js raw payload (some builds omit normalized msg.id)
+        const key = msg._data && msg._data.key;
+        if (key) {
+            if (key._serialized) return String(key._serialized);
+            const rjid = (key.remoteJid || key.participant || '').toString();
+            const mid = key.id != null ? String(key.id) : '';
+            const fromMe = key.fromMe === true ? 'true' : 'false';
+            if (mid && rjid) return `${fromMe}_${rjid}_${mid}`;
+        }
         return null;
     } catch (e) {
         return null;
     }
+}
+
+/** Try alternate encodings of the same chat id (proxy / JSON sometimes alter @ or %). */
+function contactIdCandidates(raw) {
+    const s = String(raw || '').trim();
+    if (!s) return [];
+    const out = [];
+    const add = (x) => {
+        const t = String(x || '').trim();
+        if (t && !out.includes(t)) out.push(t);
+    };
+    add(s);
+    try {
+        const dec = decodeURIComponent(s);
+        if (dec !== s) add(dec);
+    } catch (e) { /* ignore */ }
+    return out;
+}
+
+/**
+ * Expand chat id candidates using getContactById (LID → @c.us phone jid when WA exposes it).
+ * Without this, list rows can show @lid while getChatById only accepts the PN jid — messages never load.
+ */
+async function contactIdCandidatesWithLookup(rawContactId) {
+    const out = [];
+    const add = (x) => {
+        const t = String(x || '').trim();
+        if (t && !out.includes(t)) out.push(t);
+    };
+    contactIdCandidates(rawContactId).forEach(add);
+    if (!client) return out;
+    const primary = String(rawContactId || '').trim();
+    if (!primary) return out;
+    try {
+        const contact = await client.getContactById(primary);
+        if (contact && contact.id) {
+            const cid = contact.id;
+            if (typeof cid === 'string') add(cid);
+            else if (cid._serialized) add(String(cid._serialized));
+            const num = contact.number != null ? String(contact.number).replace(/\D/g, '') : '';
+            if (num.length >= 8) add(`${num}@c.us`);
+        }
+    } catch (e) { /* ignore */ }
+    return out;
 }
 
 function cacheWhatsAppMessage(msg) {
@@ -1569,23 +1646,7 @@ app.post('/api/whatsapp/messages', async (req, res) => {
             });
         }
 
-        // During warmup, respond immediately so the proxy does not timeout; client can retry.
-        const timeSinceReady = readyAt ? (Date.now() - readyAt) : 0;
-        if (timeSinceReady < CHATS_WARMUP_MS) {
-            const waitMs = CHATS_WARMUP_MS - timeSinceReady;
-            console.log(`[WhatsApp] Still in warmup (${waitMs}ms remaining) - returning empty messages for contact`);
-            return res.status(200).json({
-                success: true,
-                contact_id: req.body.contact_id || '',
-                contact_name: 'Unknown',
-                count: 0,
-                messages: [],
-                warning: 'WhatsApp is still initializing. Try again in a moment.',
-                reached_start: true,
-                oldest_id: null,
-                oldest_timestamp: null
-            });
-        }
+        // Do not block messages on CHATS_WARMUP_MS (that left the UI empty for ~20s+); fetch immediately and retry on errors.
 
         const { contact_id, limit = 50, include_media, before_id, before_timestamp } = req.body;
         const fetchLimit = Math.min(Math.max(parseInt(limit, 10) || 30, 1), 100);
@@ -1598,26 +1659,47 @@ app.post('/api/whatsapp/messages', async (req, res) => {
             });
         }
 
+        const idCandidates = await contactIdCandidatesWithLookup(contact_id);
         const maxTries = 18;
-        const retryDelayMs = 8000;
         let chat;
         let messages;
+        let resolvedContactId = idCandidates[0] || String(contact_id).trim();
+        let lastErr = null;
         for (let attempt = 1; attempt <= maxTries; attempt++) {
-            try {
-                chat = await client.getChatById(contact_id);
-                // When loading older messages, fetch more so we can filter by before_timestamp
-                const requestLimit = loadOlder ? Math.max(fetchLimit * 2, 100) : fetchLimit;
-                messages = await chat.fetchMessages({ limit: requestLimit });
-                break;
-            } catch (messagesErr) {
-                const isRetryable = /undefined|update|getChatModel|Evaluation failed/i.test(String(messagesErr.message || ''));
-                if (attempt < maxTries && isRetryable) {
-                    console.log(`[WhatsApp] getChatById/fetchMessages attempt ${attempt}/${maxTries} failed, retrying in ${retryDelayMs}ms...`, messagesErr.message);
-                    await new Promise(r => setTimeout(r, retryDelayMs));
-                } else {
-                    throw messagesErr;
+            let roundOk = false;
+            for (const cid of idCandidates) {
+                try {
+                    chat = await client.getChatById(cid);
+                    const requestLimit = loadOlder ? Math.max(fetchLimit * 2, 100) : fetchLimit;
+                    messages = await chat.fetchMessages({ limit: requestLimit });
+                    resolvedContactId = cid;
+                    roundOk = true;
+                    break;
+                } catch (messagesErr) {
+                    lastErr = messagesErr;
                 }
             }
+            if (roundOk) break;
+            const errStr = String(lastErr && lastErr.message ? lastErr.message : lastErr || '');
+            const isRetryable = /undefined|update|getChatModel|Evaluation failed|timeout|Target closed|Session closed|detached|Navigation|Protocol error|WSS|ECONNRESET|WebSocket|net::|Execution context/i.test(errStr);
+            if (attempt < maxTries && isRetryable) {
+                const retryDelayMs = Math.min(6000, 450 * Math.pow(2, attempt - 1));
+                console.log(`[WhatsApp] getChatById/fetchMessages attempt ${attempt}/${maxTries} failed, retrying in ${retryDelayMs}ms...`, errStr);
+                await new Promise(r => setTimeout(r, retryDelayMs));
+            } else if (lastErr) {
+                throw lastErr;
+            } else {
+                throw new Error('getChatById failed for all contact_id variants');
+            }
+        }
+        if (!loadOlder && (!messages || messages.length === 0) && chat) {
+            try {
+                const lm = await chat.lastMessage;
+                if (lm) {
+                    messages = [lm];
+                    console.warn('[WhatsApp] fetchMessages returned 0; using lastMessage as fallback for', resolvedContactId);
+                }
+            } catch (e) { /* ignore */ }
         }
         try { (messages || []).forEach(cacheWhatsAppMessage); } catch (e) {}
 
@@ -1630,6 +1712,8 @@ app.post('/api/whatsapp/messages', async (req, res) => {
             messages.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
         }
 
+        const preFormatCount = Array.isArray(messages) ? messages.length : 0;
+
         // Format messages for frontend (skip messages with no extractable id)
         const msgId = (m) => serializeMessageId(m);
         const formattedMessages = (await Promise.all((messages || []).map(async (msg) => {
@@ -1638,7 +1722,7 @@ app.post('/api/whatsapp/messages', async (req, res) => {
             const baseMessage = {
                 id,
                 body: msg.body || '',
-                from: msg.from || contact_id,
+                from: msg.from || resolvedContactId,
                 fromMe: msg.fromMe,
                 timestamp: msg.timestamp,
                 type: msg.type,
@@ -1694,14 +1778,29 @@ app.post('/api/whatsapp/messages', async (req, res) => {
         // Sort by timestamp (oldest first for display)
         formattedMessages.sort((a, b) => a.timestamp - b.timestamp);
 
+        if (preFormatCount > 0 && formattedMessages.length === 0) {
+            console.warn('[WhatsApp] All', preFormatCount, 'raw messages dropped (serializeMessageId) for', resolvedContactId);
+            return res.json({
+                success: true,
+                contact_id: resolvedContactId,
+                contact_name: (chat && chat.name) || 'Unknown',
+                count: 0,
+                messages: [],
+                warning: 'Messages are present but could not be read yet (WhatsApp Web format). Try Refresh messages in a moment.',
+                reached_start: false,
+                oldest_id: null,
+                oldest_timestamp: null
+            });
+        }
+
         const reached_start = formattedMessages.length === 0 || formattedMessages.length < fetchLimit;
         const oldest_id = formattedMessages.length > 0 ? formattedMessages[0].id : null;
         const oldest_timestamp = formattedMessages.length > 0 ? formattedMessages[0].timestamp : null;
 
-        console.log('[WhatsApp] Messages loaded for', contact_id, ':', formattedMessages.length, 'messages' + (loadOlder ? ' (older)' : ''));
+        console.log('[WhatsApp] Messages loaded for', resolvedContactId, ':', formattedMessages.length, 'messages' + (loadOlder ? ' (older)' : ''));
         return res.json({
             success: true,
-            contact_id: contact_id,
+            contact_id: resolvedContactId,
             contact_name: chat.name || 'Unknown',
             count: formattedMessages.length,
             messages: formattedMessages,
@@ -1712,7 +1811,7 @@ app.post('/api/whatsapp/messages', async (req, res) => {
     } catch (error) {
         console.error('[WhatsApp] Error getting messages:', error);
         const msg = error.message || String(error);
-        const isPageNotReady = /undefined|update|getChatModel|Evaluation failed/i.test(msg);
+        const isPageNotReady = /undefined|update|getChatModel|Evaluation failed|timeout|Target closed|Session closed|detached|Protocol error|Execution context/i.test(msg);
         if (isPageNotReady) {
             console.log('[WhatsApp] Returning empty messages so client can retry; chat may still be loading.');
             return res.status(200).json({

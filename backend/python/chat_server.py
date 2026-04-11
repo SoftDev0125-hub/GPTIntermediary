@@ -98,14 +98,212 @@ def _extract_news_topic_from_question(message):
     return None
 
 
+def _build_web_search_query(user_message: str, topic: str | None, is_explicit_news: bool) -> str:
+    """Generate stronger web queries for current-facts prompts."""
+    raw = (user_message or "").strip()
+    low = raw.lower()
+    base = (topic or raw).strip()
+    y = datetime.utcnow().year
+    y_prev = y - 1
+    if is_explicit_news and not topic:
+        return "latest news headlines today"
+    # Company leadership — bias query toward recent appointments (training data is often years stale)
+    if re.search(r"\b(ceo|chief executive officer|c\.e\.o\.)\b", low):
+        return (
+            f"{base} CEO appointed named chief executive {y} {y_prev} "
+            f"news press release investor relations"
+        ).strip()[:500]
+    if re.search(r"\b(chairman|chairperson|chair)\b", low) and re.search(
+        r"\b(company|corp|inc|ltd|plc|group)\b", low
+    ):
+        return (f"{base} chair executive leadership appointed {y} {y_prev} news").strip()[:500]
+    # Country / org leadership
+    if re.search(r"\bpresident\b", low) and not re.search(r"\b(ceo|company|corporation|corp\.)\b", low):
+        return (f"{base} current president {y} {y_prev} official government").strip()[:500]
+    if re.search(r"\bprime minister\b", low):
+        return (f"{base} current prime minister {y} {y_prev} official government").strip()[:500]
+    if re.search(r"\b(founder|owner)\b", low):
+        return f"{base} founder owner current who leads {y}".strip()[:500]
+    # Current events / conflict / regional updates
+    if re.search(r"\b(currently happening|what('?s| is) happening|latest updates|situation in|news in)\b", low):
+        return f"{base} latest updates current situation {y}".strip()[:500]
+    return base[:500]
+
+
+def _is_leadership_current_role_query(message: str) -> bool:
+    """True when the user likely asks who currently holds an executive or top political role."""
+    low = (message or "").lower()
+    return bool(
+        re.search(
+            r"\b(ceo|chief executive|c\.e\.o\.|president|prime minister|chairman|chairperson|"
+            r"managing director|executive chair)\b",
+            low,
+        )
+    )
+
+
+def _topic_suggests_company(topic: str | None) -> bool:
+    """Heuristic: chat topic string names a company / brand (not a country question)."""
+    if not topic:
+        return False
+    t = topic.strip().strip("?.!")
+    if len(t) < 2 or len(t) > 72:
+        return False
+    if re.search(
+        r"\b(inc|corp|ltd|plc|llc|gmbh|technologies|software|systems|group|holdings|limited)\b",
+        t,
+        re.I,
+    ):
+        return True
+    if re.match(r"^[A-Z][a-z0-9]+(?:[A-Z][a-z0-9]+)+$", t):
+        return True
+    return False
+
+
+def _should_fetch_official_company_pages(user_message: str, topic: str | None) -> bool:
+    """When True, try to fetch leadership/CEO text from the company's own domain."""
+    if not _is_leadership_current_role_query(user_message):
+        return False
+    low = (user_message or "").lower()
+    if re.search(r"\bprime minister\b", low):
+        return False
+    if re.search(r"\bpresident\b", low) and not re.search(
+        r"\b(ceo|chief executive|c\.e\.o\.|company|corporation|corp\.?|firm|business)\b",
+        low,
+    ):
+        return False
+    if re.search(
+        r"\b(company|corporation|corp\.?|firm|official|website|web site|the company|this company|our company|"
+        r"content details|details regarding|information regarding|visit (?:the )?company|from (?:the )?company'?s? (?:site|website))\b",
+        low,
+    ):
+        return True
+    if _topic_suggests_company(topic):
+        return True
+    return False
+
+
+def _merge_cse_items_by_url(*item_lists, max_total: int = 10) -> list:
+    """Dedupe Custom Search items by URL, preserve first-seen order."""
+    seen: set[str] = set()
+    out: list = []
+    for lst in item_lists:
+        for it in lst or []:
+            if not isinstance(it, dict):
+                continue
+            u = (it.get('url') or '').strip()
+            key = u if u else f"__nourl_{len(seen)}"
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(it)
+            if len(out) >= max_total:
+                return out
+    return out
+
+
 # Max grounding size to stay under model context (gpt-3.5-turbo ~16k tokens). ~1 token ≈ 4 chars.
 MAX_GROUNDING_CHARS = int(os.getenv("CHAT_MAX_GROUNDING_CHARS", "5500"))
 MAX_CSE_RESULTS = 8
 MAX_CSE_RESULTS_NEWS_QUERY = 10
 MAX_CSE_SNIP_CHARS = 280
 MAX_CSE_SNIP_CHARS_NEWS_QUERY = 380
-MAX_BING_SNIPPETS = 4
-MAX_BING_SNIP_CHARS = 220
+
+def _is_likely_chitchat(message: str) -> bool:
+    """Short greetings/thanks — skip web search to avoid burning CSE quota."""
+    s = (message or "").strip().lower()
+    if len(s) <= 2:
+        return True
+    if len(s) <= 28 and re.match(
+        r"^(hi|hello|hey|hiya|thanks|thank you|thx|ty|ok+|okay|k|sure|yes|no|yep|nope|bye|goodbye|"
+        r"got it|cool|nice|great|awesome|lol|haha)[\s!.?]*$",
+        s,
+    ):
+        return True
+    return False
+
+
+def _matches_simple_datetime_question(user_message: str) -> bool:
+    """True for short calendar/clock questions (not programming). Used to skip web search."""
+    u = (user_message or "").strip().lower()
+    if not u or len(u) > 200:
+        return False
+    if any(k in u for k in ("javascript", "python", "sql", "code", "program", "script", "regex")):
+        return False
+    # News / headlines / current events — never the server-clock shortcut (substring "day" appears inside "today")
+    if re.search(
+        r"\b(headlines?|headline\s+news|breaking\s+news|top\s+stories|top\s+news|latest\s+news|"
+        r"in\s+the\s+news|news\s+headlines|news\s+today|today'?s\s+(headlines?|news|stories|top)|"
+        r"\bwhat\s+(are|is)\s+today'?s\s+headlines?)\b",
+        u,
+    ):
+        return False
+    # Historical / story questions ("what day did X happen") are not server-clock answers
+    if re.search(r"\bwhat\s+day\s+(did|was|were)\b", u) or re.search(r"\bwhich\s+day\s+(did|was|were)\b", u):
+        return False
+    if re.search(r"\bwhat\s+date\s+(was|did)\b", u):
+        return False
+    # Avoid substring traps: "what is today" matches inside "what is today's headlines"
+    triggers = (
+        "what day",
+        "which day",
+        "what date",
+        "what's the date",
+        "whats the date",
+        "what is the date",
+        "today's date",
+        "todays date",
+        "what time",
+        "current time",
+        "current date",
+    )
+    short_clock_today = bool(
+        re.search(r"\bwhat\s+is\s+today\s*\?+\s*$", u)
+        or re.search(r"\bwhat\s+is\s+today\s*$", u)
+        or re.search(r"\bwhat\s+is\s+today'?s\s+(date|day|time)\b", u)
+        or re.search(r"\bwhat'?s\s+today\s*\?+\s*$", u)
+        or re.search(r"\bwhats\s+today\s*\?+\s*$", u)
+    )
+    # Do NOT use `"day" in u` with "today" — the substring "day" appears inside the word "today"
+    # (e.g. "today's headlines" must not become a calendar question).
+    day_with_today = bool(
+        re.search(r"\bwhat\s+day\b.*\btoday\b", u)
+        or re.search(r"\bwhich\s+day\b.*\btoday\b", u)
+        or re.search(r"\btoday\b.*\bwhat\s+day\b", u)
+        or re.search(r"\bwhat\s+day\s+is\s+today\b", u)
+        or re.search(r"\bwhich\s+day\s+is\s+today\b", u)
+    )
+    today_calendarish = bool(
+        re.search(r"\btoday\b", u) and re.search(r"\b(this\s+week|calendar)\b", u)
+    )
+    day_today = day_with_today or today_calendarish
+    if day_today or short_clock_today or any(t in u for t in triggers):
+        if re.search(r"\bwhat\s+day\b", u) and not (
+            re.search(r"\bwhat\s+day\s+(is\s+it|are\s+we)\b", u)
+            or re.search(r"\bwhich\s+day\s+is\s+it\b", u)
+            or day_today
+        ):
+            return False
+        return True
+    return False
+
+
+def _try_answer_simple_datetime_question(user_message: str):
+    """
+    Answer 'what day is it', 'what's the date', 'what time is it' from the server clock.
+    Avoids Google CSE + model confusion (snippets often irrelevant for calendar questions).
+    Returns a markdown string or None.
+    """
+    if not _matches_simple_datetime_question(user_message):
+        return None
+    now = datetime.now()
+    utc = datetime.utcnow()
+    lines = [
+        f"**Today** is **{now.strftime('%A')}**, **{now.strftime('%B %d, %Y')}**.",
+        f"- **Local time** (where this server runs): **{now.strftime('%H:%M:%S')}**",
+        f"- **UTC:** **{utc.strftime('%A, %d %b %Y, %H:%M:%S')}** UTC",
+    ]
+    return "\n".join(lines)
 
 
 def _is_person_contact_query(msg):
@@ -192,7 +390,7 @@ User message: """
 
 
 def _is_technical_topic_message(user_message: str, request_id: str) -> bool:
-    """If True, chat uses model knowledge only (no Google Custom Search / Bing grounding)."""
+    """If True, chat uses model knowledge only (no Google Custom Search grounding)."""
     if not (user_message or '').strip():
         return False
     try:
@@ -203,10 +401,13 @@ def _is_technical_topic_message(user_message: str, request_id: str) -> bool:
             messages=[
                 {'role': 'system', 'content': (
                     'Reply with JSON only: {"technical":true|false}.\n'
-                    'technical=true: programming, software engineering, source code, debugging, APIs, algorithms, data structures, '
-                    'DevOps, Kubernetes/Docker, databases/SQL, networking protocols, OS internals, electronics, cybersecurity details, STEM math.\n'
-                    'technical=false: general news, history, sports, business, health, travel, hobbies, law, politics, '
-                    'or non-software "how does X work".'
+                    'technical=true ONLY for: programming, software engineering, source code, debugging, APIs, algorithms, data structures, '
+                    'DevOps, Kubernetes/Docker, databases/SQL, networking protocols for IT, OS/shell usage for developers, '
+                    'electronics engineering, cybersecurity tooling/exploits, formal STEM math.\n'
+                    'technical=false for: general news, history, sports, business, health, travel, hobbies, law, politics, '
+                    'biographies, product/company questions, "how does X work" about everyday/non-software topics, '
+                    'language/translation, and any question that is not mainly about building or fixing software/systems.\n'
+                    'If unsure, use technical=false so web search can answer.'
                 )},
                 {'role': 'user', 'content': user_message.strip()[:2000]},
             ],
@@ -223,7 +424,7 @@ def _is_technical_topic_message(user_message: str, request_id: str) -> bool:
 
 def _person_contact_triple_source(user_message, request_id):
     """
-    For person/contact queries: OpenAI knowledge, then Google Custom Search, then Bing;
+    For person/contact queries: OpenAI knowledge plus Google Custom Search snippets;
     synthesize the best answer. Returns response string or None on failure.
     """
     try:
@@ -281,25 +482,15 @@ def _person_contact_triple_source(user_message, request_id):
             except Exception as e:
                 logger.debug(f"[CHAT-{request_id}] Person contact Google CSE step: {e}")
 
-        # 3) Bing: web search for contact/email/phone/address
-        bing_answer = ""
-        try:
-            from services.contact_resolver import bing_web_search_grounding, email_finder_keys_status
-            if email_finder_keys_status().get("bing_configured"):
-                results = bing_web_search_grounding(person_query + " contact email phone address", max_results=6)
-                if results:
-                    bing_answer = "Bing search results:\n" + "\n".join(
-                        f"{i}. {r.get('snippet', '')}\n   {r.get('url', '')}" for i, r in enumerate(results[:6], 1)
-                    )
-        except Exception as e:
-            logger.debug(f"[CHAT-{request_id}] Person contact Bing step: {e}")
-
-        # 4) Synthesize: pick the most accurate and most recent from the three
+        # 3) Synthesize from OpenAI + Google Custom Search only (no Bing)
         combined = f"User asked: \"{person_query}\"\n\n"
         combined += "Source 1 (OpenAI knowledge):\n" + (openai_answer or "(no answer)") + "\n\n"
         combined += "Source 2 (Google Custom Search):\n" + (google_answer or "(no results)") + "\n\n"
-        combined += "Source 3 (Bing search):\n" + (bing_answer or "(no results)") + "\n\n"
-        combined += "Instructions: From the three sources above, output only the most accurate and most recent contact information (email, address, phone) for the user's question. Cite which source you used. If none are reliable, say so briefly."
+        combined += (
+            "Instructions: From the two sources above, output only the most accurate contact information "
+            "(email, address, phone) for the user's question. Cite which source you used. "
+            "If none are reliable, say so briefly."
+        )
 
         r2 = client.chat.completions.create(
             model="gpt-3.5-turbo",
@@ -596,7 +787,7 @@ FUNCTIONS = [
     },
     {
         "name": "find_email",
-        "description": "Look up a person's email address by name. Checks the user's contacts first, then web search (Bing) if not found. Use when the user asks for someone's email (e.g. 'What is John's email?', 'Find the email address of Jane').",
+        "description": "Look up a person's email address by name. Checks the user's contacts first, then Google Custom Search (when configured) and optional People API. Use when the user asks for someone's email (e.g. 'What is John's email?', 'Find the email address of Jane').",
         "parameters": {
             "type": "object",
             "properties": {
@@ -742,6 +933,13 @@ def styles():
 
 # Proxy WhatsApp REST API so the frontend can use same-origin (no CORS) when served from chat server
 WHATSAPP_NODE_URL = os.environ.get("WHATSAPP_NODE_URL", "http://127.0.0.1:3000")
+# Node allows up to 10 minutes for fetchMessages on large chats; a 30s proxy timeout caused empty/hung UI.
+try:
+    _WHATSAPP_PROXY_READ = int((os.getenv("WHATSAPP_PROXY_TIMEOUT") or "660").strip() or "660")
+except ValueError:
+    _WHATSAPP_PROXY_READ = 660
+_WHATSAPP_PROXY_READ = max(60, min(_WHATSAPP_PROXY_READ, 900))
+_WHATSAPP_PROXY_CONNECT = min(30, max(5, _WHATSAPP_PROXY_READ // 20))
 
 
 @app.route('/api/whatsapp/<path:subpath>', methods=['GET', 'POST', 'PUT', 'DELETE'])
@@ -755,23 +953,21 @@ def proxy_whatsapp(subpath):
         auth = request.headers.get("Authorization")
         if auth:
             fwd_headers["Authorization"] = auth
-        kwargs = {"timeout": 30, "headers": fwd_headers}
+        kwargs = {"timeout": (_WHATSAPP_PROXY_CONNECT, _WHATSAPP_PROXY_READ), "headers": fwd_headers}
         if request.method == 'GET':
             r = requests.get(url, **kwargs)
         elif request.method in ('POST', 'PUT'):
-            # Forward JSON body so Node server receives it correctly
-            body = request.get_data(as_text=True)
+            # Forward body to Node. Do NOT call get_data() before get_json() — that can leave the
+            # stream in a state where JSON forwarding is empty and WhatsApp POSTs hit Node with {}.
             h = dict(fwd_headers)
-            try:
-                payload = request.get_json(silent=True)
-                if payload is not None:
-                    kwargs["json"] = payload
-                else:
-                    kwargs["data"] = body
-                    h["Content-Type"] = request.headers.get("Content-Type", "application/json")
-            except Exception:
-                kwargs["data"] = body
-                h["Content-Type"] = request.headers.get("Content-Type", "application/json")
+            payload = request.get_json(silent=True)
+            if payload is not None:
+                kwargs["json"] = payload
+            else:
+                kwargs["data"] = request.get_data()
+                ct = request.headers.get("Content-Type", "application/json")
+                if ct:
+                    h["Content-Type"] = ct
             kwargs["headers"] = h
             if request.method == 'POST':
                 r = requests.post(url, **kwargs)
@@ -906,8 +1102,12 @@ def voice_process():
         os.close(fd)
         client = get_openai_client()
         whisper_model = (os.getenv('OPENAI_WHISPER_MODEL') or 'whisper-1').strip()
+        whisper_lang = (os.getenv('OPENAI_WHISPER_LANGUAGE') or 'en').strip()
         with open(tmp_path, 'rb') as audio_file:
-            tr = client.audio.transcriptions.create(model=whisper_model, file=audio_file)
+            tr_kwargs = {'model': whisper_model, 'file': audio_file}
+            if whisper_lang.lower() not in ('', 'auto', 'detect'):
+                tr_kwargs['language'] = whisper_lang
+            tr = client.audio.transcriptions.create(**tr_kwargs)
         transcript = (getattr(tr, 'text', None) or '').strip()
     except Exception as e:
         logger.exception(f'[{request_id}] Whisper failed: {e}')
@@ -1108,6 +1308,10 @@ def chat():
             'error': True
         })
 
+    dt_quick = _try_answer_simple_datetime_question(user_message)
+    if dt_quick:
+        return jsonify({'response': dt_quick, 'function_called': None})
+
     # Deep intent analysis (LLM) so natural phrasing is understood, not only regex
     analyzed = _analyze_user_intent(user_message, request_id)
     analyzed_intent = (analyzed.get("intent") or "general_chat").strip().lower() if analyzed else "general_chat"
@@ -1133,7 +1337,7 @@ def chat():
             return "Yes."
         return "No."
 
-    # Person/contact query: answer from OpenAI, then News API, then Bing; return most accurate and most recent
+    # Person/contact query: OpenAI + Google Custom Search synthesis (no Bing)
     if _is_person_contact_query(user_message) or (use_analyzed and analyzed_intent == "person_contact_query"):
         triple_resp = _person_contact_triple_source(user_message, request_id)
         if triple_resp:
@@ -2313,12 +2517,16 @@ def chat():
 
         
         # Build messages for OpenAI - comprehensive system prompt
-        system_content = """You are a helpful AI assistant. Provide thorough, detailed, and well-formatted responses. 
+        _clock = datetime.now()
+        _clock_utc = datetime.utcnow()
+        system_content = f"""You are a helpful AI assistant. Provide thorough, detailed, and well-formatted responses. 
 When asked for lists, provide complete lists with proper formatting (numbered or bulleted). 
 Use markdown formatting for better readability (bold, lists, code blocks, etc.).
 Be conversational and helpful, like ChatGPT.
 
-**Up-to-date information:** When the next message includes Google Custom Search or Bing web results, base your answer on that content and cite source. If those sources do not contain the answer, say so before adding general knowledge. For technical topics (programming, engineering, etc.), answer from your training without requiring web results.
+**Server clock (for "today", current date/time, what day it is):** Local: {_clock.strftime('%A, %B %d, %Y %H:%M:%S')}; UTC: {_clock_utc.strftime('%Y-%m-%d %H:%M:%S')} UTC. Prefer this for simple calendar/time questions unless the user names a specific timezone.
+
+**Knowledge routing:** Non-technical messages may include Google Custom Search snippets (not identical to the main Google.com page, but real web results). Some prompts also include **plain text fetched from the company’s own website** (leadership / IR pages). When that fetched block is present, treat it as the best primary source for **who leads that company** when it clearly names a current CEO or officer; still cite the page URL given in that block. For **questions about a named person** (biography, background), results may include **public social or professional profile URLs** (e.g. LinkedIn, X/Twitter). List those URLs explicitly when they appear in the snippets, label each by site, and note when several people share the same name so the user can judge relevance—do not invent profile links. When those snippets are present, base your answer on them, cite title or URL, and give a direct helpful summary—do not reply with "I don't know" or refuse when the snippets are relevant. You may add concise general knowledge only to clarify, and say clearly if snippets contradict each other. For **who currently holds a role** (CEO, president, prime minister, chair, etc.), your training data may be years out of date: **always prefer what the snippets say** about the current office-holder and recent appointments over what you remember. For **technical** topics (programming, software debugging, APIs, DevOps, code, algorithms, databases, security tooling, etc.), answer from your training; those messages intentionally omit web snippets.
 
 **Two Gmail accounts — always distinguish first vs second from the user's words:**
 - **First account** = EMAIL1. Treat as first when the user says: first account, my first account, account 1, 1st account, email 1, primary account, main account, first Gmail, only first, first only, "in my first account", "from the first account".
@@ -2365,6 +2573,7 @@ Be conversational and helpful, like ChatGPT.
                 is_technical = False
 
         # Detect when user wants current / general web info (not Gmail/Telegram/WhatsApp/Slack/launch flows)
+        person_name_for_profiles = None
         try:
             is_explicit_news = bool(re.search(
                 r"\b(news|headlines?|latest\s+news|recent\s+news|recent\s+updates|updates|breaking|in\s+the\s+news)\b",
@@ -2391,75 +2600,120 @@ Be conversational and helpful, like ChatGPT.
             if topic and topic.lower().strip() in ('today', 'for today', 'this week', 'this morning', 'right now', 'now'):
                 topic = None
 
-            # Google Custom Search: non-technical general / current-info queries only
-            use_web_grounding = needs_up_to_date and not skip_external_grounding and not is_technical
-            if use_web_grounding and is_google_cse_configured():
-                search_q = (topic or user_message.strip())[:500]
-                if is_explicit_news and not topic:
-                    search_q = "latest news headlines today"
+            # Google Custom Search: all non-technical general questions (not only "news" / dated heuristics).
+            # Technical topics use model-only answers; integration commands skip web grounding.
+            use_google_cse = (
+                not skip_external_grounding
+                and not is_technical
+                and is_google_cse_configured()
+                and not _is_likely_chitchat(user_message)
+                and not _matches_simple_datetime_question(user_message)
+            )
+            if use_google_cse:
+                leadership_q = _is_leadership_current_role_query(user_message)
+                if _should_fetch_official_company_pages(user_message, topic):
+                    try:
+                        from services.company_site_fetch import build_official_leadership_grounding
+
+                        ir_block = build_official_leadership_grounding(
+                            user_message, conversation_history, topic
+                        )
+                        if ir_block:
+                            grounding_parts.append(ir_block)
+                            logger.info(f"[CHAT-{request_id}] Injected official company-site fetch grounding")
+                    except Exception as _ir_e:
+                        logger.debug(f"[CHAT-{request_id}] Official company-site fetch skipped: {_ir_e}")
+
+                search_q = _build_web_search_query(user_message, topic, is_explicit_news)
                 num_fetch = MAX_CSE_RESULTS_NEWS_QUERY if is_explicit_news else MAX_CSE_RESULTS
-                items = google_custom_search(search_q, num=min(max(num_fetch, 1), 10))
+                n_req = min(max(num_fetch, 1), 10)
+                items = google_custom_search(search_q, num=n_req)
+                if leadership_q:
+                    y = datetime.utcnow().year
+                    base2 = (topic or user_message.strip())[:200]
+                    q2 = f"{base2} leadership succession chief executive appointed announced {y}"
+                    dr = (os.getenv("GOOGLE_CSE_LEADERSHIP_DATE_RESTRICT", "") or "").strip()
+                    if dr.lower() in ("0", "off", "false", "none", "disable"):
+                        dr = ""
+                    items2 = (
+                        google_custom_search(q2, num=6, date_restrict=dr or None)
+                        if dr
+                        else google_custom_search(q2, num=6)
+                    )
+                    items = _merge_cse_items_by_url(items, items2, max_total=10)
+                try:
+                    from services.person_profile_search import (
+                        is_person_information_intent,
+                        extract_person_search_name,
+                        gather_person_profile_cse_items,
+                    )
+
+                    if is_person_information_intent(user_message):
+                        person_name_for_profiles = extract_person_search_name(
+                            user_message, topic, conversation_history
+                        )
+                        if person_name_for_profiles:
+                            p_items = gather_person_profile_cse_items(person_name_for_profiles)
+                            items = _merge_cse_items_by_url(items, p_items, max_total=12)
+                            logger.info(
+                                f"[CHAT-{request_id}] Person-profile CSE augment for %r",
+                                person_name_for_profiles[:60],
+                            )
+                except Exception as _pe:
+                    logger.debug(f"[CHAT-{request_id}] Person profile CSE augment skipped: {_pe}")
+
                 if items:
                     instruction = (
                         "Summarize using the web results below. Cite title or URL when you use a fact. "
                         "Give a helpful answer; do not reply with 'I don't know' when results are provided."
                     )
+                    if leadership_q:
+                        instruction += (
+                            " For current titles (CEO, president, chair, etc.), snippets may reflect a more recent leadership "
+                            "change than your training data: state who holds the role **now** per the evidence below, not from memory alone."
+                        )
+                    if person_name_for_profiles:
+                        instruction += (
+                            " The user asked about an **individual**. Include a concise **Profiles / social** section with direct URLs "
+                            "that appear below (LinkedIn, X/Twitter, Instagram, Facebook, etc.), each labeled. "
+                            "If the name is common and results could be different people, say so."
+                        )
+                    _max_items = MAX_CSE_RESULTS_NEWS_QUERY if is_explicit_news else (
+                        10 if person_name_for_profiles else MAX_CSE_RESULTS
+                    )
                     snippet, n = format_cse_results_for_grounding(
                         items,
                         instruction,
-                        max_items=(MAX_CSE_RESULTS_NEWS_QUERY if is_explicit_news else MAX_CSE_RESULTS),
+                        max_items=_max_items,
                         max_snip=(MAX_CSE_SNIP_CHARS_NEWS_QUERY if is_explicit_news else MAX_CSE_SNIP_CHARS),
                     )
                     if snippet:
                         grounding_parts.append(snippet)
-                        logger.info(f"[CHAT-{request_id}] Google CSE: {n} results (q=%s)", (search_q or "")[:100])
+                        logger.info(
+                            f"[CHAT-{request_id}] Google CSE: {n} results (q=%s, leadership_extra={leadership_q})",
+                            (search_q or "")[:100],
+                        )
         except Exception as e:
             logger.debug(f"[CHAT-{request_id}] Google CSE grounding: %s", e)
 
-        # Bing fallback when Google CSE is unavailable or returned nothing
-        try:
-            from services.contact_resolver import bing_web_search_grounding, email_finder_keys_status
-            if skip_external_grounding or is_technical:
-                pass
-            elif grounding_parts:
-                pass
-            elif email_finder_keys_status().get("bing_configured"):
-                q = user_message.strip()
-                if is_explicit_news:
-                    q = "recent news past month headlines"
-                is_who_current = bool(re.search(r"\bwho\s+is\s+(?:the\s+)?(current\s+)?", q, re.IGNORECASE))
-                is_searchy = (
-                    is_who_current or
-                    q.endswith("?") or
-                    needs_up_to_date or
-                    is_explicit_news or
-                    re.search(r"\b(what|who|when|where|why|how|which|current|latest|recent|today)\b", q, re.IGNORECASE)
-                )
-                if is_searchy and len(q) > 5:
-                    num_results = min(8 if is_who_current else 6, MAX_BING_SNIPPETS)
-                    results = bing_web_search_grounding(q, max_results=num_results)
-                    if results:
-                        lines = ["Web search results. Use these to answer; cite source."]
-                        for i, r in enumerate(results[:MAX_BING_SNIPPETS], 1):
-                            snip = (r.get("snippet") or "").strip()
-                            if len(snip) > MAX_BING_SNIP_CHARS:
-                                snip = snip[:MAX_BING_SNIP_CHARS].rsplit(" ", 1)[0] + "..."
-                            url = (r.get("url") or "").strip()
-                            if snip:
-                                lines.append(f"{i}. {snip}")
-                            if url:
-                                lines.append(f"   Source: {url}")
-                        bing_snippet = "\n".join(lines)
-                        grounding_parts.append(bing_snippet)
-                        logger.info(f"[CHAT-{request_id}] Bing grounding: injected {len(results[:MAX_BING_SNIPPETS])} web snippets")
-        except Exception as e:
-            logger.debug(f"[CHAT-{request_id}] Bing grounding failed: {e}")
-
         if grounding_parts:
             today = datetime.utcnow().strftime("%Y-%m-%d")
+            recency_note = ""
+            if _is_leadership_current_role_query(user_message):
+                recency_note = (
+                    "The user is asking about a **current** office or title. Search results may include older pages; "
+                    "prefer lines that clearly describe the **present** office-holder or a **recent** appointment "
+                    "(e.g. press releases, investor relations, or dated news).\n\n"
+                )
+            if person_name_for_profiles:
+                recency_note += (
+                    "The user is asking about a **specific person**. Prefer facts and URLs from the search snippets; "
+                    "common names may match multiple unrelated people.\n\n"
+                )
             combined_grounding = (
                 f"Today (UTC): {today}. The user asked: \"{user_message.strip()[:300].replace(chr(34), chr(39))}\"\n\n"
-                "Answer using the sources below. Cite source and date. For recent-news questions, present information covering at least the past month (not just today or yesterday). When news or web results are provided, summarize them helpfully; do not reply with 'I don't know'.\n\n"
+                + recency_note
+                + "Answer using the sources below. Cite source and date. For recent-news questions, present information covering at least the past month (not just today or yesterday). When news or web results are provided, summarize them helpfully; do not reply with 'I don't know'.\n\n"
                 + "\n\n---\n\n".join(grounding_parts)
             )
             if len(combined_grounding) > MAX_GROUNDING_CHARS:
@@ -2484,7 +2738,7 @@ Be conversational and helpful, like ChatGPT.
             for attempt in range(max_retries):
                 try:
                     response = client.chat.completions.create(
-                        model="gpt-3.5-turbo",  # Fast model
+                        model=(os.getenv('OPENAI_CHAT_MODEL', 'gpt-4o-mini').strip() or 'gpt-4o-mini'),
                         messages=messages,  # Use full conversation history
                         functions=FUNCTIONS,  # Enable function calling for app launch, email, etc.
                         function_call="auto",  # Let the model decide when to call functions
@@ -2727,7 +2981,7 @@ Be conversational and helpful, like ChatGPT.
                 else:
                     final_message = function_result.get('message') or function_result.get('error') or function_result.get('detail') or 'Could not delete emails.'
             elif function_name == 'find_email':
-                # Email lookup: DB first, then Bing (or show method to find). Return clear message.
+                # Email lookup: DB + Google CSE / People API via backend (no Bing). Return clear message.
                 status = function_result.get('_http_status', 0)
                 if status == 200 and function_result.get('success'):
                     src = function_result.get('source', '')

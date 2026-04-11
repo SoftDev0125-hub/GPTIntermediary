@@ -788,33 +788,6 @@ You can discuss any topic freely - science, math, programming, history, creative
                 logger.warning(f"News integration failed: {e}")
                 news_snippet = None
 
-            # Bing grounding: inject web search results into context (like ChatGPT.com with Bing)
-            bing_grounding_snippet = None
-            try:
-                from services.contact_resolver import bing_web_search_grounding, email_finder_keys_status
-                if email_finder_keys_status().get("bing_configured"):
-                    # Use grounding for questions / factual queries (not for greetings or commands)
-                    q = user_message.strip()
-                    is_searchy = (
-                        q.endswith("?") or
-                        re.search(r"\b(what|who|when|where|why|how|which|current|latest|recent|today|is\s+\w+\s+\w+\?)\b", q, re.IGNORECASE)
-                    )
-                    if is_searchy and len(q) > 10:
-                        results = bing_web_search_grounding(q, max_results=5)
-                        if results:
-                            lines = ["Web search results (use to answer with up-to-date information):"]
-                            for i, r in enumerate(results, 1):
-                                snip = (r.get("snippet") or "").strip()
-                                url = (r.get("url") or "").strip()
-                                if snip:
-                                    lines.append(f"{i}. {snip}")
-                                if url:
-                                    lines.append(f"   Source: {url}")
-                            bing_grounding_snippet = "\n".join(lines)
-                            logger.info(f"[CHAT] Bing grounding: injected {len(results)} web snippets")
-            except Exception as e:
-                logger.debug(f"Bing grounding failed: {e}")
-            
             total_context = len(messages)
             logger.info(f"[CHAT] Total messages in context: {total_context} (1 system + {total_context-1} conversation messages)")
             
@@ -824,12 +797,10 @@ You can discuss any topic freely - science, math, programming, history, creative
             
             # Call OpenAI with function calling - use direct call with very short timeout
             # Only system + current user message to prevent timeout
-            # Insert news and/or Bing grounding snippets after system message (like ChatGPT.com)
+            # Insert Google CSE news snippet after system message when available
             minimal_messages = [messages[0]]
             if news_snippet:
                 minimal_messages.append({"role": "system", "content": news_snippet})
-            if bing_grounding_snippet:
-                minimal_messages.append({"role": "system", "content": bing_grounding_snippet})
             minimal_messages.append({"role": "user", "content": user_message})
             
             logger.info(f"[CHAT] Calling OpenAI API with minimal context: {len(minimal_messages)} messages")

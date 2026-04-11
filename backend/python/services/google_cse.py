@@ -5,10 +5,12 @@ Requires GOOGLE_CUSTOM_SEARCH_API_KEY and GOOGLE_CUSTOM_SEARCH_ENGINE_ID (cx).
 import logging
 import os
 import re
+from typing import Optional
 
 import requests
 
 logger = logging.getLogger(__name__)
+_cse_warned_missing_cx = False
 
 
 def _read_env_key_from_dotenv(key_name: str) -> str:
@@ -44,18 +46,33 @@ def is_google_cse_configured() -> bool:
     return bool(k and cx)
 
 
-def google_custom_search(q: str, num: int = 8) -> list:
-    """Return list of dicts: title, snippet, url, displayLink."""
+def google_custom_search(q: str, num: int = 8, date_restrict: Optional[str] = None) -> list:
+    """Return list of dicts: title, snippet, url, displayLink.
+
+    date_restrict: optional Google CSE filter, e.g. ``m12`` (last 12 months), ``y1`` (last year).
+    See https://developers.google.com/custom-search/v1/reference/rest/v1/cse/list
+    """
     k, cx = google_cse_credentials()
     if not k or not cx:
+        global _cse_warned_missing_cx
+        if k and not cx and not _cse_warned_missing_cx:
+            _cse_warned_missing_cx = True
+            logger.warning(
+                'GOOGLE_CUSTOM_SEARCH_API_KEY is set but GOOGLE_CUSTOM_SEARCH_ENGINE_ID (cx) is missing or empty — '
+                'Custom Search is disabled. Create a Programmable Search Engine and set both in .env.'
+            )
         return []
     q = (q or '').strip()[:2000]
     if len(q) < 2:
         return []
     try:
+        params = {'key': k, 'cx': cx, 'q': q, 'num': min(max(num, 1), 10)}
+        dr = (date_restrict or '').strip()
+        if dr:
+            params['dateRestrict'] = dr
         r = requests.get(
             'https://www.googleapis.com/customsearch/v1',
-            params={'key': k, 'cx': cx, 'q': q, 'num': min(max(num, 1), 10)},
+            params=params,
             timeout=12,
         )
         data = r.json()

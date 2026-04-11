@@ -1,7 +1,7 @@
 """
 Contact resolver service
 - Primary strategy: People APIs (Clearbit/Hunter) if API keys provided
-- Fallback: Bing Web Search API to find candidate email addresses in public pages
+- Web fallback: Google Custom Search (Programmable Search) to find candidate emails in snippets/URLs
 
 Returns list of candidate dicts: {"email": ..., "source": ..., "confidence": float}
 
@@ -72,6 +72,37 @@ def bing_web_search_grounding(query: str, max_results: int = 6) -> List[Dict]:
     except Exception as e:
         logger.warning(f"Bing grounding search failed: {e}")
         return []
+
+
+def resolve_with_google_cse(query: str, company: Optional[str] = None, max_results: int = 5) -> List[Dict]:
+    """Use Google Programmable Search (Custom Search JSON API) to find snippets that may contain emails."""
+    try:
+        from services.google_cse import google_custom_search, is_google_cse_configured
+    except ImportError:
+        return []
+    if not is_google_cse_configured():
+        return []
+    q = f'"{query.strip()}"'
+    if company and company.strip():
+        q += f' "{company.strip()}"'
+    q = (q + " email OR contact").strip()[:200]
+    try:
+        items = google_custom_search(q, num=min(max(max_results, 1), 10))
+    except Exception as e:
+        logger.warning(f"Google CSE email search failed: {e}")
+        return []
+    candidates: List[Dict] = []
+    for it in items or []:
+        url = (it.get("url") or "").strip()
+        blob = " ".join(
+            filter(
+                None,
+                [it.get("title"), it.get("snippet"), it.get("displayLink"), url],
+            )
+        )
+        for em in _extract_emails_from_text(blob):
+            candidates.append({"email": em, "source": url or "(snippet)", "confidence": 0.55})
+    return candidates
 
 
 def resolve_with_bing(query: str, company: Optional[str] = None, max_results: int = 5) -> List[Dict]:
@@ -202,10 +233,10 @@ def resolve_name_to_emails(query: str, company: Optional[str] = None, max_result
     except Exception:
         pass
 
-    # 3) Bing Web Search (include company in query when provided)
+    # 3) Google Custom Search (snippets/URLs may contain email addresses)
     try:
-        bing = resolve_with_bing(q, company=company, max_results=max_results)
-        candidates.extend(bing)
+        cse = resolve_with_google_cse(q, company=company, max_results=max_results)
+        candidates.extend(cse)
     except Exception:
         pass
 
@@ -233,32 +264,39 @@ def resolve_name_to_emails(query: str, company: Optional[str] = None, max_result
 
 def email_finder_keys_status() -> dict:
     """Return status of API keys for email finder and user-facing instructions if missing."""
-    bing = bool(_get_bing_key())
+    try:
+        from services.google_cse import is_google_cse_configured
+        google_cse = bool(is_google_cse_configured())
+    except Exception:
+        google_cse = False
+    bing = bool(_get_bing_key())  # legacy; not used by chat or email finder web step
     people = bool(PEOPLE_API_KEY)
-    configured = bing or people
+    configured = google_cse or people
     instructions = (
-        "Email finder uses paid APIs. To enable:\n\n"
-        "1. **Bing Web Search API** (finds emails via web search):\n"
-        "   • Go to https://www.microsoft.com/en-us/bing/apis/bing-web-search-api\n"
-        "   • Create a resource in Azure Portal, get your subscription key.\n"
-        "   • Add BING_API_KEY=your_key (or BING_SEARCH_API_KEY) to the .env file or Settings tab.\n\n"
-        "2. **People/Email Finder API** (e.g. Hunter.io for professional emails):\n"
-        "   • Go to https://hunter.io/api (or your provider)\n"
-        "   • Sign up and get an API key.\n"
-        "   • Add PEOPLE_API_KEY=your_key to the .env file or Settings tab.\n\n"
-        "At least one key is required to find email addresses by name when they are not in your contacts."
+        "Email finder (after your contacts DB) uses:\n\n"
+        "1. **Google Custom Search** — set GOOGLE_CUSTOM_SEARCH_API_KEY and GOOGLE_CUSTOM_SEARCH_ENGINE_ID in .env.\n"
+        "   Programmable Search: https://programmablesearchengine.google.com/\n\n"
+        "2. **People/Email Finder API** (optional, e.g. Hunter.io):\n"
+        "   • Add PEOPLE_API_KEY=your_key to .env or Settings.\n\n"
+        "Configure at least one of the above when the person is not already in contacts."
     )
-    return {"bing_configured": bing, "people_configured": people, "any_configured": configured, "instructions": instructions}
+    return {
+        "bing_configured": bing,
+        "google_cse_configured": google_cse,
+        "people_configured": people,
+        "any_configured": configured,
+        "instructions": instructions,
+    }
 
 
 def message_keys_required() -> str:
-    """User-friendly notification when Bing/People API keys are not in .env."""
+    """User-friendly notification when Google CSE / People API keys are not in .env."""
     return (
-        "Email finder APIs are not configured. To find or send to someone by name when they're not in your contacts, "
-        "add at least one of these keys to the .env file (or the Settings tab):\n\n"
-        "• BING_API_KEY (or BING_SEARCH_API_KEY) – Bing Web Search API (Azure). Get a key at https://www.microsoft.com/en-us/bing/apis/bing-web-search-api\n"
-        "• PEOPLE_API_KEY – e.g. Hunter.io Email Finder. Get a key at https://hunter.io/api\n\n"
-        "After adding a key, restart the app and try again."
+        "Email finder web search is not configured. To find someone by name when they're not in your contacts, "
+        "add to .env (or Settings):\n\n"
+        "• GOOGLE_CUSTOM_SEARCH_API_KEY and GOOGLE_CUSTOM_SEARCH_ENGINE_ID (Google Programmable Search)\n"
+        "• Optional: PEOPLE_API_KEY (e.g. Hunter.io)\n\n"
+        "Restart the app after saving."
     )
 
 

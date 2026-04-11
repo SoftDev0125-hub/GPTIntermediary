@@ -100,11 +100,18 @@ class EmailService:
                 except Exception as refresh_error:
                     error_str = str(refresh_error)
                     logger.error(f"Failed to refresh Gmail token: {error_str}")
-                    if 'invalid_grant' in error_str.lower() or 'expired' in error_str.lower() or 'revoked' in error_str.lower():
+                    low = error_str.lower()
+                    if 'invalid_grant' in low or 'expired' in low or 'revoked' in low:
                         raise Exception(
-                            "Gmail token has expired or been revoked. Re-authenticate: run from project backend/python: python get_gmail_token.py"
+                            "Gmail token has expired or been revoked. Re-authenticate: from repo root run: python backend/python/get_gmail_token.py"
                         )
-                    raise Exception(f"Token refresh failed: {error_str}. Re-run: python get_gmail_token.py")
+                    if 'unauthorized_client' in low:
+                        raise Exception(
+                            "Gmail OAuth client mismatch: USER_REFRESH_TOKEN was issued for a different Client ID/Secret than GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET in .env (or you are using a Web client instead of a Desktop OAuth client). Fix: In Google Cloud Console create an OAuth 2.0 Client ID of type Desktop app, copy its ID and secret into .env, remove the app at https://myaccount.google.com/permissions if needed, then run: python backend/python/get_gmail_token.py"
+                        )
+                    raise Exception(
+                        f"Token refresh failed: {error_str}. Re-run: python backend/python/get_gmail_token.py"
+                    )
 
             return build('gmail', 'v1', credentials=creds, cache_discovery=False)
         except Exception as e:

@@ -719,50 +719,6 @@ body::before {
     height: 20px;
 }
 
-/* Voice tone selector (TTS) */
-.voice-tone-select {
-    height: 40px;
-    padding: 0 10px;
-    background: rgba(30, 41, 59, 0.8);
-    border: 1px solid rgba(99, 102, 241, 0.3);
-    border-radius: 10px;
-    color: #e2e8f0;
-    font-size: 13px;
-    cursor: pointer;
-    flex-shrink: 0;
-    min-width: 0;
-    max-width: 100px;
-}
-.voice-tone-select:hover {
-    border-color: rgba(99, 102, 241, 0.5);
-}
-.voice-tone-select:focus {
-    outline: none;
-    border-color: rgba(99, 102, 241, 0.6);
-}
-
-/* Voice engine (browser Web Speech vs OpenAI Realtime WebRTC) */
-.voice-engine-select {
-    height: 40px;
-    padding: 0 10px;
-    background: rgba(30, 41, 59, 0.8);
-    border: 1px solid rgba(99, 102, 241, 0.3);
-    border-radius: 10px;
-    color: #e2e8f0;
-    font-size: 12px;
-    cursor: pointer;
-    flex-shrink: 0;
-    min-width: 0;
-    max-width: 200px;
-}
-.voice-engine-select:hover {
-    border-color: rgba(99, 102, 241, 0.5);
-}
-.voice-engine-select:focus {
-    outline: none;
-    border-color: rgba(99, 102, 241, 0.6);
-}
-
 /* Buttons */
 .btn {
     padding: 10px 20px;
@@ -2761,6 +2717,7 @@ body::before {
 .whatsapp-main {
     flex: 1;
     min-width: 0; /* allow main area to shrink so messages respect width */
+    min-height: 0; /* nested flex: allow messages area to shrink and scroll */
     display: flex;
     flex-direction: column;
     height: 100%;
@@ -2798,6 +2755,7 @@ body::before {
 .whatsapp-messages-container {
     flex: 1;
     min-width: 0; /* constrain width so message bubbles scale with window */
+    min-height: 0;
     overflow-y: auto;
     overflow-x: hidden;
     background: #212121 !important;
@@ -2852,6 +2810,8 @@ body::before {
     width: 100%;
     min-width: 0;
     max-width: 100%;
+    flex: 1 1 0;
+    min-height: 0;
     display: flex;
     flex-direction: column;
     gap: 2px;
@@ -5217,20 +5177,6 @@ body::before {
         font-size: 14px;
     }
 
-    .voice-tone-select {
-        height: 36px;
-        padding: 0 8px;
-        font-size: 12px;
-        max-width: 82px;
-    }
-
-    .voice-engine-select {
-        height: 36px;
-        padding: 0 6px;
-        font-size: 11px;
-        max-width: 120px;
-    }
-
     .voice-recognition-btn {
         width: 36px;
         height: 36px;
@@ -5268,6 +5214,7 @@ body::before {
     .whatsapp-main,
     .slack-main {
         height: calc(60vh - 60px);
+        min-height: 0;
     }
 
     /* WhatsApp messages: use more width on narrow screens */

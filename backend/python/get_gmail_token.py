@@ -210,6 +210,11 @@ if __name__ == '__main__':
             print("       https://console.cloud.google.com/apis/credentials")
             print("    2. Add authorized redirect URI: http://localhost:8085/ (and/or http://127.0.0.1:8085/)")
             print("       In Console: your OAuth client → Edit → Authorized redirect URIs → Add the above")
+        if "unauthorized_client" in err_str:
+            print("\n  → unauthorized_client on refresh/sign-in usually means:")
+            print("    • Use OAuth client type **Desktop app** (this script uses the desktop / installed-app flow).")
+            print("      A **Web application** client’s secret often will not work with tokens from this script.")
+            print("    • GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET must be from the **same** client that will own the new tokens.")
         if "address" in str(e).lower() or "port" in str(e).lower() or "10048" in str(e) or "18848" in str(e):
             print("\n  → Port in use: Add these to Google Console → Authorized redirect URIs:")
             print("     http://localhost:8085/  http://localhost:8086/  http://localhost:8087/")

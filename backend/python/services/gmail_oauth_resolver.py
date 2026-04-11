@@ -97,7 +97,10 @@ def resolve_gmail_credentials(
             except Exception as e:
                 logger.warning("Gmail primary DB read failed: %s", e)
 
-    if not mt and request_credentials is not None:
+    # Second account (EMAIL2): do not apply request body tokens here — the UI only sends
+    # primary credentials from /get_user_credentials; merging them with use_second would
+    # skip USER_ACCESS_TOKEN_2 / USER_REFRESH_TOKEN_2 and break refresh (wrong client_id).
+    if not mt and request_credentials is not None and not use_second:
         ra = getattr(request_credentials, "access_token", None) or ""
         rr = getattr(request_credentials, "refresh_token", None) or ""
         if ra.strip():

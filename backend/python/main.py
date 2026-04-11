@@ -1177,7 +1177,7 @@ async def send_email(
                             status_code=400,
                             detail=message_keys_required(),
                         )
-                    # Try external resolver (Bing / People API)
+                    # Try external resolver (Google CSE / People API)
                     try:
                         logger.info(f"No local contact matches for '{query_name}', attempting external resolver")
                         candidates = resolve_name_to_emails(query_name)
@@ -3427,7 +3427,7 @@ async def update_env_variables(
         raise HTTPException(status_code=500, detail=f"Failed to update settings: {str(e)}")
 
 
-# ==================== FIND EMAIL BY NAME (CONTACTS + BING/PEOPLE API) ====================
+# ==================== FIND EMAIL BY NAME (CONTACTS + GOOGLE CSE / PEOPLE API) ====================
 
 class FindEmailRequest(BaseModel):
     """Request body for find-email endpoint. Company is optional and improves search (e.g. 'Find email of xxx from company Y')."""
@@ -3443,7 +3443,7 @@ async def find_email_by_name(
 ):
     """
     Find a person's email address by name (optional: company to narrow search).
-    Checks the contacts database first; if not found, uses Bing Search API and/or
+    Checks the contacts database first; if not found, uses Google Custom Search and/or
     People API (when keys are in .env). E.g. "Find the email of John from company Acme".
     Saves newly found emails to the contacts table.
     """
@@ -3486,7 +3486,7 @@ async def find_email_by_name(
     if not status.get("any_configured"):
         raise HTTPException(status_code=400, detail=message_keys_required())
 
-    # 3) Call resolver (with optional company for better Bing/People API results)
+    # 3) Call resolver (Google CSE + optional People API)
     try:
         candidates = resolve_name_to_emails(name, company=company, max_results=5)
     except Exception as e:
