@@ -5,7 +5,31 @@ import signal
 import atexit
 import subprocess
 import threading
+import shutil
 from pathlib import Path
+
+
+def _maybe_reexec_with_project_venv():
+    """If a local venv exists, run under it so subprocesses use the same interpreter."""
+    if getattr(sys, "frozen", False):
+        return
+    root = Path(__file__).resolve().parent
+    if sys.platform == "win32":
+        venv_py = root / "venv" / "Scripts" / "python.exe"
+    else:
+        venv_py = root / "venv" / "bin" / "python"
+    if not venv_py.is_file():
+        return
+    try:
+        if Path(sys.executable).resolve() == venv_py.resolve():
+            return
+    except OSError:
+        return
+    print(f"[*] Using project virtual environment: {venv_py}")
+    os.execv(str(venv_py), [str(venv_py)] + sys.argv)
+
+
+_maybe_reexec_with_project_venv()
 
 # Load project root .env so spawned processes inherit env vars
 try:
@@ -39,6 +63,9 @@ whatsapp_log = None
 telegram_log = None
 slack_log = None
 
+# Set when start_servers() finishes (success, early exit, or error) so main can open UI after full startup
+server_startup_done_event = threading.Event()
+
 # Django server configuration
 DJANGO_DIR = os.path.join("backend", "django_app")
 DJANGO_PORT = 8001
@@ -53,6 +80,33 @@ def _get_script_dir():
     if _is_frozen():
         return os.path.dirname(os.path.abspath(sys.executable))
     return os.path.dirname(os.path.abspath(__file__))
+
+
+def _resolve_node_executable(script_dir):
+    """
+    Path to node.exe: bundled (frozen build), PATH, then standard Windows install dirs.
+    Cursor/IDE shells often omit Node from PATH even when Node.js is installed.
+    """
+    frozen = _is_frozen()
+    if frozen:
+        bundled = os.path.join(script_dir, "node_runtime", "node.exe")
+        if os.path.isfile(bundled):
+            return bundled
+    found = shutil.which("node")
+    if found:
+        return found
+    if sys.platform == "win32":
+        pf = os.environ.get("ProgramFiles", r"C:\Program Files")
+        pfx86 = os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")
+        local = os.environ.get("LOCALAPPDATA", "")
+        for candidate in (
+            os.path.join(pf, "nodejs", "node.exe"),
+            os.path.join(pfx86, "nodejs", "node.exe"),
+            os.path.join(local, "Programs", "nodejs", "node.exe") if local else "",
+        ):
+            if candidate and os.path.isfile(candidate):
+                return candidate
+    return "node"
 
 
 def _print_log_tail(log_path, max_lines=35):
@@ -72,6 +126,46 @@ def _print_log_tail(log_path, max_lines=35):
         print(f"[!] Could not read log: {e}")
 
 
+def _wait_for_node_server(proc, log_path, service_name, port, max_attempts=20, health_url=None):
+    """
+    Wait until a Node child listens on port (optional HTTP health_url), or it exits.
+    Returns True if ready, False if process died, None if still running but not verified in time.
+    """
+    import socket
+    import urllib.request
+    for attempt in range(max_attempts):
+        time.sleep(1)
+        if proc.poll() is not None:
+            # stop_servers() sets servers_running False and kills children — not a startup failure
+            if not servers_running:
+                return None
+            print(f"[!] {service_name} failed to start (process exited).")
+            _print_log_tail(log_path)
+            print(f"[!] Full log: {log_path}")
+            return False
+        try:
+            if health_url:
+                urllib.request.urlopen(health_url, timeout=2)
+            else:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(1)
+                ok = sock.connect_ex(("localhost", port)) == 0
+                sock.close()
+                if not ok:
+                    raise OSError("port not accepting")
+            return True
+        except Exception:
+            if (attempt + 1) % 5 == 0:
+                print(f"[*] Waiting for {service_name} on port {port}... ({attempt + 1}s)")
+    if proc.poll() is None:
+        print(
+            f"[!] {service_name} is running but not verified on port {port} yet "
+            f"(see {log_path})."
+        )
+        return None
+    return False
+
+
 def start_servers():
     """Start all backend servers in separate processes"""
     global backend_process, chat_process, django_process, whatsapp_node_process, telegram_node_process, slack_node_process, servers_running
@@ -85,9 +179,11 @@ def start_servers():
     frozen = _is_frozen()
     backend_exe = os.path.join(script_dir, "backend.exe") if frozen else None
     chat_exe = os.path.join(script_dir, "chat.exe") if frozen else None
-    _node_path = os.path.join(script_dir, "node_runtime", "node.exe")
-    node_exe = _node_path if (frozen and os.path.isfile(_node_path)) else "node"
-    
+    node_exe = _resolve_node_executable(script_dir)
+    if node_exe != "node" and os.path.isfile(node_exe):
+        print(f"[*] Using Node.js: {node_exe}")
+
+    server_startup_done_event.clear()
     servers_running = True
     log_dir = os.path.join(script_dir, 'logs')
     print("[*] Starting all backend servers...")
@@ -381,19 +477,20 @@ def start_servers():
                         whatsapp_log = open(os.path.join(log_dir, 'whatsapp_server.log'), 'a', encoding='utf-8')
                     except Exception:
                         whatsapp_log = None
-                    whatsapp_node_process = subprocess.Popen(
+                    wa_proc = subprocess.Popen(
                         [node_exe, whatsapp_server_file],
                         stdout=(whatsapp_log if whatsapp_log else subprocess.DEVNULL),
                         stderr=(whatsapp_log if whatsapp_log else subprocess.DEVNULL),
                         cwd=script_dir,
                         creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
                     )
+                    whatsapp_node_process = wa_proc
                     # Wait for WhatsApp server to bind to port (Node + whatsapp-web.js require can be slow)
                     import socket
                     whatsapp_ready = False
                     for attempt in range(12):  # up to 12 seconds
                         time.sleep(1)
-                        if whatsapp_node_process.poll() is not None:
+                        if wa_proc.poll() is not None:
                             print("[!] WhatsApp Node.js server process exited!")
                             _print_log_tail(os.path.join(log_dir, 'whatsapp_server.log'))
                             print(f"[!] Full log: {os.path.join(log_dir, 'whatsapp_server.log')}")
@@ -412,7 +509,7 @@ def start_servers():
                             pass
                         if (attempt + 1) % 3 == 0:
                             print(f"[*] Waiting for WhatsApp server to listen on port 3000... ({attempt + 1}s)")
-                    if not whatsapp_ready and whatsapp_node_process is not None and whatsapp_node_process.poll() is None:
+                    if not whatsapp_ready and wa_proc.poll() is None:
                         print("[!] WhatsApp server process started but not listening on port 3000 yet (may still be loading). Check logs/whatsapp_server.log")
             except Exception as e:
                 print(f"[!] Error starting WhatsApp Node.js server: {e}")
@@ -425,43 +522,11 @@ def start_servers():
         telegram_server_file = os.path.join("backend", "node", "telegram_server.js")
         if os.path.exists(os.path.join(script_dir, telegram_server_file)):
             try:
-                # Check if port 3001 is already in use and kill the process
-                print("[*] Checking if port 3001 is available...")
-                import socket
-                # Check if port is in use first
-                port_in_use = False
-                try:
-                    test_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                    test_sock.settimeout(0.5)
-                    result = test_sock.connect_ex(('localhost', 3001))
-                    test_sock.close()
-                    if result == 0:
-                        port_in_use = True
-                except:
-                    pass
-                
-                if port_in_use:
-                    print("[*] Port 3001 is in use, attempting to kill existing process...")
-                    if kill_process_by_port(3001):
-                        print("[*] Killed existing process on port 3001")
-                        time.sleep(2)  # Wait longer for port to be fully released
-                        # Verify port is now free
-                        for verify_attempt in range(5):
-                            try:
-                                test_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                                test_sock.settimeout(0.5)
-                                result = test_sock.connect_ex(('localhost', 3001))
-                                test_sock.close()
-                                if result != 0:
-                                    break  # Port is free
-                            except:
-                                pass
-                            if verify_attempt < 4:
-                                time.sleep(0.5)
-                    else:
-                        print("[!] Could not kill process on port 3001, but continuing anyway...")
-                        time.sleep(1)
-                
+                print("[*] Ensuring port 3001 is free for Telegram server...")
+                if kill_process_by_port(3001):
+                    print("[*] Freed port 3001 (previous Telegram or stray process)")
+                time.sleep(1)
+
                 # Check if Node.js is available (reuse check from WhatsApp or check again)
                 try:
                     if 'node_check' not in locals() or node_check is None or node_check.returncode != 0:
@@ -486,33 +551,29 @@ def start_servers():
                         telegram_log = open(os.path.join(log_dir, 'telegram_server.log'), 'a', encoding='utf-8')
                     except Exception:
                         telegram_log = None
-                    telegram_node_process = subprocess.Popen(
+                    tg_proc = subprocess.Popen(
                         [node_exe, telegram_server_file],
                         stdout=(telegram_log if telegram_log else subprocess.DEVNULL),
                         stderr=(telegram_log if telegram_log else subprocess.DEVNULL),
                         cwd=script_dir,
                         creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
                     )
-                    time.sleep(3)  # Wait for Telegram server to start
-                    if telegram_node_process.poll() is not None:
-                        print("[!] Telegram Node.js server failed to start!")
-                        _print_log_tail(os.path.join(log_dir, 'telegram_server.log'))
-                        print(f"[!] Full log: {os.path.join(log_dir, 'telegram_server.log')}")
+                    telegram_node_process = tg_proc
+                    tg_log_path = os.path.join(log_dir, "telegram_server.log")
+                    tg_ready = _wait_for_node_server(
+                        tg_proc,
+                        tg_log_path,
+                        "Telegram Node.js server",
+                        3001,
+                        max_attempts=25,
+                        health_url="http://localhost:3001/health",
+                    )
+                    if tg_ready is False:
                         telegram_node_process = None
-                    else:
-                        # Verify server is actually listening
-                        import socket
-                        try:
-                            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                            sock.settimeout(1)
-                            result = sock.connect_ex(('localhost', 3001))
-                            sock.close()
-                            if result == 0:
-                                print("[OK] Telegram Node.js server started on http://localhost:3001")
-                            else:
-                                print("[!] Telegram server process started but not listening on port 3001")
-                        except Exception as e:
-                            print(f"[!] Could not verify Telegram server: {e}")
+                    elif tg_ready is True:
+                        print("[OK] Telegram Node.js server started on http://localhost:3001")
+                    elif tg_ready is None and not servers_running:
+                        telegram_node_process = None
             except Exception as e:
                 print(f"[!] Error starting Telegram Node.js server: {e}")
                 telegram_node_process = None
@@ -524,21 +585,11 @@ def start_servers():
         slack_server_file = os.path.join("backend", "node", "slack_server.js")
         if os.path.exists(os.path.join(script_dir, slack_server_file)):
             try:
-                # Check if port 3002 is already in use and kill the process (only run netstat when needed)
-                print("[*] Checking if port 3002 is available...")
-                port_3002_in_use = False
-                try:
-                    import socket
-                    test_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                    test_sock.settimeout(0.5)
-                    port_3002_in_use = (test_sock.connect_ex(('localhost', 3002)) == 0)
-                    test_sock.close()
-                except Exception:
-                    pass
-                if port_3002_in_use and kill_process_by_port(3002):
-                    print("[*] Killed existing process on port 3002")
-                    time.sleep(1)  # Wait a moment for port to be released
-                
+                print("[*] Ensuring port 3002 is free for Slack server...")
+                if kill_process_by_port(3002):
+                    print("[*] Freed port 3002 (previous Slack or stray process)")
+                time.sleep(1)
+
                 # Check if Node.js is available (reuse check from WhatsApp/Telegram or check again)
                 try:
                     if 'node_check' not in locals() or node_check is None or node_check.returncode != 0:
@@ -563,33 +614,29 @@ def start_servers():
                         slack_log = open(os.path.join(log_dir, 'slack_server.log'), 'a', encoding='utf-8')
                     except Exception:
                         slack_log = None
-                    slack_node_process = subprocess.Popen(
+                    sl_proc = subprocess.Popen(
                         [node_exe, slack_server_file],
                         stdout=(slack_log if slack_log else subprocess.DEVNULL),
                         stderr=(slack_log if slack_log else subprocess.DEVNULL),
                         cwd=script_dir,
                         creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
                     )
-                    time.sleep(3)  # Wait for Slack server to start
-                    if slack_node_process.poll() is not None:
-                        print("[!] Slack Node.js server failed to start!")
-                        _print_log_tail(os.path.join(log_dir, 'slack_server.log'))
-                        print(f"[!] Full log: {os.path.join(log_dir, 'slack_server.log')}")
+                    slack_node_process = sl_proc
+                    sl_log_path = os.path.join(log_dir, "slack_server.log")
+                    sl_ready = _wait_for_node_server(
+                        sl_proc,
+                        sl_log_path,
+                        "Slack Node.js server",
+                        3002,
+                        max_attempts=25,
+                        health_url="http://localhost:3002/health",
+                    )
+                    if sl_ready is False:
                         slack_node_process = None
-                    else:
-                        # Verify server is actually listening
-                        import socket
-                        try:
-                            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                            sock.settimeout(1)
-                            result = sock.connect_ex(('localhost', 3002))
-                            sock.close()
-                            if result == 0:
-                                print("[OK] Slack Node.js server started on http://localhost:3002")
-                            else:
-                                print("[!] Slack server process started but not listening on port 3002")
-                        except Exception as e:
-                            print(f"[!] Could not verify Slack server: {e}")
+                    elif sl_ready is True:
+                        print("[OK] Slack Node.js server started on http://localhost:3002")
+                    elif sl_ready is None and not servers_running:
+                        slack_node_process = None
             except Exception as e:
                 print(f"[!] Error starting Slack Node.js server: {e}")
                 slack_node_process = None
@@ -615,7 +662,9 @@ def start_servers():
         import traceback
         traceback.print_exc()
         servers_running = False
-        stop_servers()
+        stop_servers(startup_cleanup=True)
+    finally:
+        server_startup_done_event.set()
 
 def kill_process_by_port(port):
     """Kill process using a specific port (Windows/Linux compatible)"""
@@ -719,14 +768,17 @@ def kill_process_by_port(port):
         print(f"[!] Error killing process on port {port} (fallback method): {e}")
     return killed_any
 
-def stop_servers():
-    """Stop all servers"""
+def stop_servers(startup_cleanup=False):
+    """Stop all servers. Use startup_cleanup=True when aborting after a failed start_servers()."""
     global backend_process, chat_process, django_process, whatsapp_node_process, telegram_node_process, slack_node_process, servers_running
     global backend_log, chat_log, django_log, whatsapp_log, telegram_log, slack_log
     
     if not servers_running:
         # Even if servers_running is False, try to kill processes by port
-        print("[*] Attempting to stop any remaining server processes...")
+        if startup_cleanup:
+            print("[*] Freeing server ports after startup error...")
+        else:
+            print("[*] Attempting to stop any remaining server processes...")
         kill_process_by_port(8000)  # Backend
         kill_process_by_port(5000)  # Chat
         kill_process_by_port(3000)  # WhatsApp Node.js
@@ -900,6 +952,159 @@ def open_browser(url):
     print(f"[!] Please manually open: {url}")
     return False
 
+
+def _chromium_app_user_data_dir():
+    """Isolated profile so --app runs as its own instance (avoids instant launcher exit + handoff)."""
+    base = _get_script_dir()
+    d = os.path.join(base, "data", "chromium_app_profile")
+    try:
+        os.makedirs(d, exist_ok=True)
+    except OSError:
+        pass
+    return d
+
+
+def _windows_chromium_exe_paths():
+    """Edge / Chrome locations for standalone app windows (not a normal browser tab)."""
+    pf = os.environ.get("ProgramFiles", r"C:\Program Files")
+    pfx86 = os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")
+    local = os.environ.get("LOCALAPPDATA", "")
+    # User-level Edge/Chrome installs first (common on locked-down or per-user setups)
+    paths = []
+    if local:
+        paths.extend(
+            [
+                os.path.join(local, "Microsoft", "Edge", "Application", "msedge.exe"),
+                os.path.join(local, "Google", "Chrome", "Application", "chrome.exe"),
+            ]
+        )
+    paths.extend(
+        [
+            os.path.join(pf, "Microsoft", "Edge", "Application", "msedge.exe"),
+            os.path.join(pfx86, "Microsoft", "Edge", "Application", "msedge.exe"),
+            os.path.join(pf, "Google", "Chrome", "Application", "chrome.exe"),
+            os.path.join(pfx86, "Google", "Chrome", "Application", "chrome.exe"),
+        ]
+    )
+    custom = os.environ.get("CHROMIUM_APP_EXE", "").strip()
+    if custom and os.path.isfile(custom):
+        paths.insert(0, custom)
+    seen = set()
+    out = []
+    for p in paths:
+        if p and p not in seen:
+            seen.add(p)
+            if os.path.isfile(p):
+                out.append(p)
+    return out
+
+
+def open_windows_chromium_app_window(url, width=1200, height=800, x=None, y=None):
+    """
+    Open Edge or Chrome in application mode (dedicated window, minimal chrome).
+    Used when pywebview is unavailable (e.g. Python 3.14: pythonnet does not build yet).
+    Returns subprocess.Popen on success, else None.
+    """
+    if sys.platform != "win32":
+        return None
+    profile = _chromium_app_user_data_dir()
+    # Dedicated user-data-dir keeps a persistent browser process for this app instead of
+    # a stub launcher that exits immediately (which used to shut down all servers).
+    common = [
+        f"--user-data-dir={profile}",
+        "--no-first-run",
+        "--no-default-browser-check",
+        f"--app={url}",
+        f"--window-size={int(width)},{int(height)}",
+    ]
+    if x is not None and y is not None:
+        common.append(f"--window-position={int(x)},{int(y)}")
+    for exe in _windows_chromium_exe_paths():
+        try:
+            return subprocess.Popen([exe] + common)
+        except OSError:
+            continue
+    return None
+
+
+def _wait_for_chromium_app_process(proc, label="application window"):
+    """
+    Edge/Chrome often start a short-lived launcher that exits while the real window stays open.
+    Wait until the monitored process exits *or* treat an immediate clean exit as a handoff and
+    keep servers running until Ctrl+C here.
+    """
+    print(f"[*] Close the {label} or press Ctrl+C here to stop all servers.")
+    saw_running = False
+    for _ in range(25):
+        if proc.poll() is None:
+            saw_running = True
+            break
+        time.sleep(0.2)
+    try:
+        if saw_running:
+            while proc.poll() is None:
+                time.sleep(0.5)
+            print(f"\n[*] {label} closed")
+        else:
+            code = proc.poll()
+            if code == 0:
+                print(
+                    "\n[*] Browser launcher exited; if the app window is still open, use it. "
+                    "Press Ctrl+C here when you want to stop the servers."
+                )
+            else:
+                print(f"\n[!] Browser exited early (code {code}). Press Ctrl+C to stop servers.")
+            while servers_running:
+                time.sleep(0.5)
+    except KeyboardInterrupt:
+        print(f"\n[*] Interrupt received...")
+        if saw_running and proc.poll() is None:
+            try:
+                proc.terminate()
+                proc.wait(timeout=5)
+            except Exception:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+    print("[*] Stopping all servers...")
+    stop_servers()
+    print("[*] All servers stopped. Goodbye!")
+
+
+def _windows_desktop_shell_unavailable(app_url):
+    """
+    No Edge/Chrome --app and no pywebview: keep servers up; do not open a normal browser tab
+    (this project is intended to run as a desktop app).
+    """
+    print("[!] Could not start a desktop application window (Edge/Chrome --app or pywebview).")
+    print("[!] Install or repair Microsoft Edge, or install Google Chrome.")
+    print("[!] Optional: set CHROMIUM_APP_EXE in .env to the full path of msedge.exe or chrome.exe.")
+    print("[!] For embedded WebView2 via Python, use Python 3.11 or 3.12 and: pip install pywebview")
+    print(f"[!] Servers are running at: {app_url}")
+    print("[*] Press Ctrl+C in this console to stop all servers.")
+    try:
+        while servers_running:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print("\n[*] Stopping all servers...")
+        stop_servers()
+        print("[*] All servers stopped. Goodbye!")
+
+
+def _try_windows_chromium_app_shell(app_url, window_width, window_height, x=None, y=None):
+    """Launch Edge/Chrome in app mode; block until closed. Returns True if launched."""
+    proc = open_windows_chromium_app_window(app_url, window_width, window_height, x, y)
+    if not proc:
+        return False
+    print(
+        "[*] Desktop app window: Edge or Chrome (application mode). "
+        "Tip: DESKTOP_SHELL=webview uses pywebview first when installed."
+    )
+    _wait_for_chromium_app_process(proc, "application window")
+    return True
+
+
 def signal_handler(signum, frame):
     """Handle interrupt signals (Ctrl+C)"""
     print("\n[*] Interrupt signal received...")
@@ -913,8 +1118,20 @@ def main():
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
     
-    # Register atexit handler to ensure cleanup
-    atexit.register(stop_servers)
+    # Register atexit only if servers are still running (avoids duplicate cleanup after normal UI exit).
+    def _atexit_stop_if_needed():
+        if (
+            servers_running
+            or backend_process is not None
+            or chat_process is not None
+            or django_process is not None
+            or whatsapp_node_process is not None
+            or telegram_node_process is not None
+            or slack_node_process is not None
+        ):
+            stop_servers()
+
+    atexit.register(_atexit_stop_if_needed)
     
     # Start all servers in a separate thread
     print("=" * 60)
@@ -926,9 +1143,10 @@ def main():
         server_thread = threading.Thread(target=start_servers, daemon=True)
         server_thread.start()
         
-        # Wait for servers to be ready
-        print("[*] Waiting for servers to initialize...")
-        time.sleep(10)  # Wait for all servers to start (increased wait time)
+        # Wait until start_servers() finishes (backend + Node children + health checks)
+        print("[*] Waiting for background server startup to complete...")
+        if not server_startup_done_event.wait(timeout=180):
+            print("[!] Startup phase exceeded 180s; continuing with health checks...")
         
         # Check if servers started successfully
         if not servers_running:
@@ -1045,49 +1263,40 @@ def main():
                 stop_servers()
                 print("[*] All servers stopped. Goodbye!")
         else:
-            # Desktop mode: Run as Windows app using webview
+            # Desktop mode: dedicated app window only (Edge/Chrome --app and/or pywebview), not a normal browser tab.
             print("=" * 60)
-            print(f"[*] Starting application as Windows app...")
+            print("[*] Starting as desktop application (app window, not a browser tab)...")
             print(f"[*] Application URL: {app_url}")
-            print("[*] The application window should open now...")
             print("[*] You will see the login page first.")
-            print("[*] Close the window or press Ctrl+C to stop all servers and exit")
+            print("[*] Close the app window or press Ctrl+C here to stop all servers.")
             print("=" * 60)
-            
+
+            window_width, window_height, x, y = 1200, 800, None, None
             try:
+                import tkinter as tk
+                root = tk.Tk()
+                screen_width = root.winfo_screenwidth()
+                screen_height = root.winfo_screenheight()
+                root.destroy()
+                default_width = 1200
+                default_height = 800
+                window_width = min(default_width, int(screen_width * 0.7))
+                window_height = min(default_height, int(screen_height * 0.7))
+                window_width = max(800, window_width)
+                window_height = max(600, window_height)
+                x = (screen_width - window_width) // 2
+                y = (screen_height - window_height) // 2
+            except Exception:
+                pass
+
+            shell_pref = os.environ.get("DESKTOP_SHELL", "").strip().lower()
+            prefer_webview_first = shell_pref == "webview"
+
+            def _run_pywebview():
                 import webview
-                
-                # Get screen dimensions for responsive window sizing
-                try:
-                    import tkinter as tk
-                    root = tk.Tk()
-                    screen_width = root.winfo_screenwidth()
-                    screen_height = root.winfo_screenheight()
-                    root.destroy()
-                    
-                    # Use a reasonable default size (70% of screen or fixed size, whichever is smaller)
-                    default_width = 1200
-                    default_height = 800
-                    window_width = min(default_width, int(screen_width * 0.7))
-                    window_height = min(default_height, int(screen_height * 0.7))
-                    
-                    # Ensure minimum size
-                    window_width = max(800, window_width)
-                    window_height = max(600, window_height)
-                    
-                    # Center the window
-                    x = (screen_width - window_width) // 2
-                    y = (screen_height - window_height) // 2
-                except Exception:
-                    # Fallback to default dimensions if tkinter is not available
-                    window_width = 1200
-                    window_height = 800
-                    x = None
-                    y = None
-                
-                # Create the window - open the URL
-                window = webview.create_window(
-                    'GPT Intermediary',
+
+                webview.create_window(
+                    "GPT Intermediary",
                     app_url,
                     width=window_width,
                     height=window_height,
@@ -1095,59 +1304,80 @@ def main():
                     y=y,
                     resizable=True,
                     min_size=(800, 600),
-                    fullscreen=False
+                    fullscreen=False,
                 )
-                
-                # Start the webview (this blocks until window is closed)
                 webview.start(debug=False)
                 print("\n[*] Application window closed")
                 print("[*] Stopping all servers...")
-                # Stop servers when window is closed
                 stop_servers()
                 print("[*] All servers stopped. Goodbye!")
-            
-            except ImportError:
-                print("[!] pywebview not installed. Falling back to browser...")
-                print("[!] Install with: pip install pywebview")
-                print("[*] Opening in default browser instead...")
-                browser_opened = open_browser(app_url)
-                
-                if browser_opened:
-                    print("[*] Browser opened successfully!")
+
+            if sys.platform == "win32":
+                if prefer_webview_first:
+                    try:
+                        _run_pywebview()
+                    except ImportError:
+                        if not _try_windows_chromium_app_shell(
+                            app_url, window_width, window_height, x, y
+                        ):
+                            _windows_desktop_shell_unavailable(app_url)
+                    except Exception as e:
+                        print(f"[!] pywebview failed: {e}")
+                        print("[*] Trying Edge/Chrome application window...")
+                        if not _try_windows_chromium_app_shell(
+                            app_url, window_width, window_height, x, y
+                        ):
+                            _windows_desktop_shell_unavailable(app_url)
                 else:
-                    print(f"[!] Could not open browser automatically.")
-                    print(f"[!] Please manually open: {app_url}")
-                
-                # Keep servers running until Ctrl+C
-                print("[*] Servers are running. Press Ctrl+C to stop all servers and exit")
+                    if _try_windows_chromium_app_shell(
+                        app_url, window_width, window_height, x, y
+                    ):
+                        pass
+                    else:
+                        try:
+                            _run_pywebview()
+                        except ImportError:
+                            _windows_desktop_shell_unavailable(app_url)
+                        except Exception as e:
+                            print(f"[!] pywebview failed: {e}")
+                            _windows_desktop_shell_unavailable(app_url)
+            else:
                 try:
-                    while servers_running:
-                        time.sleep(1)
-                except KeyboardInterrupt:
-                    print("\n[*] Stopping all servers...")
-                    stop_servers()
-                    print("[*] All servers stopped. Goodbye!")
-            
-            except Exception as e:
-                print(f"[!] Error creating webview window: {e}")
-                print("[*] Falling back to browser...")
-                browser_opened = open_browser(app_url)
-                
-                if browser_opened:
-                    print("[*] Browser opened successfully!")
-                else:
-                    print(f"[!] Could not open browser automatically.")
-                    print(f"[!] Please manually open: {app_url}")
-                
-                # Keep servers running until Ctrl+C
-                print("[*] Servers are running. Press Ctrl+C to stop all servers and exit")
-                try:
-                    while servers_running:
-                        time.sleep(1)
-                except KeyboardInterrupt:
-                    print("\n[*] Stopping all servers...")
-                    stop_servers()
-                    print("[*] All servers stopped. Goodbye!")
+                    _run_pywebview()
+                except ImportError:
+                    print("[!] Install with: pip install pywebview")
+                    print("[*] Opening in default browser (non-Windows)...")
+                    browser_opened = open_browser(app_url)
+                    if browser_opened:
+                        print("[*] Browser opened successfully!")
+                    else:
+                        print(f"[!] Could not open browser automatically.")
+                        print(f"[!] Please manually open: {app_url}")
+                    print("[*] Servers are running. Press Ctrl+C to stop all servers and exit")
+                    try:
+                        while servers_running:
+                            time.sleep(1)
+                    except KeyboardInterrupt:
+                        print("\n[*] Stopping all servers...")
+                        stop_servers()
+                        print("[*] All servers stopped. Goodbye!")
+                except Exception as e:
+                    print(f"[!] Error creating webview window: {e}")
+                    print("[*] Falling back to browser...")
+                    browser_opened = open_browser(app_url)
+                    if browser_opened:
+                        print("[*] Browser opened successfully!")
+                    else:
+                        print(f"[!] Could not open browser automatically.")
+                        print(f"[!] Please manually open: {app_url}")
+                    print("[*] Servers are running. Press Ctrl+C to stop all servers and exit")
+                    try:
+                        while servers_running:
+                            time.sleep(1)
+                    except KeyboardInterrupt:
+                        print("\n[*] Stopping all servers...")
+                        stop_servers()
+                        print("[*] All servers stopped. Goodbye!")
         
     except KeyboardInterrupt:
         print("\n[*] Keyboard interrupt received")
@@ -1156,8 +1386,18 @@ def main():
         import traceback
         traceback.print_exc()
     finally:
-        print("\n[*] Shutting down...")
-        stop_servers()
+        # Avoid a second full shutdown (and duplicate port-kill messages) after a normal UI exit.
+        if (
+            servers_running
+            or backend_process is not None
+            or chat_process is not None
+            or django_process is not None
+            or whatsapp_node_process is not None
+            or telegram_node_process is not None
+            or slack_node_process is not None
+        ):
+            print("\n[*] Shutting down...")
+            stop_servers()
         print("[*] Goodbye!")
 
 if __name__ == "__main__":

@@ -839,8 +839,11 @@ async def login_user(request: LoginRequest, db: Session = Depends(get_db)):
             logger.error(f"Database connection error during login: {db_error}")
             if 'password authentication failed' in error_str or 'connection' in error_str or 'operationalerror' in error_str:
                 raise HTTPException(
-                    status_code=503, 
-                    detail="Database connection failed. Please check your DATABASE_URL in .env file and ensure PostgreSQL is running."
+                    status_code=503,
+                    detail=(
+                        "Database connection failed. If you use PostgreSQL, ensure it is running and DATABASE_URL is correct. "
+                        "Otherwise clear DATABASE_URL or set DATABASE_USE_SQLITE=1 in .env to use the built-in SQLite file under data/, then restart."
+                    ),
                 )
             else:
                 raise HTTPException(

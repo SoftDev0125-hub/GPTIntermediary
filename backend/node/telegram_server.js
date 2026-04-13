@@ -497,12 +497,9 @@ function initializeTelegram() {
     })();
 }
 
-// Initialize Telegram on server start (if API credentials are available)
-if (API_ID && API_HASH) {
-    initializeTelegram();
-} else {
-    console.warn('[Telegram] API credentials not found. Set TELEGRAM_API_ID and TELEGRAM_API_HASH environment variables.');
-}
+// GramJS must start only after HTTP listens (same idea as slack_server.js).
+// Otherwise client.connect() can run while routes are still registering or before bind,
+// and uncaught errors can exit the process before localhost:3001 accepts connections.
 
 /**
  * GET /api/telegram/status
@@ -1660,14 +1657,23 @@ io.on('connection', (socket) => {
 });
 
 // Start server - listen on all interfaces (0.0.0.0) for VPS compatibility
+server.on('error', (err) => {
+    console.error('[Telegram Server] HTTP server error:', err && err.message ? err.message : err);
+});
+
 server.listen(PORT, '0.0.0.0', () => {
-    loadTelegramDeps();
+    try {
+        loadTelegramDeps();
+    } catch (e) {
+        console.error('[Telegram Server] Failed to load GramJS:', e && e.stack ? e.stack : e);
+    }
     console.log(`[Telegram Server] Server running on http://0.0.0.0:${PORT}`);
     console.log(`[Telegram Server] WebSocket server ready`);
     if (API_ID && API_HASH) {
         console.log(`[Telegram Server] API credentials found - initializing client...`);
+        setImmediate(() => initializeTelegram());
     } else {
-        console.log(`[Telegram Server] API credentials not found - set TELEGRAM_API_ID and TELEGRAM_API_HASH`);
+        console.warn('[Telegram] API credentials not found. Set TELEGRAM_API_ID and TELEGRAM_API_HASH in .env');
     }
 });
 

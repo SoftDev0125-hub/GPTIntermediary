@@ -4292,6 +4292,8 @@
         let whatsappQrRefreshInterval = null;
         let whatsappIsAuthenticated = false;
         let whatsappIsReady = false;
+        /** Last JSON from GET /api/whatsapp/status (for Refresh follow-up: force new QR when session is stuck restoring). */
+        let lastWhatsAppStatusResponse = null;
         let whatsappHasLoadedChats = false;
         let whatsappIsLoadingChats = false;
         let whatsappContactsRetryTimer = null;
@@ -4302,7 +4304,7 @@
         const WHATSAPP_CONTACTS_AUTO_RETRY_DELAY_MS = 15000;
         let whatsappMessagesRetryTimer = null;
         let whatsappMessagesRetryCount = 0;
-        const WHATSAPP_MESSAGES_AUTO_RETRY_MAX = 4;
+        const WHATSAPP_MESSAGES_AUTO_RETRY_MAX = 6;
         const WHATSAPP_MESSAGES_AUTO_RETRY_DELAY_MS = 12000;
         const WHATSAPP_FIRST_LOAD_DELAY_MS = 3000;  // Start loading chats soon after ready (was 15s)
         let whatsappJustScannedQR = false; // Track if QR was just scanned (vs. existing session on launch)
@@ -4328,7 +4330,7 @@
         function whatsappServerWarningSuggestsRetry(warning) {
             if (warning == null || warning === '') return false;
             const s = String(warning).toLowerCase();
-            return /still|loading|initializ|prepare|wait|try again|moment|sync|reconnect|not ready|please|unavailable|temporary|could not|chat is|initialis|connecting|not connected|session|restore|timeout/i.test(s);
+            return /still|loading|initializ|prepare|wait|try again|moment|sync|reconnect|not ready|please|unavailable|temporary|could not|read yet|chat is|initialis|connecting|not connected|session|restore|timeout|whatsapp web format/i.test(s);
         }
 
         /** After Refresh reloads the sidebar, reopen the same chat so messages refetch (Refresh used to skip this). */
@@ -4400,11 +4402,13 @@
         /**
          * @param {Object} options
          * @param {boolean} [options.showQRIfNoSession=true] - If false, do not display QR when no session (e.g. on tab switch; QR only after user clicks Refresh).
+         * @param {boolean} [options.forceStatusFetch=false] - If true, always GET /status (skip in-memory ready cache). Use on Refresh so a restarted Node process or lost session cannot leave stale flags that block the QR flow.
          */
         async function checkWhatsAppStatus(options = {}) {
             const showQRIfNoSession = options.showQRIfNoSession !== false;
+            const forceStatusFetch = options.forceStatusFetch === true;
             // Return true only when WhatsApp is fully ready (contacts/messages endpoints work)
-            if (whatsappIsAuthenticated && whatsappIsReady) {
+            if (!forceStatusFetch && whatsappIsAuthenticated && whatsappIsReady) {
                 if (!currentWhatsAppMyContactId) {
                     intFetch(`${WHATSAPP_API_URL}/api/whatsapp/status`).then(r => r.json()).then(data => {
                         if (data.success && data.is_ready && data.my_contact_id) {
@@ -4474,7 +4478,13 @@
                 }
 
                 const data = await response.json();
+                lastWhatsAppStatusResponse = data;
                 console.log('[*] WhatsApp status response:', data);
+
+                if (forceStatusFetch && data.success) {
+                    whatsappIsAuthenticated = !!data.is_authenticated;
+                    whatsappIsReady = !!data.is_ready;
+                }
 
                 // Fully ready: authenticated + client ready (contacts/messages endpoints work)
                 if (data.success && data.is_ready) {
@@ -4640,7 +4650,7 @@
                 if (!data.has_session) {
                     if (showQRIfNoSession) {
                         console.log('[*] WhatsApp is not authenticated and no session exists - showing QR code (Refresh clicked)');
-                        whatsappJustScannedQR = true;
+                        whatsappJustScannedQR = false;
                         if (whatsappQrContainer) whatsappQrContainer.style.display = 'flex';
                         if (whatsappEmptyState) whatsappEmptyState.style.display = 'none';
                         // Only hide image wrapper when we don't already have a QR (avoids broken image on first load).
@@ -4707,9 +4717,18 @@
                 return false;
             } catch (error) {
                 console.error('[!] Error checking WhatsApp status:', error);
+                lastWhatsAppStatusResponse = null;
+                if (forceStatusFetch) {
+                    whatsappIsAuthenticated = false;
+                    whatsappIsReady = false;
+                }
                 if (whatsappQrStatus) {
                     whatsappQrStatus.textContent = `Error: ${error.message}`;
                     whatsappQrStatus.style.color = '#ff4444';
+                }
+                if (showQRIfNoSession && whatsappQrContainer) {
+                    whatsappQrContainer.style.display = 'flex';
+                    if (whatsappEmptyState) whatsappEmptyState.style.display = 'none';
                 }
                 return false;
             }
@@ -4880,6 +4899,10 @@
                     whatsappQrStatus.textContent = `Error: ${error.message}`;
                     whatsappQrStatus.style.color = '#ff4444';
                 }
+                if (whatsappQrContainer) {
+                    whatsappQrContainer.style.display = 'flex';
+                    if (whatsappEmptyState) whatsappEmptyState.style.display = 'none';
+                }
             }
         }
 
@@ -4899,7 +4922,7 @@
             whatsappMessagesByChat = {};
 
             try {
-                const isAuth = await checkWhatsAppStatus();
+                const isAuth = await checkWhatsAppStatus({ forceStatusFetch: true });
                 if (!isAuth) {
                     whatsappShowButton.disabled = false;
                     whatsappShowButton.textContent = 'Refresh';
@@ -5152,64 +5175,123 @@
                 chatItem.appendChild(info);
                 chatItem.addEventListener('click', () => selectWhatsAppContact(contact.contact_id, contact.name));
                 whatsappChatsList.appendChild(chatItem);
+                observeWhatsAppAvatarChatItem(chatItem);
             });
         }
 
         let whatsappAvatarLoadTimer = null;
         let whatsappAvatarChunkTimer = null;
+        let whatsappAvatarListObserver = null;
         let whatsappContactsScrollLoadMoreAttached = false;
-        /** Stagger avatar HTTP requests so we do not flood Node/whatsapp-web.js (was blocking message loads). */
+
+        function teardownWhatsAppAvatarListObserver() {
+            if (whatsappAvatarListObserver) {
+                try {
+                    whatsappAvatarListObserver.disconnect();
+                } catch (e) { /* ignore */ }
+                whatsappAvatarListObserver = null;
+            }
+        }
+
+        function applyWhatsAppAvatarRow(item, img) {
+            if (!img || !img.dataset.avatarUrl) return;
+            const url = img.dataset.avatarUrl;
+            delete img.dataset.avatarUrl;
+            img.onerror = function () {
+                img.src = WHATSAPP_DEFAULT_AVATAR_SVG;
+                img.onerror = null;
+            };
+            img.src = url;
+            const contactId = item && (item.dataset.contactId || item.getAttribute('data-contact-id'));
+            if (contactId && allWhatsAppContacts && allWhatsAppContacts.length) {
+                const c = allWhatsAppContacts.find(x => String(x && x.contact_id) === String(contactId));
+                if (c) c.avatar_url = url;
+            }
+        }
+
+        function observeWhatsAppAvatarChatItem(chatItem) {
+            if (!chatItem || !whatsappAvatarListObserver) return;
+            try {
+                whatsappAvatarListObserver.observe(chatItem);
+            } catch (e) { /* ignore */ }
+        }
+
+        /** Prefer IntersectionObserver so visible rows load avatars immediately; legacy stagger if IO unavailable. */
+        function scheduleWhatsAppAvatarLoadLegacy() {
+            if (!whatsappChatsList) return;
+            const pending = [];
+            const items = whatsappChatsList.querySelectorAll('.whatsapp-chat-item');
+            for (const item of items) {
+                const img = item.querySelector('.whatsapp-chat-avatar img.whatsapp-avatar-img[data-avatar-url]');
+                if (!img || !img.dataset.avatarUrl) continue;
+                pending.push({ item, img });
+            }
+            const PRIORITY = 24;
+            const CHUNK = 12;
+            const GAP_MS = 120;
+            for (let p = 0; p < Math.min(PRIORITY, pending.length); p++) {
+                applyWhatsAppAvatarRow(pending[p].item, pending[p].img);
+            }
+            let idx = PRIORITY;
+            function runChunk() {
+                const slice = pending.slice(idx, idx + CHUNK);
+                idx += CHUNK;
+                for (const row of slice) {
+                    applyWhatsAppAvatarRow(row.item, row.img);
+                }
+                if (idx < pending.length) {
+                    whatsappAvatarChunkTimer = setTimeout(runChunk, GAP_MS);
+                } else {
+                    whatsappAvatarChunkTimer = null;
+                }
+            }
+            if (idx < pending.length) {
+                runChunk();
+            }
+        }
+
+        function setupWhatsAppAvatarListObserver() {
+            if (!whatsappChatsList) return;
+            teardownWhatsAppAvatarListObserver();
+            if (typeof IntersectionObserver === 'undefined') {
+                scheduleWhatsAppAvatarLoadLegacy();
+                return;
+            }
+            whatsappAvatarListObserver = new IntersectionObserver(
+                (entries) => {
+                    for (const ent of entries) {
+                        if (!ent.isIntersecting) continue;
+                        const item = ent.target;
+                        if (!item || !item.classList || !item.classList.contains('whatsapp-chat-item')) continue;
+                        const img = item.querySelector('img.whatsapp-avatar-img[data-avatar-url]');
+                        if (!img || !img.dataset.avatarUrl) continue;
+                        try {
+                            whatsappAvatarListObserver.unobserve(item);
+                        } catch (e) { /* ignore */ }
+                        applyWhatsAppAvatarRow(item, img);
+                    }
+                },
+                { root: whatsappChatsList, rootMargin: '140px 0px 200px 0px', threshold: 0.01 }
+            );
+            whatsappChatsList.querySelectorAll('.whatsapp-chat-item').forEach((el) => {
+                try {
+                    whatsappAvatarListObserver.observe(el);
+                } catch (e) { /* ignore */ }
+            });
+        }
+
         function scheduleWhatsAppAvatarLoad() {
             if (!whatsappChatsList) return;
             if (whatsappAvatarLoadTimer) clearTimeout(whatsappAvatarLoadTimer);
             if (whatsappAvatarChunkTimer) {
-                clearInterval(whatsappAvatarChunkTimer);
+                clearTimeout(whatsappAvatarChunkTimer);
                 whatsappAvatarChunkTimer = null;
             }
+            teardownWhatsAppAvatarListObserver();
             whatsappAvatarLoadTimer = setTimeout(() => {
                 whatsappAvatarLoadTimer = null;
-                const pending = [];
-                const items = whatsappChatsList.querySelectorAll('.whatsapp-chat-item');
-                for (const item of items) {
-                    const img = item.querySelector('.whatsapp-chat-avatar img.whatsapp-avatar-img[data-avatar-url]');
-                    if (!img || !img.dataset.avatarUrl) continue;
-                    pending.push({ item, img, url: img.dataset.avatarUrl });
-                }
-                const PRIORITY = 16;
-                const CHUNK = 10;
-                const GAP_MS = 220;
-                function applyAvatarRow({ item, img, url }) {
-                    if (!url) return;
-                    delete img.dataset.avatarUrl;
-                    img.onerror = function () {
-                        img.src = WHATSAPP_DEFAULT_AVATAR_SVG;
-                        img.onerror = null;
-                    };
-                    img.src = url;
-                    const contactId = item.dataset.contactId || item.getAttribute('data-contact-id');
-                    const c = allWhatsAppContacts.find(x => String(x && x.contact_id) === String(contactId));
-                    if (c) c.avatar_url = url;
-                }
-                for (let p = 0; p < Math.min(PRIORITY, pending.length); p++) {
-                    applyAvatarRow(pending[p]);
-                }
-                let idx = PRIORITY;
-                function runChunk() {
-                    const slice = pending.slice(idx, idx + CHUNK);
-                    idx += CHUNK;
-                    for (const row of slice) {
-                        applyAvatarRow(row);
-                    }
-                    if (idx < pending.length) {
-                        whatsappAvatarChunkTimer = setTimeout(runChunk, GAP_MS);
-                    } else {
-                        whatsappAvatarChunkTimer = null;
-                    }
-                }
-                if (idx < pending.length) {
-                    runChunk();
-                }
-            }, 400);
+                setupWhatsAppAvatarListObserver();
+            }, 80);
         }
 
         function setupWhatsAppContactsScrollLoadMore() {
@@ -5906,6 +5988,57 @@
         }
 
         /**
+         * Load /api/whatsapp/messages: prefer Socket.IO to Node (one less hop vs chat-server HTTP proxy).
+         * Falls back to same-origin HTTP if the socket is down or the ack fails.
+         */
+        async function fetchWhatsAppMessagesApiHttp(body) {
+            const response = await intFetch(`${WHATSAPP_API_URL}/api/whatsapp/messages`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+                signal: AbortSignal.timeout(WHATSAPP_MESSAGES_TIMEOUT_MS)
+            });
+            if (!response.ok) {
+                const errBody = await response.json().catch(() => ({}));
+                const msg = errBody.error || response.statusText;
+                const err = new Error(msg || `HTTP ${response.status}`);
+                err._httpStatus = response.status;
+                throw err;
+            }
+            return await response.json();
+        }
+
+        async function fetchWhatsAppMessagesApi(body) {
+            const payload = body && typeof body === 'object' ? body : {};
+            if (whatsappSocket && whatsappSocket.connected) {
+                try {
+                    const data = await new Promise((resolve, reject) => {
+                        const timer = setTimeout(
+                            () => reject(new Error('WhatsApp WebSocket message request timed out')),
+                            WHATSAPP_MESSAGES_TIMEOUT_MS
+                        );
+                        whatsappSocket.emit('whatsapp_get_messages', payload, (result) => {
+                            clearTimeout(timer);
+                            if (result == null) {
+                                reject(new Error('Empty response from WhatsApp server'));
+                                return;
+                            }
+                            if (result.success === false && result.error) {
+                                reject(new Error(String(result.error)));
+                                return;
+                            }
+                            resolve(result);
+                        });
+                    });
+                    return data;
+                } catch (e) {
+                    console.warn('[*] WhatsApp messages via WebSocket failed, using HTTP:', e && e.message);
+                }
+            }
+            return await fetchWhatsAppMessagesApiHttp(payload);
+        }
+
+        /**
          * Load messages for a specific WhatsApp contact
          */
         async function loadWhatsAppContactMessages(contactId, contactName) {
@@ -5921,30 +6054,36 @@
             }
             try {
                 console.log(`[*] Loading messages for contact: ${contactName} (${contactId})`);
-                
-                const response = await intFetch(`${WHATSAPP_API_URL}/api/whatsapp/messages`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ contact_id: contactId, limit: WHATSAPP_MESSAGES_PAGE_SIZE }),
-                    signal: AbortSignal.timeout(WHATSAPP_MESSAGES_TIMEOUT_MS)
-                });
 
-                if (!response.ok) {
-                    const errBody = await response.json().catch(() => ({}));
-                    const msg = errBody.error || response.statusText;
-                    if (response.status === 400 && (msg.includes('authenticate') || msg.includes('connected'))) {
+                let data;
+                try {
+                    data = await fetchWhatsAppMessagesApi({ contact_id: contactId, limit: WHATSAPP_MESSAGES_PAGE_SIZE });
+                } catch (fetchErr) {
+                    const msg = fetchErr && fetchErr.message ? String(fetchErr.message) : '';
+                    if (fetchErr && fetchErr._httpStatus === 400 && (msg.includes('authenticate') || msg.includes('connected'))) {
                         throw new Error('WhatsApp is still connecting. Wait a moment and try again.');
                     }
-                    throw new Error(msg || `HTTP ${response.status}`);
+                    throw fetchErr;
                 }
-
-                const data = await response.json();
                 console.log('[*] WhatsApp messages response:', data);
 
                 if (data.success && data.messages && data.messages.length > 0) {
                     whatsappMessagesRetryCount = 0;
+                    if (data.contact_id && String(data.contact_id) !== String(contactId)) {
+                        const resolved = String(data.contact_id);
+                        const oldKey = String(contactId);
+                        if (oldKey !== resolved && whatsappMessagePaging[oldKey] && !whatsappMessagePaging[resolved]) {
+                            whatsappMessagePaging[resolved] = whatsappMessagePaging[oldKey];
+                            delete whatsappMessagePaging[oldKey];
+                        }
+                        currentWhatsAppChatId = resolved;
+                        document.querySelectorAll('.whatsapp-chat-item').forEach((item) => {
+                            item.classList.toggle('active', String(item.dataset.contactId || '') === resolved);
+                        });
+                    }
                     currentChatMessages = data.messages;
-                    const paging = whatsappMessagePaging[contactId] || (whatsappMessagePaging[contactId] = { loadingOlder: false, reachedStart: false, oldestId: null, oldestTimestamp: null });
+                    const pagingKey = data.contact_id ? String(data.contact_id) : String(contactId);
+                    const paging = whatsappMessagePaging[pagingKey] || (whatsappMessagePaging[pagingKey] = { loadingOlder: false, reachedStart: false, oldestId: null, oldestTimestamp: null });
                     paging.oldestId = data.oldest_id || (currentChatMessages[0] ? currentChatMessages[0].id : null);
                     paging.oldestTimestamp = data.oldest_timestamp != null ? data.oldest_timestamp : (currentChatMessages[0] ? currentChatMessages[0].timestamp : null);
                     paging.reachedStart = !!data.reached_start;
@@ -5957,6 +6096,13 @@
                     throw new Error(String(data.warning || 'WhatsApp is still preparing this chat. Try again.'));
                 } else if (data.success) {
                     whatsappMessagesRetryCount = 0;
+                    if (data.contact_id && String(data.contact_id) !== String(contactId)) {
+                        const resolved = String(data.contact_id);
+                        currentWhatsAppChatId = resolved;
+                        document.querySelectorAll('.whatsapp-chat-item').forEach((item) => {
+                            item.classList.toggle('active', String(item.dataset.contactId || '') === resolved);
+                        });
+                    }
                     currentChatMessages = data.messages || [];
                     if (whatsappStatus) whatsappStatus.textContent = '0 messages';
                     if (whatsappCount) whatsappCount.textContent = '0 messages';
@@ -6163,19 +6309,17 @@
             const prevScrollHeight = container ? container.scrollHeight : 0;
             const prevScrollTop = container ? container.scrollTop : 0;
             try {
-                const response = await intFetch(`${WHATSAPP_API_URL}/api/whatsapp/messages`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
+                let data;
+                try {
+                    data = await fetchWhatsAppMessagesApi({
                         contact_id: contactId,
                         limit: WHATSAPP_MESSAGES_PAGE_SIZE,
                         before_id: paging.oldestId,
                         before_timestamp: paging.oldestTimestamp
-                    }),
-                    signal: AbortSignal.timeout(WHATSAPP_MESSAGES_TIMEOUT_MS)
-                });
-                if (!response.ok) return;
-                const data = await response.json();
+                    });
+                } catch (e) {
+                    return;
+                }
                 if (!data.success || !Array.isArray(data.messages)) return;
                 const older = data.messages;
                 if (older.length === 0) {
@@ -6345,9 +6489,39 @@
         if (whatsappShowButton) {
             whatsappShowButton.addEventListener('click', async () => {
                 whatsappContactsRetryCount = 0;
-                const isAuth = await checkWhatsAppStatus();
+                try {
+                    await intFetch(`${WHATSAPP_API_URL}/api/whatsapp/initialize`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' }
+                    });
+                } catch (e) {
+                    console.warn('[*] WhatsApp initialize on Refresh:', e);
+                }
+                const isAuth = await checkWhatsAppStatus({ forceStatusFetch: true, showQRIfNoSession: true });
                 if (isAuth) {
                     await loadWhatsAppMessages();
+                } else {
+                    const d = lastWhatsAppStatusResponse;
+                    const finishingAfterScan = d && d.success && d.is_authenticated && !d.is_ready;
+                    if (finishingAfterScan) {
+                        return;
+                    }
+                    const stuckRestoring =
+                        d &&
+                        d.success &&
+                        d.has_session &&
+                        !d.is_connected &&
+                        !d.is_authenticated &&
+                        !d.is_ready;
+                    if (stuckRestoring) {
+                        await loadWhatsAppQRCode(true);
+                        return;
+                    }
+                    const hasDataQr =
+                        whatsappQrImage && whatsappQrImage.src && whatsappQrImage.src.startsWith('data:');
+                    if (!hasDataQr && !whatsappIsAuthenticated) {
+                        await loadWhatsAppQRCode(false);
+                    }
                 }
             });
         }
@@ -6375,9 +6549,9 @@
                         headers: { 'Content-Type': 'application/json' }
                     });
                     if (initResponse.ok) {
-                        // Do not show QR on tab switch; QR only after user clicks Refresh and no session exists.
-                        // Do not reload the open thread here — it felt like a forced refresh and competed with avatar loads.
-                        await checkWhatsAppStatus({ showQRIfNoSession: false });
+                        // If there is no saved session, show the QR flow as soon as the tab opens (no extra Refresh required).
+                        // If a session exists, status handling shows restoring / connected as appropriate.
+                        await checkWhatsAppStatus({ showQRIfNoSession: true });
                     }
                 } catch (err) {
                     console.error('[*] WhatsApp init/status check:', err);
@@ -6454,12 +6628,12 @@
             setTimeout(() => { void resyncWhatsAppAfterIdleReturn(); }, 500);
         });
         
-        // Check WhatsApp status on page load if WhatsApp tab is active (do not show QR; user must click Refresh)
+        // Check WhatsApp status on page load if WhatsApp tab is active (show QR when no session, same as tab switch)
         document.addEventListener('DOMContentLoaded', async () => {
             const activeTab = document.querySelector('.tab-content.active');
             if (activeTab && activeTab.id === 'whatsapp') {
-                console.log('[*] WhatsApp tab is active on page load - checking status (QR only after Refresh)...');
-                await checkWhatsAppStatus({ showQRIfNoSession: false });
+                console.log('[*] WhatsApp tab is active on page load - checking status...');
+                await checkWhatsAppStatus({ showQRIfNoSession: true });
             }
         });
         
@@ -6467,9 +6641,9 @@
         if (document.readyState === 'complete' || document.readyState === 'interactive') {
             const activeTab = document.querySelector('.tab-content.active');
             if (activeTab && activeTab.id === 'whatsapp') {
-                console.log('[*] DOM already loaded - checking WhatsApp status (QR only after Refresh)...');
+                console.log('[*] DOM already loaded - checking WhatsApp status...');
                 setTimeout(async () => {
-                    await checkWhatsAppStatus({ showQRIfNoSession: false });
+                    await checkWhatsAppStatus({ showQRIfNoSession: true });
                 }, 1000); // Wait 1 second for backend to initialize
             }
         }

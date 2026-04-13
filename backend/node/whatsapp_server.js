@@ -17,6 +17,11 @@ const express = require('express');
 const qrcode = require('qrcode');
 const path = require('path');
 const fs = require('fs');
+try {
+    require('dotenv').config({ path: path.join(__dirname, '..', '..', '.env') });
+} catch (e) {
+    /* dotenv optional at runtime */
+}
 const cors = require('cors');
 const http = require('http');
 const { Server } = require('socket.io');
@@ -55,6 +60,18 @@ let readyFallbackTimeout = null;
 // Warmup delay: wait this many ms after 'ready' before allowing getChats/getChatById (WhatsApp Web needs time to initialize).
 // Large accounts (5k–10k+ contacts) need more time; set WHATSAPP_CHATS_WARMUP_MS=45000 if you see getChats retries/failures.
 const CHATS_WARMUP_MS = process.env.WHATSAPP_CHATS_WARMUP_MS ? Math.max(5000, parseInt(process.env.WHATSAPP_CHATS_WARMUP_MS, 10)) : 20000; // default 20s
+/**
+ * Optional ms to wait after `ready` before the first message fetch (WhatsApp Web race mitigation).
+ * Default 0 restores immediate fetches like earlier builds; set e.g. WHATSAPP_MESSAGES_MIN_READY_MS=5000 if you see empty first loads.
+ */
+const MESSAGES_MIN_READY_MS = (() => {
+    const raw = process.env.WHATSAPP_MESSAGES_MIN_READY_MS;
+    if (raw != null && String(raw).trim() !== '') {
+        const n = parseInt(String(raw).trim(), 10);
+        return Number.isFinite(n) ? Math.max(0, n) : 0;
+    }
+    return 0;
+})();
 // Cache getChats() result for pagination (avoid repeated heavy getChats() calls)
 const CHATS_CACHE_MS = 300000; // 5 minutes (large accounts may scroll 10k+ contacts)
 let chatsCache = null;
@@ -63,6 +80,51 @@ let chatsCacheAt = 0;
 let chatsCacheLoading = false;
 // Cache messages so media can be fetched later even when whatsapp-web.js can't resolve by id (common for older messages)
 const messageCacheById = new Map(); // messageId -> Message
+
+/** After each `ready`, allow one consolidated "degraded mode" log when WA Web breaks wwebjs (reduces log noise). */
+let wwebDegradedBannerLogged = false;
+
+function logWWebDegradedModeBanner(symptom) {
+    if (wwebDegradedBannerLogged) return;
+    wwebDegradedBannerLogged = true;
+    const hint = symptom === 'isNewsletter' ? 'isNewsletter' : 'waitForChatLoading';
+    console.warn(
+        '[WhatsApp] DEGRADED MODE (logged once until next ready): whatsapp-web.js cannot drive the current WhatsApp Web page JS (' +
+            hint +
+            '). Messages and avatars may fail.'
+    );
+    const pinned = process.env.WHATSAPP_WEB_VERSION && String(process.env.WHATSAPP_WEB_VERSION).trim();
+    if (pinned) {
+        console.warn(
+            '[WhatsApp] WHATSAPP_WEB_VERSION is ' +
+                pinned +
+                ' — the page still loads scripts from static.whatsapp.net; if errors continue, try another html/ build from https://github.com/wppconnect-team/wa-version or check for a newer whatsapp-web.js on npm/GitHub.'
+        );
+    } else {
+        console.warn(
+            '[WhatsApp] Fix: set WHATSAPP_WEB_VERSION + WHATSAPP_WEB_VERSION_CACHE_TYPE=remote in .env (see .env.example), restart this process, or upgrade whatsapp-web.js when a fix ships.'
+        );
+    }
+}
+
+/** Puppeteer/eval errors often embed multi-line stacks in message; keep logs readable. */
+function wwebErrorFirstLine(msg) {
+    return String(msg || '')
+        .split('\n')[0]
+        .trim();
+}
+
+function isWWebKnownBreakageMessage(msg) {
+    return /waitForChatLoading|isNewsletter/i.test(String(msg || ''));
+}
+
+/** If banner already ran this session, skip repeated one-line logs for the same WA Web breakage. */
+function suppressWWebKnownBreakagePerRequestLog(msg) {
+    return isWWebKnownBreakageMessage(msg) && wwebDegradedBannerLogged;
+}
+
+/** After DEGRADED MODE, avoid one line per contact for missing avatars (same root cause). */
+let wwebDegradedAvatarBulkWarned = false;
 
 function sanitizeFilenameForHeader(name, fallback = 'file') {
     let s = '';
@@ -113,6 +175,23 @@ function getMyContactId() {
  * Safely get chat/contact ID string (handles LID, _serialized, or plain string from whatsapp-web.js).
  * Returns null if not extractable.
  */
+/** Compare sidebar/API contact_id to serialized chat id (handles encoding and minor format differences). */
+function waIdsLooselyEqual(a, b) {
+    const x = String(a || '').trim();
+    const y = String(b || '').trim();
+    if (!x || !y) return false;
+    if (x === y) return true;
+    const dec = (s) => {
+        try {
+            return decodeURIComponent(s);
+        } catch (e) {
+            return s;
+        }
+    };
+    if (dec(x) === y || x === dec(y) || dec(x) === dec(y)) return true;
+    return false;
+}
+
 function serializeChatId(chat) {
     try {
         if (!chat || !chat.id) return null;
@@ -175,9 +254,132 @@ function serializeMessageId(msg) {
             const fromMe = key.fromMe === true ? 'true' : 'false';
             if (mid && rjid) return `${fromMe}_${rjid}_${mid}`;
         }
+        // Newer whatsapp-web.js / WA Web payloads (id shape varies by version)
+        try {
+            const d = msg._data;
+            if (d && d.id != null) {
+                const rawId = d.id;
+                if (typeof rawId === 'string' && rawId.length) return rawId;
+                if (rawId && typeof rawId === 'object' && rawId._serialized) return String(rawId._serialized);
+            }
+        } catch (e) { /* ignore */ }
+        try {
+            const midObj = msg.id;
+            if (midObj && typeof midObj === 'object' && midObj.id != null && !midObj._serialized) {
+                const piece = String(midObj.id);
+                const remote =
+                    (midObj.remote &&
+                        (typeof midObj.remote === 'string'
+                            ? midObj.remote
+                            : midObj.remote._serialized && String(midObj.remote._serialized))) ||
+                    (msg.from && String(msg.from)) ||
+                    '';
+                const fromMe = midObj.fromMe === true ? 'true' : 'false';
+                if (piece && remote) return `${fromMe}_${remote}_${piece}`;
+            }
+        } catch (e) { /* ignore */ }
         return null;
     } catch (e) {
         return null;
+    }
+}
+
+/**
+ * Scroll-up pagination: messages strictly older than beforeTimestamp.
+ * chat.fetchMessages({ limit }) only materializes the *newest* N messages in the client; filtering that list by
+ * before_timestamp often yields nothing for long chats (all N are newer than the cursor). This repeatedly
+ * calls WAWebChatLoadMessages.loadEarlierMsgs until enough rows exist older than the cursor, or history ends.
+ *
+ * @returns {{ messages: Array, exhausted: boolean }}
+ */
+async function fetchOlderMessagesThanCursor(chatSerializedId, beforeTimestampSec, fetchLimit) {
+    const empty = { messages: [], exhausted: true };
+    if (!client || !client.pupPage || !chatSerializedId) return empty;
+    const Message = require('whatsapp-web.js').Message;
+    const beforeTs = Number(beforeTimestampSec);
+    const limit = Math.min(Math.max(parseInt(fetchLimit, 10) || 30, 1), 100);
+    if (!Number.isFinite(beforeTs)) return empty;
+
+    const result = await client.pupPage.evaluate(
+        async (chatId, beforeTsInner, limitInner) => {
+            const WU = window.WWebJS;
+            if (!WU || typeof WU.getChat !== 'function') {
+                return { models: [], exhausted: true };
+            }
+            let chat;
+            try {
+                chat = await WU.getChat(chatId, { getAsModel: false });
+            } catch (e) {
+                return { models: [], exhausted: true };
+            }
+            if (!chat) return { models: [], exhausted: true };
+
+            const msgFilter = (m) => m && !m.isNotification;
+            const ts = (m) => {
+                if (!m) return 0;
+                if (typeof m.t === 'number' && !Number.isNaN(m.t)) return m.t;
+                if (typeof m.timestamp === 'number' && !Number.isNaN(m.timestamp)) return m.timestamp;
+                return 0;
+            };
+
+            let msgs = (chat.msgs && chat.msgs.getModelsArray ? chat.msgs.getModelsArray() : []).filter(msgFilter);
+            let iterations = 0;
+            const maxIter = 300;
+            const countOlder = (list) => list.filter((m) => ts(m) < beforeTsInner).length;
+
+            let loadMod;
+            try {
+                loadMod = window.require && window.require('WAWebChatLoadMessages');
+            } catch (e) {
+                loadMod = null;
+            }
+            if (!loadMod || typeof loadMod.loadEarlierMsgs !== 'function') {
+                return { models: [], exhausted: true };
+            }
+
+            let hitEndOfHistory = false;
+            while (countOlder(msgs) < limitInner && iterations < maxIter) {
+                iterations += 1;
+                const loaded = await loadMod.loadEarlierMsgs({ chat });
+                if (!loaded || !loaded.length) {
+                    hitEndOfHistory = true;
+                    break;
+                }
+                msgs = [...loaded.filter(msgFilter), ...msgs];
+            }
+
+            let older = msgs.filter((m) => ts(m) < beforeTsInner);
+            older.sort((a, b) => ts(a) - ts(b));
+            if (older.length > limitInner) {
+                older = older.slice(older.length - limitInner);
+            }
+
+            const exhausted = hitEndOfHistory || older.length < limitInner;
+            const models = older
+                .map((m) => {
+                    try {
+                        return WU.getMessageModel(m);
+                    } catch (e) {
+                        return null;
+                    }
+                })
+                .filter(Boolean);
+
+            return { models, exhausted };
+        },
+        chatSerializedId,
+        beforeTs,
+        limit
+    );
+
+    const models = result && Array.isArray(result.models) ? result.models : [];
+    const exhausted = !!(result && result.exhausted);
+    try {
+        const messages = models.map((d) => new Message(client, d));
+        return { messages, exhausted };
+    } catch (e) {
+        console.error('[WhatsApp] fetchOlderMessagesThanCursor wrap Message:', e && e.message);
+        return empty;
     }
 }
 
@@ -208,10 +410,33 @@ async function contactIdCandidatesWithLookup(rawContactId) {
         const t = String(x || '').trim();
         if (t && !out.includes(t)) out.push(t);
     };
-    contactIdCandidates(rawContactId).forEach(add);
-    if (!client) return out;
     const primary = String(rawContactId || '').trim();
     if (!primary) return out;
+
+    // Prefer ids from the in-memory chat list (matches what the UI shows; helps LID/@c.us mismatches).
+    try {
+        if (chatsCache && Array.isArray(chatsCache)) {
+            for (const ch of chatsCache) {
+                let sid = null;
+                try {
+                    sid = serializeChatId(ch);
+                } catch (e) {
+                    continue;
+                }
+                if (!sid || !waIdsLooselyEqual(sid, primary)) continue;
+                const ido = ch.id;
+                if (ido && typeof ido === 'object') {
+                    if (ido._serialized) add(String(ido._serialized));
+                    if (ido.user && ido.server) add(`${ido.user}@${ido.server}`);
+                }
+                add(sid);
+                break;
+            }
+        }
+    } catch (e) { /* ignore */ }
+
+    contactIdCandidates(rawContactId).forEach(add);
+    if (!client) return out;
     try {
         const contact = await client.getContactById(primary);
         if (contact && contact.id) {
@@ -223,6 +448,21 @@ async function contactIdCandidatesWithLookup(rawContactId) {
         }
     } catch (e) { /* ignore */ }
     return out;
+}
+
+/** Resolve a Chat instance from the getChats() cache (same object fetchMessages needs when getChatById(id) fails). */
+function findCachedChatByContactId(rawContactId) {
+    const primary = String(rawContactId || '').trim();
+    if (!primary || !chatsCache || !Array.isArray(chatsCache)) return null;
+    for (const ch of chatsCache) {
+        try {
+            const sid = serializeChatId(ch);
+            if (sid && waIdsLooselyEqual(sid, primary)) return ch;
+        } catch (e) {
+            /* ignore */
+        }
+    }
+    return null;
 }
 
 function cacheWhatsAppMessage(msg) {
@@ -310,6 +550,38 @@ async function checkAndResetIfSessionDeleted() {
 }
 
 /**
+ * Optional: pin WhatsApp Web HTML to a version archived by wwebjs (helps when live web.whatsapp.com
+ * breaks whatsapp-web.js — e.g. "Cannot read properties of undefined (reading 'waitForChatLoading')").
+ * Set WHATSAPP_WEB_VERSION to a build listed under html/ in https://github.com/wppconnect-team/wa-version
+ * (the old wwebjs/wa-version raw URLs often 404).
+ */
+function getWhatsAppWebVersionClientOptions() {
+    const defaultRemoteHtml =
+        'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/{version}.html';
+    const wv = process.env.WHATSAPP_WEB_VERSION && String(process.env.WHATSAPP_WEB_VERSION).trim();
+    if (!wv) return {};
+    const cacheType = (process.env.WHATSAPP_WEB_VERSION_CACHE_TYPE || 'remote').toLowerCase().trim();
+    const strict =
+        process.env.WHATSAPP_WEB_VERSION_STRICT === '1' ||
+        process.env.WHATSAPP_WEB_VERSION_STRICT === 'true';
+    const out = { webVersion: wv };
+    if (cacheType === 'remote') {
+        const remotePath =
+            (process.env.WHATSAPP_WEB_VERSION_REMOTE_PATH && String(process.env.WHATSAPP_WEB_VERSION_REMOTE_PATH).trim()) ||
+            defaultRemoteHtml;
+        out.webVersionCache = { type: 'remote', remotePath, strict };
+    } else if (cacheType === 'local') {
+        out.webVersionCache = { type: 'local' };
+    } else if (cacheType === 'none') {
+        out.webVersionCache = { type: 'none' };
+    } else {
+        out.webVersionCache = { type: 'remote', remotePath: defaultRemoteHtml, strict };
+    }
+    console.log('[WhatsApp] Client webVersion override:', wv, 'webVersionCache.type=', out.webVersionCache.type);
+    return out;
+}
+
+/**
  * Initialize WhatsApp client
  */
 function initializeWhatsApp() {
@@ -364,31 +636,101 @@ function initializeWhatsApp() {
         ]
     };
 
+    /**
+     * Puppeteer 24+ does not ship Chromium inside node_modules; it must be downloaded (`npx puppeteer browsers install chrome`)
+     * or you use an existing Chrome/Edge. Without a real browser, client.initialize() never reaches the QR event — unrelated to Node major version.
+     */
+    let browserResolved = '';
+    const envExe = process.env.PUPPETEER_EXECUTABLE_PATH && String(process.env.PUPPETEER_EXECUTABLE_PATH).trim();
+    if (envExe && fs.existsSync(envExe)) {
+        puppeteerOpts.executablePath = envExe;
+        browserResolved = 'PUPPETEER_EXECUTABLE_PATH';
+        console.log('[WhatsApp] Using browser from PUPPETEER_EXECUTABLE_PATH:', envExe);
+    }
+
     // 1) Prefer a Chromium that is bundled inside the app (works in dist/ on machines without internet)
     const BUNDLED_CHROME_DIR_WIN = path.join(PROJECT_ROOT, 'whatsapp_chrome_win');
     const BUNDLED_CHROME_EXE_WIN = path.join(BUNDLED_CHROME_DIR_WIN, 'chrome.exe');
-    if (process.platform === 'win32' && fs.existsSync(BUNDLED_CHROME_EXE_WIN)) {
+    if (!browserResolved && process.platform === 'win32' && fs.existsSync(BUNDLED_CHROME_EXE_WIN)) {
         puppeteerOpts.executablePath = BUNDLED_CHROME_EXE_WIN;
+        browserResolved = 'bundled';
         console.log('[WhatsApp] Using bundled Chromium at:', BUNDLED_CHROME_EXE_WIN);
-    } else if (puppeteer && typeof puppeteer.executablePath === 'function') {
-        // 2) Fallback: use Puppeteer's own bundled Chromium (requires that it has been downloaded once)
+    } else if (!browserResolved && puppeteer && typeof puppeteer.executablePath === 'function') {
+        // 2) Puppeteer cache (only if the file exists — executablePath() may point to a version not yet downloaded)
         try {
             const exe = puppeteer.executablePath();
-            if (exe && typeof exe === 'string' && exe.length > 0) {
+            if (exe && typeof exe === 'string' && exe.length > 0 && fs.existsSync(exe)) {
                 puppeteerOpts.executablePath = exe;
-                console.log('[WhatsApp] Using Puppeteer bundled Chromium at:', exe);
+                browserResolved = 'puppeteer-cache';
+                console.log('[WhatsApp] Using Puppeteer downloaded Chromium at:', exe);
             }
         } catch (e) {
-            console.warn('[WhatsApp] Could not resolve Puppeteer executablePath, falling back to whatsapp-web.js default:', e && e.message);
+            console.warn('[WhatsApp] Could not resolve Puppeteer executablePath:', e && e.message);
         }
     }
 
-    client = new Client({
-        authStrategy: new LocalAuth({
-            dataPath: SESSION_DIR
-        }),
-        puppeteer: puppeteerOpts
-    });
+    if (!browserResolved && process.platform === 'win32') {
+        const pf = process.env.PROGRAMFILES || 'C:\\Program Files';
+        const pf86 = process.env['PROGRAMFILES(X86)'] || 'C:\\Program Files (x86)';
+        const winChrome = [
+            path.join(pf, 'Google', 'Chrome', 'Application', 'chrome.exe'),
+            path.join(pf86, 'Google', 'Chrome', 'Application', 'chrome.exe'),
+        ];
+        for (const p of winChrome) {
+            if (p && fs.existsSync(p)) {
+                puppeteerOpts.executablePath = p;
+                browserResolved = 'system-chrome';
+                console.log('[WhatsApp] Using system Google Chrome at:', p);
+                break;
+            }
+        }
+    }
+
+    if (!browserResolved && process.platform === 'darwin') {
+        const macChrome = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+        if (fs.existsSync(macChrome)) {
+            puppeteerOpts.executablePath = macChrome;
+            browserResolved = 'system-chrome';
+            console.log('[WhatsApp] Using system Google Chrome at:', macChrome);
+        }
+    }
+
+    if (!browserResolved && process.platform === 'linux') {
+        const linuxBrowsers = [
+            '/usr/bin/google-chrome-stable',
+            '/usr/bin/google-chrome',
+            '/usr/bin/chromium-browser',
+            '/usr/bin/chromium',
+        ];
+        for (const p of linuxBrowsers) {
+            if (fs.existsSync(p)) {
+                puppeteerOpts.executablePath = p;
+                browserResolved = 'system-linux';
+                console.log('[WhatsApp] Using system browser at:', p);
+                break;
+            }
+        }
+    }
+
+    if (!browserResolved) {
+        puppeteerOpts.channel = 'chrome';
+        browserResolved = 'channel-chrome';
+        console.log(
+            '[WhatsApp] Using Puppeteer channel=chrome (expects Google Chrome installed). If the client fails to start, run from project root: npm run setup:puppeteer-chrome'
+        );
+    }
+
+    client = new Client(
+        Object.assign(
+            {
+                authStrategy: new LocalAuth({
+                    dataPath: SESSION_DIR
+                }),
+                puppeteer: puppeteerOpts
+            },
+            getWhatsAppWebVersionClientOptions()
+        )
+    );
 
     // QR code event - fired when QR code is generated
     client.on('qr', async (qr) => {
@@ -430,6 +772,8 @@ function initializeWhatsApp() {
             readyFallbackTimeout = null;
         }
         console.log('[WhatsApp] Client is ready!');
+        wwebDegradedBannerLogged = false;
+        wwebDegradedAvatarBulkWarned = false;
         isAuthenticated = true;
         isReady = true;
         lastAuthenticatedAt = Date.now();
@@ -1070,6 +1414,16 @@ async function ensureChatsWarmupReady() {
     }
 }
 
+/** Short post-ready wait so getChatById/fetchMessages is less likely to race WhatsApp Web initialization. */
+async function ensureMessagesMinReadyAfterReady() {
+    if (!readyAt || MESSAGES_MIN_READY_MS <= 0) return;
+    const elapsed = Date.now() - readyAt;
+    if (elapsed >= MESSAGES_MIN_READY_MS) return;
+    const wait = MESSAGES_MIN_READY_MS - elapsed;
+    console.log(`[WhatsApp] Waiting ${wait}ms before message fetch (stabilize WhatsApp Web)`);
+    await new Promise((r) => setTimeout(r, wait));
+}
+
 async function getChatsWithRetryAndCache() {
     const now = Date.now();
     if (chatsCache && (now - chatsCacheAt) < CHATS_CACHE_MS) {
@@ -1402,6 +1756,10 @@ app.get('/api/whatsapp/avatar', async (req, res) => {
         
         return res.json({ success: true, avatar_url: avatarUrl });
     } catch (error) {
+        const em = error && error.message ? String(error.message) : '';
+        if (/waitForChatLoading|isNewsletter/i.test(em)) {
+            logWWebDegradedModeBanner(/isNewsletter/i.test(em) ? 'isNewsletter' : 'waitForChatLoading');
+        }
         console.error('[WhatsApp] Error fetching avatar:', error);
         res.status(500).json({ success: false, error: error.message || String(error) });
     }
@@ -1455,7 +1813,16 @@ app.get('/api/whatsapp/avatar/me', async (req, res) => {
                 url = await client.getProfilePicUrl(contactId);
             } catch (e) {
                 // WhatsApp Web API can throw (e.g. "Cannot read properties of undefined (reading 'isNewsletter')") when their internal API changes
-                console.warn('[WhatsApp] Avatar/me: getProfilePicUrl threw, trying contact fallback:', e && e.message);
+                const em = e && e.message ? String(e.message) : '';
+                if (/waitForChatLoading/i.test(em)) logWWebDegradedModeBanner('waitForChatLoading');
+                else if (/isNewsletter/i.test(em)) logWWebDegradedModeBanner('isNewsletter');
+                if (!suppressWWebKnownBreakagePerRequestLog(em)) {
+                    if (isWWebKnownBreakageMessage(em)) {
+                        console.warn('[WhatsApp] Avatar/me: getProfilePicUrl failed:', wwebErrorFirstLine(em));
+                    } else {
+                        console.warn('[WhatsApp] Avatar/me: getProfilePicUrl threw, trying contact fallback:', e && e.message);
+                    }
+                }
                 try {
                     const contact = await client.getContactById(contactId);
                     if (contact) url = await contact.getProfilePicUrl();
@@ -1480,7 +1847,20 @@ app.get('/api/whatsapp/avatar/me', async (req, res) => {
                     res.type('image/jpeg');
                     return res.send(buf);
                 }
-                console.warn('[WhatsApp] Avatar/me: no profile pic URL for contactId=', contactId, '(privacy or WhatsApp Web API may block profile pics)');
+                if (wwebDegradedBannerLogged) {
+                    if (!wwebDegradedAvatarBulkWarned) {
+                        wwebDegradedAvatarBulkWarned = true;
+                        console.warn(
+                            '[WhatsApp] Avatar/me: no profile pic (WA Web mismatch; suppressing further missing-avatar lines until next ready)'
+                        );
+                    }
+                } else {
+                    console.warn(
+                        '[WhatsApp] Avatar/me: no profile pic URL for contactId=',
+                        contactId,
+                        '(privacy or WhatsApp Web API may block profile pics)'
+                    );
+                }
                 return res.status(404).send();
             }
             const resp = await fetch(url, {
@@ -1556,7 +1936,16 @@ app.get('/api/whatsapp/avatar/image', async (req, res) => {
             try {
                 url = await client.getProfilePicUrl(contactId);
             } catch (e) {
-                console.warn('[WhatsApp] Avatar/image: getProfilePicUrl threw, trying contact fallback:', e && e.message);
+                const em = e && e.message ? String(e.message) : '';
+                if (/waitForChatLoading/i.test(em)) logWWebDegradedModeBanner('waitForChatLoading');
+                else if (/isNewsletter/i.test(em)) logWWebDegradedModeBanner('isNewsletter');
+                if (!suppressWWebKnownBreakagePerRequestLog(em)) {
+                    if (isWWebKnownBreakageMessage(em)) {
+                        console.warn('[WhatsApp] Avatar/image: getProfilePicUrl failed:', wwebErrorFirstLine(em));
+                    } else {
+                        console.warn('[WhatsApp] Avatar/image: getProfilePicUrl threw, trying contact fallback:', e && e.message);
+                    }
+                }
                 try {
                     const contact = await client.getContactById(contactId);
                     if (contact) url = await contact.getProfilePicUrl();
@@ -1580,7 +1969,16 @@ app.get('/api/whatsapp/avatar/image', async (req, res) => {
                     res.type('image/jpeg');
                     return res.send(buf);
                 }
-                console.warn('[WhatsApp] Avatar/image: no profile pic URL for contactId=', contactId);
+                if (wwebDegradedBannerLogged) {
+                    if (!wwebDegradedAvatarBulkWarned) {
+                        wwebDegradedAvatarBulkWarned = true;
+                        console.warn(
+                            '[WhatsApp] Avatar/image: no profile pic (WA Web mismatch; suppressing further missing-avatar lines until next ready)'
+                        );
+                    }
+                } else {
+                    console.warn('[WhatsApp] Avatar/image: no profile pic URL for contactId=', contactId);
+                }
                 return res.status(404).send();
             }
             const resp = await fetch(url, {
@@ -1646,7 +2044,7 @@ app.post('/api/whatsapp/messages', async (req, res) => {
             });
         }
 
-        // Do not block messages on CHATS_WARMUP_MS (that left the UI empty for ~20s+); fetch immediately and retry on errors.
+        await ensureMessagesMinReadyAfterReady();
 
         const { contact_id, limit = 50, include_media, before_id, before_timestamp } = req.body;
         const fetchLimit = Math.min(Math.max(parseInt(limit, 10) || 30, 1), 100);
@@ -1659,37 +2057,100 @@ app.post('/api/whatsapp/messages', async (req, res) => {
             });
         }
 
-        const idCandidates = await contactIdCandidatesWithLookup(contact_id);
         const maxTries = 18;
-        let chat;
-        let messages;
-        let resolvedContactId = idCandidates[0] || String(contact_id).trim();
+        let chat = null;
+        let messages = null;
+        let resolvedContactId = String(contact_id).trim();
         let lastErr = null;
-        for (let attempt = 1; attempt <= maxTries; attempt++) {
-            let roundOk = false;
-            for (const cid of idCandidates) {
-                try {
-                    chat = await client.getChatById(cid);
-                    const requestLimit = loadOlder ? Math.max(fetchLimit * 2, 100) : fetchLimit;
-                    messages = await chat.fetchMessages({ limit: requestLimit });
-                    resolvedContactId = cid;
-                    roundOk = true;
-                    break;
-                } catch (messagesErr) {
-                    lastErr = messagesErr;
+        /** True when load-older pagination hit the start of stored history (see fetchOlderMessagesThanCursor). */
+        let loadOlderExhausted = false;
+
+        // Fast path: reuse Chat from getChats() cache only when fetchMessages actually returns rows.
+        // If we accept an empty [] from the cached object, we skip getChatById entirely — that was breaking history
+        // (whatsapp-web often returns [] briefly or for a stale Chat reference until the same chat is resolved by id).
+        // Do not use cache for scroll-up (older) loads — fetchMessages(limit) is newest-N-only; see fetchOlderMessagesThanCursor.
+        const cachedChat = !loadOlder && findCachedChatByContactId(contact_id);
+        if (cachedChat) {
+            try {
+                const requestLimit = fetchLimit;
+                const fetched = await cachedChat.fetchMessages({ limit: requestLimit });
+                if (fetched && fetched.length > 0) {
+                    messages = fetched;
+                    chat = cachedChat;
+                    resolvedContactId = serializeChatId(cachedChat) || resolvedContactId;
+                    console.log('[WhatsApp] Messages via chats cache for', resolvedContactId, 'count=', fetched.length);
+                } else {
+                    messages = null;
+                    chat = null;
                 }
+            } catch (e) {
+                lastErr = e;
+                const em = e && e.message ? String(e.message) : '';
+                if (/waitForChatLoading/i.test(em)) logWWebDegradedModeBanner('waitForChatLoading');
+                else if (/isNewsletter/i.test(em)) logWWebDegradedModeBanner('isNewsletter');
+                if (!suppressWWebKnownBreakagePerRequestLog(em)) {
+                    if (isWWebKnownBreakageMessage(em)) {
+                        console.warn(
+                            '[WhatsApp] fetchMessages on cached chat failed, falling back to getChatById:',
+                            wwebErrorFirstLine(em)
+                        );
+                    } else {
+                        console.warn('[WhatsApp] fetchMessages on cached chat failed, falling back to getChatById:', e && e.message);
+                    }
+                }
+                chat = null;
+                messages = null;
             }
-            if (roundOk) break;
-            const errStr = String(lastErr && lastErr.message ? lastErr.message : lastErr || '');
-            const isRetryable = /undefined|update|getChatModel|Evaluation failed|timeout|Target closed|Session closed|detached|Navigation|Protocol error|WSS|ECONNRESET|WebSocket|net::|Execution context/i.test(errStr);
-            if (attempt < maxTries && isRetryable) {
-                const retryDelayMs = Math.min(6000, 450 * Math.pow(2, attempt - 1));
-                console.log(`[WhatsApp] getChatById/fetchMessages attempt ${attempt}/${maxTries} failed, retrying in ${retryDelayMs}ms...`, errStr);
-                await new Promise(r => setTimeout(r, retryDelayMs));
-            } else if (lastErr) {
-                throw lastErr;
-            } else {
-                throw new Error('getChatById failed for all contact_id variants');
+        }
+
+        if (!chat) {
+            let idCandidates = await contactIdCandidatesWithLookup(contact_id);
+            if (!idCandidates || !idCandidates.length) {
+                idCandidates = [String(contact_id).trim()];
+            }
+            resolvedContactId = idCandidates[0] || resolvedContactId;
+            for (let attempt = 1; attempt <= maxTries; attempt++) {
+                let roundOk = false;
+                for (const cid of idCandidates) {
+                    try {
+                        chat = await client.getChatById(cid);
+                        if (loadOlder) {
+                            const sid = serializeChatId(chat);
+                            const olderRes = await fetchOlderMessagesThanCursor(
+                                sid,
+                                Number(before_timestamp),
+                                fetchLimit
+                            );
+                            messages = olderRes.messages;
+                            loadOlderExhausted = olderRes.exhausted;
+                        } else {
+                            messages = await chat.fetchMessages({ limit: fetchLimit });
+                        }
+                        resolvedContactId = cid;
+                        roundOk = true;
+                        break;
+                    } catch (messagesErr) {
+                        lastErr = messagesErr;
+                    }
+                }
+                if (roundOk) break;
+                const errStr = String(lastErr && lastErr.message ? lastErr.message : lastErr || '');
+                // Live WA Web can ship JS incompatible with this whatsapp-web.js; retries never fix it.
+                const isBrokenWWebPairing = /waitForChatLoading/i.test(errStr);
+                const isRetryable =
+                    !isBrokenWWebPairing &&
+                    /undefined|update|getChatModel|Evaluation failed|timeout|Target closed|Session closed|detached|Navigation|Protocol error|WSS|ECONNRESET|WebSocket|net::|Execution context|not found|invalid wid|could not find|no chat/i.test(
+                        errStr
+                    );
+                if (attempt < maxTries && isRetryable) {
+                    const retryDelayMs = Math.min(6000, 450 * Math.pow(2, attempt - 1));
+                    console.log(`[WhatsApp] getChatById/fetchMessages attempt ${attempt}/${maxTries} failed, retrying in ${retryDelayMs}ms...`, errStr);
+                    await new Promise(r => setTimeout(r, retryDelayMs));
+                } else if (lastErr) {
+                    throw lastErr;
+                } else {
+                    throw new Error('getChatById failed for all contact_id variants');
+                }
             }
         }
         if (!loadOlder && (!messages || messages.length === 0) && chat) {
@@ -1703,11 +2164,11 @@ app.post('/api/whatsapp/messages', async (req, res) => {
         }
         try { (messages || []).forEach(cacheWhatsAppMessage); } catch (e) {}
 
-        if (loadOlder && Array.isArray(messages) && messages.length > 0) {
-            const beforeTs = Number(before_timestamp);
-            messages = messages.filter(m => (m.timestamp || 0) < beforeTs);
-            messages.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
-            messages = messages.slice(-fetchLimit);
+        if (loadOlder) {
+            // Older pages are built in fetchOlderMessagesThanCursor (do not re-filter newest-N fetchMessages output).
+            if (Array.isArray(messages)) {
+                messages.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+            }
         } else if (Array.isArray(messages)) {
             messages.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
         }
@@ -1793,7 +2254,9 @@ app.post('/api/whatsapp/messages', async (req, res) => {
             });
         }
 
-        const reached_start = formattedMessages.length === 0 || formattedMessages.length < fetchLimit;
+        const reached_start = loadOlder
+            ? loadOlderExhausted || formattedMessages.length === 0
+            : formattedMessages.length === 0 || formattedMessages.length < fetchLimit;
         const oldest_id = formattedMessages.length > 0 ? formattedMessages[0].id : null;
         const oldest_timestamp = formattedMessages.length > 0 ? formattedMessages[0].timestamp : null;
 
@@ -1809,9 +2272,28 @@ app.post('/api/whatsapp/messages', async (req, res) => {
             oldest_timestamp: oldest_timestamp
         });
     } catch (error) {
-        console.error('[WhatsApp] Error getting messages:', error);
         const msg = error.message || String(error);
-        const isPageNotReady = /undefined|update|getChatModel|Evaluation failed|timeout|Target closed|Session closed|detached|Protocol error|Execution context/i.test(msg);
+        if (/waitForChatLoading/i.test(msg)) {
+            logWWebDegradedModeBanner('waitForChatLoading');
+            return res.status(503).json({
+                success: false,
+                error:
+                    'WhatsApp Web is incompatible with the current whatsapp-web.js build (waitForChatLoading). Add WHATSAPP_WEB_VERSION + WHATSAPP_WEB_VERSION_CACHE_TYPE=remote to .env (see .env.example), use the wppconnect-team wa-version HTML archive, restart the WhatsApp Node process, and scan QR again if needed.'
+            });
+        }
+        if (isWWebKnownBreakageMessage(msg)) {
+            // waitForChatLoading already returned above; here e.g. isNewsletter from fetchMessages
+            if (/isNewsletter/i.test(msg)) logWWebDegradedModeBanner('isNewsletter');
+            else logWWebDegradedModeBanner('waitForChatLoading');
+            if (!suppressWWebKnownBreakagePerRequestLog(msg)) {
+                console.warn('[WhatsApp] Error getting messages:', wwebErrorFirstLine(msg));
+            }
+        } else {
+            console.error('[WhatsApp] Error getting messages:', error);
+        }
+        const isPageNotReady =
+            !/waitForChatLoading/i.test(msg) &&
+            /undefined|update|getChatModel|Evaluation failed|timeout|Target closed|Session closed|detached|Protocol error|Execution context/i.test(msg);
         if (isPageNotReady) {
             console.log('[WhatsApp] Returning empty messages so client can retry; chat may still be loading.');
             return res.status(200).json({
@@ -2148,7 +2630,30 @@ io.on('connection', (socket) => {
         }
     } catch (e) { /* ignore */ }
     socket.emit('whatsapp_status', payload);
-    
+
+    /**
+     * Load chat history over the same Socket.IO connection (avoids extra HTTP hop through the chat proxy).
+     * Delegates to POST /api/whatsapp/messages so behavior matches REST exactly.
+     */
+    socket.on('whatsapp_get_messages', async (payload, ack) => {
+        const reply = (json) => {
+            if (typeof ack === 'function') ack(json);
+            else socket.emit('whatsapp_messages_result', json);
+        };
+        try {
+            const res = await fetch(`http://127.0.0.1:${PORT}/api/whatsapp/messages`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload && typeof payload === 'object' ? payload : {})
+            });
+            const json = await res.json().catch(() => ({ success: false, error: 'Invalid response from messages API' }));
+            reply(json);
+        } catch (e) {
+            console.error('[WhatsApp] whatsapp_get_messages:', e && e.message);
+            reply({ success: false, error: e.message || String(e) });
+        }
+    });
+
     socket.on('disconnect', () => {
         console.log('[WhatsApp] Client disconnected from WebSocket:', socket.id);
     });

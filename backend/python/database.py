@@ -26,7 +26,13 @@ else:
 # Get database URL from environment variable
 # Prefer a configured DATABASE_URL (Postgres). If missing or using the dev default,
 # fall back to a local SQLite file so the app can run standalone without PostgreSQL.
-raw_db_url = os.getenv("DATABASE_URL", "").strip()
+_env_db_url = os.getenv("DATABASE_URL", "").strip()
+_force_sqlite = os.getenv("DATABASE_USE_SQLITE", "").strip().lower() in ("1", "true", "yes")
+raw_db_url = "" if _force_sqlite else _env_db_url
+try:
+    _pg_connect_timeout = int(os.getenv("DATABASE_CONNECT_TIMEOUT", "10"))
+except ValueError:
+    _pg_connect_timeout = 10
 
 # When running as standalone .exe (frozen), avoid requiring PostgreSQL on the target PC:
 # use SQLite if DATABASE_URL is missing or points to localhost (no Postgres installed there).
@@ -64,7 +70,10 @@ if USE_SQLITE:
     data_dir.mkdir(parents=True, exist_ok=True)
     sqlite_path = data_dir / 'gptintermediary.sqlite3'
     DATABASE_URL = f"sqlite:///{sqlite_path.as_posix()}"
-    print(f"[DATABASE] No valid DATABASE_URL found - falling back to SQLite at {sqlite_path}")
+    if _force_sqlite:
+        print(f"[DATABASE] DATABASE_USE_SQLITE enabled - using SQLite at {sqlite_path}")
+    else:
+        print(f"[DATABASE] No valid DATABASE_URL - using SQLite at {sqlite_path}")
 else:
     DATABASE_URL = raw_db_url
     # Mask password in URL for logging
@@ -82,7 +91,18 @@ if DATABASE_URL.startswith('sqlite:'):
     # Use NullPool to avoid issues in bundled executables
     engine = create_engine(DATABASE_URL, poolclass=NullPool, **engine_kwargs)
 else:
-    engine = create_engine(DATABASE_URL, poolclass=NullPool, echo=False, pool_pre_ping=True)
+    _pg_connect_args = {}
+    # psycopg2 (default for postgresql://); asyncpg uses different args - skip timeout there
+    if DATABASE_URL.startswith("postgresql") and "+asyncpg" not in DATABASE_URL:
+        _pg_connect_args["connect_timeout"] = _pg_connect_timeout
+    _pg_engine_kw = dict(
+        poolclass=NullPool,
+        echo=False,
+        pool_pre_ping=True,
+    )
+    if _pg_connect_args:
+        _pg_engine_kw["connect_args"] = _pg_connect_args
+    engine = create_engine(DATABASE_URL, **_pg_engine_kw)
     # Test connection; if PostgreSQL is not running or unreachable, fall back to SQLite
     try:
         with engine.connect():
@@ -98,10 +118,14 @@ else:
         print(f"[DATABASE] Reason: {_pg_fail_msg}")
         print(f"[DATABASE] Using SQLite at: {sqlite_path}")
         print("[DATABASE] To use PostgreSQL: start the server, ensure the DB exists, and set DATABASE_URL in .env")
+        print("[DATABASE] Or set DATABASE_USE_SQLITE=1 to skip PostgreSQL without waiting for connect.")
         engine = create_engine(
             DATABASE_URL, poolclass=NullPool, echo=False,
             connect_args={'check_same_thread': False}
         )
+
+# So code and subprocesses that read os.environ see the URL actually in use (including SQLite fallback).
+os.environ["DATABASE_URL"] = DATABASE_URL
 
 # Create session factory
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

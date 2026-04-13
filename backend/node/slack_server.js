@@ -113,8 +113,10 @@ function initializeSlack() {
         isAuthenticated = false;
         isReady = false;
         
-        // Test connection
-        testConnection();
+        // Test connection (async; catch so a rejection never becomes unhandledRejection → process.exit)
+        testConnection().catch((e) => {
+            console.error('[Slack] testConnection failed:', e && e.stack ? e.stack : e);
+        });
     } catch (error) {
         console.error('[Slack] Error initializing client:', error);
     }
@@ -1150,6 +1152,10 @@ process.on('SIGTERM', () => {
 });
 
 // Start server (init Slack client after listen so port binds immediately on slow/copied dist)
+server.on('error', (err) => {
+    console.error('[Slack] HTTP server error:', err && err.message ? err.message : err);
+});
+
 server.listen(PORT, () => {
     console.log(`[Slack] Server running on http://0.0.0.0:${PORT}`);
     console.log(`[Slack] Health check: http://localhost:${PORT}/health`);
