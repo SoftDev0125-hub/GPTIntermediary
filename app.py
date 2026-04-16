@@ -9,6 +9,39 @@ import shutil
 from pathlib import Path
 
 
+def _is_frozen():
+    """True when running as a PyInstaller bundle (standalone exe)."""
+    return getattr(sys, "frozen", False)
+
+
+def _get_script_dir():
+    """Install / project root: directory of the exe when frozen, else directory of app.py."""
+    if _is_frozen():
+        return os.path.dirname(os.path.abspath(sys.executable))
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+def _child_env(script_dir):
+    """
+    Environment for subprocesses. When frozen, force TMP/TEMP to a folder inside the portable
+    tree so PyInstaller one-file children (backend.exe, chat.exe) unpack under GetTempPath()
+    instead of the system temp (often blocked, cleared, or no-exec on locked-down PCs).
+    """
+    base = {k: v for k, v in os.environ.items() if k not in ("DEBUG", "FLASK_DEBUG", "FLASK_ENV")}
+    if not _is_frozen():
+        return base
+    out = dict(base)
+    pyi_tmp = os.path.join(script_dir, "_pyi_runtime")
+    try:
+        os.makedirs(pyi_tmp, exist_ok=True)
+    except OSError:
+        pass
+    out["TMP"] = pyi_tmp
+    out["TEMP"] = pyi_tmp
+    out["TMPDIR"] = pyi_tmp
+    return out
+
+
 def _maybe_reexec_with_project_venv():
     """If a local venv exists, run under it so subprocesses use the same interpreter."""
     if getattr(sys, "frozen", False):
@@ -31,11 +64,12 @@ def _maybe_reexec_with_project_venv():
 
 _maybe_reexec_with_project_venv()
 
-# Load project root .env so spawned processes inherit env vars
+# Load install .env so spawned processes inherit OPENAI_API_KEY etc. When frozen, __file__ lives
+# under PyInstaller's _MEI* temp dir — use the exe directory (same folder as backend.exe / .env).
 try:
     from dotenv import load_dotenv
-    _app_root = Path(__file__).resolve().parent
-    load_dotenv(_app_root / '.env')
+
+    load_dotenv(Path(_get_script_dir()) / ".env")
 except Exception:
     pass
 
@@ -55,6 +89,7 @@ django_process = None
 whatsapp_node_process = None
 telegram_node_process = None
 slack_node_process = None
+postgres_started = False
 servers_running = False
 backend_log = None
 chat_log = None
@@ -70,16 +105,274 @@ server_startup_done_event = threading.Event()
 DJANGO_DIR = os.path.join("backend", "django_app")
 DJANGO_PORT = 8001
 
-def _is_frozen():
-    """True when running as a PyInstaller bundle (standalone exe)."""
-    return getattr(sys, 'frozen', False)
+
+def _bundled_postgres_bin_dir(script_dir):
+    return os.path.join(script_dir, "postgres_runtime", "bin")
 
 
-def _get_script_dir():
-    """Project/installation root: exe directory when frozen, else directory of app.py."""
-    if _is_frozen():
-        return os.path.dirname(os.path.abspath(sys.executable))
-    return os.path.dirname(os.path.abspath(__file__))
+def _bundled_postgres_available(script_dir):
+    return os.path.isfile(os.path.join(_bundled_postgres_bin_dir(script_dir), "pg_ctl.exe"))
+
+
+def _is_cloud_or_network_install_path(path):
+    """True when install/data is likely on a sync client or UNC path (PostgreSQL + DLLs often break there)."""
+    try:
+        p = os.path.normpath(os.path.abspath(path)).lower().replace("/", "\\")
+    except OSError:
+        p = (path or "").lower().replace("/", "\\")
+    if p.startswith("\\\\"):
+        return True
+    markers = (
+        "onedrive",
+        "dropbox",
+        "google drive",
+        "icloud",
+        "\\box\\",
+        "sharepoint",
+        "creative cloud files",
+    )
+    return any(m in p for m in markers)
+
+
+def _warn_if_risky_install_path(script_dir):
+    """OneDrive and similar paths cause corrupt DLLs (0xc000012f) and pg_ctl failures."""
+    if not _is_frozen():
+        return
+    if not _is_cloud_or_network_install_path(script_dir):
+        return
+    print(
+        "[!] Install path looks like OneDrive, Dropbox, iCloud, or a network share. "
+        "That often breaks bundled PostgreSQL and can corrupt runtime DLLs (e.g. vcruntime140.dll, error 0xc000012f)."
+    )
+    print(
+        "[!] Fix: move the whole GPTIntermediary folder to a local folder such as "
+        "C:\\Apps\\GPTIntermediary (not synced), then run again."
+    )
+    print(
+        "[!] Optional: set BUNDLED_POSTGRES_DISABLE=1 in .env to skip bundled PostgreSQL and use SQLite."
+    )
+
+
+def _bundled_postgres_skip_reason(script_dir):
+    """
+    Returns a human-readable skip reason, or None if we should attempt start.
+    """
+    if os.environ.get("BUNDLED_POSTGRES_DISABLE", "").strip().lower() in ("1", "true", "yes"):
+        return "BUNDLED_POSTGRES_DISABLE is set in the environment"
+    if _is_cloud_or_network_install_path(script_dir) and os.environ.get(
+        "FORCE_BUNDLED_POSTGRES", ""
+    ).strip().lower() not in ("1", "true", "yes"):
+        return (
+            "install path is on OneDrive/cloud/network (unreliable for PostgreSQL data). "
+            "Move the app to a local disk, or set FORCE_BUNDLED_POSTGRES=1 to try anyway, "
+            "or set BUNDLED_POSTGRES_DISABLE=1 to use SQLite only."
+        )
+    return None
+
+
+def _print_text_file_tail(path, label, max_lines=40):
+    if not path or not os.path.isfile(path):
+        return
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+        if not lines:
+            return
+        tail = lines[-max_lines:] if len(lines) > max_lines else lines
+        print(f"[!] Last lines of {label}:")
+        for line in tail:
+            print("    " + line.rstrip())
+    except OSError as e:
+        print(f"[!] Could not read {label}: {e}")
+
+
+def _maybe_start_bundled_postgres(script_dir, log_dir):
+    """
+    Start portable PostgreSQL if `postgres_runtime/bin/pg_ctl.exe` exists.
+    Safe no-op when runtime is absent.
+    """
+    global postgres_started
+
+    if not _bundled_postgres_available(script_dir):
+        return
+
+    skip = _bundled_postgres_skip_reason(script_dir)
+    if skip:
+        print(f"[!] Bundled PostgreSQL skipped: {skip}")
+        return
+
+    try:
+        pg_bin = _bundled_postgres_bin_dir(script_dir)
+        data_dir = os.path.join(script_dir, "data", "postgres_data")
+        os.makedirs(data_dir, exist_ok=True)
+        os.makedirs(log_dir, exist_ok=True)
+
+        # Keep portable DB isolated from default PostgreSQL service port.
+        try:
+            pg_port = int(os.environ.get("BUNDLED_POSTGRES_PORT", "5433"))
+        except ValueError:
+            pg_port = 5433
+        pg_host = os.environ.get("BUNDLED_POSTGRES_HOST", "127.0.0.1").strip() or "127.0.0.1"
+
+        pg_ctl = os.path.join(pg_bin, "pg_ctl.exe")
+        initdb = os.path.join(pg_bin, "initdb.exe")
+        createdb = os.path.join(pg_bin, "createdb.exe")
+        psql = os.path.join(pg_bin, "psql.exe")
+        pg_log = os.path.join(log_dir, "postgres_server.log")
+        _winflag = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+
+        if not os.path.isfile(os.path.join(data_dir, "PG_VERSION")):
+            print("[*] Initializing bundled PostgreSQL data directory...")
+            ir = subprocess.run(
+                [initdb, "-D", data_dir, "-U", "postgres", "-A", "trust", "--encoding=UTF8"],
+                capture_output=True,
+                text=True,
+                creationflags=_winflag,
+            )
+            if ir.returncode != 0:
+                err = (ir.stderr or ir.stdout or "").strip()
+                raise RuntimeError(f"initdb failed (exit {ir.returncode}): {err or 'no output'}")
+
+        print(f"[*] Starting bundled PostgreSQL on {pg_host}:{pg_port} ...")
+        sr = subprocess.run(
+            [
+                pg_ctl,
+                "-D",
+                data_dir,
+                "-l",
+                pg_log,
+                "-o",
+                f"-p {pg_port} -h {pg_host}",
+                "start",
+                "-w",
+                "-t",
+                "35",
+            ],
+            capture_output=True,
+            text=True,
+            creationflags=_winflag,
+        )
+        if sr.returncode != 0:
+            err = (sr.stderr or sr.stdout or "").strip()
+            print(f"[!] pg_ctl start failed (exit {sr.returncode}): {err or 'no stderr'}")
+            _print_text_file_tail(pg_log, "postgres_server.log")
+            raise RuntimeError(f"pg_ctl start failed (exit {sr.returncode})")
+
+        # Ensure expected application DB exists.
+        try:
+            subprocess.run(
+                [
+                    createdb,
+                    "-h",
+                    pg_host,
+                    "-p",
+                    str(pg_port),
+                    "-U",
+                    "postgres",
+                    "gptintermediarydb",
+                ],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=_winflag,
+            )
+        except Exception:
+            pass
+
+        # Point backend to bundled PostgreSQL only if user did not force another DB.
+        configured_db = (os.environ.get("DATABASE_URL") or "").strip()
+        if not configured_db or "localhost" in configured_db or "127.0.0.1" in configured_db:
+            os.environ["DATABASE_URL"] = (
+                f"postgresql://postgres@{pg_host}:{pg_port}/gptintermediarydb"
+            )
+            print("[*] DATABASE_URL set to bundled PostgreSQL runtime.")
+
+        # Fast readiness check (best effort)
+        try:
+            subprocess.run(
+                [
+                    psql,
+                    "-h",
+                    pg_host,
+                    "-p",
+                    str(pg_port),
+                    "-U",
+                    "postgres",
+                    "-d",
+                    "postgres",
+                    "-c",
+                    "select 1;",
+                ],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=_winflag,
+            )
+        except Exception:
+            pass
+
+        postgres_started = True
+        print("[OK] Bundled PostgreSQL ready.")
+    except Exception as e:
+        postgres_started = False
+        print(f"[!] Bundled PostgreSQL could not be started: {e}")
+        print("[!] Continuing; backend may fall back to SQLite.")
+        if _is_cloud_or_network_install_path(script_dir):
+            print(
+                "[!] If you moved this folder off OneDrive/cloud, delete the folder "
+                "'data\\\\postgres_data' once (stale cluster from the old path) and try again."
+            )
+
+
+def _maybe_stop_bundled_postgres(script_dir):
+    global postgres_started
+    if not postgres_started:
+        return
+    pg_ctl = os.path.join(_bundled_postgres_bin_dir(script_dir), "pg_ctl.exe")
+    data_dir = os.path.join(script_dir, "data", "postgres_data")
+    if not os.path.isfile(pg_ctl) or not os.path.isdir(data_dir):
+        postgres_started = False
+        return
+    try:
+        subprocess.run(
+            [pg_ctl, "-D", data_dir, "stop", "-m", "fast", "-w", "-t", "20"],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+        )
+        print("[OK] Bundled PostgreSQL stopped.")
+    except Exception as e:
+        print(f"[!] Failed to stop bundled PostgreSQL cleanly: {e}")
+    finally:
+        postgres_started = False
+
+
+def _verify_portable_bundle(script_dir):
+    """When frozen, fail fast with clear messages if dist/GPTIntermediary was copied incompletely."""
+    if not _is_frozen():
+        return True
+    missing = []
+    for rel in (
+        "backend.exe",
+        "chat.exe",
+        os.path.join("node_runtime", "node.exe"),
+        "frontend",
+        "node_modules",
+    ):
+        p = os.path.join(script_dir, rel)
+        if not os.path.exists(p):
+            missing.append(rel)
+    if missing:
+        print("[!] Portable build is incomplete. Missing next to GPTIntermediary.exe:")
+        for m in missing:
+            print(f"    - {m}")
+        print(
+            "[!] Copy the entire dist/GPTIntermediary folder (or full dist/ from build), "
+            "not only the .exe file."
+        )
+        return False
+    return True
 
 
 def _resolve_node_executable(script_dir):
@@ -174,6 +467,10 @@ def start_servers():
     # Make sure we're in the right directory (exe dir when frozen)
     script_dir = _get_script_dir()
     os.chdir(script_dir)
+    if not _verify_portable_bundle(script_dir):
+        servers_running = False
+        server_startup_done_event.set()
+        return
 
     backend_py_dir = os.path.join(script_dir, "backend", "python")
     frozen = _is_frozen()
@@ -192,6 +489,9 @@ def start_servers():
         print(f"[*] Logs (if servers fail): {log_dir}")
     
     try:
+        _warn_if_risky_install_path(script_dir)
+        _maybe_start_bundled_postgres(script_dir, log_dir)
+
         # Start backend server (backend/python/main.py on port 8000)
         print("[*] Starting backend server (main.py on port 8000)...")
         try:
@@ -216,8 +516,7 @@ def start_servers():
                 stdout=backend_log,  # Write to log file
                 stderr=backend_log,  # Write errors to log file
                 cwd=backend_cwd,
-                # Prevent child from inheriting debug/reloader environment variables
-                env={k: v for k, v in os.environ.items() if k not in ('DEBUG', 'FLASK_DEBUG', 'FLASK_ENV')},
+                env=_child_env(script_dir),
                 creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
             )
             time.sleep(2)  # Reduced initial wait - verification loop will handle longer waits
@@ -325,8 +624,7 @@ def start_servers():
                 stdout=chat_log if chat_log else subprocess.DEVNULL,
                 stderr=chat_log if chat_log else subprocess.DEVNULL,
                 cwd=chat_cwd,
-                # Ensure child process doesn't inherit debug/reloader env vars
-                env={k: v for k, v in os.environ.items() if k not in ('DEBUG', 'FLASK_DEBUG', 'FLASK_ENV')},
+                env=_child_env(script_dir),
                 creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
             )
             time.sleep(1)  # initial short wait
@@ -397,7 +695,7 @@ def start_servers():
                         django_log = open(os.path.join(log_dir, 'django_server.log'), 'a', encoding='utf-8')
                     except Exception:
                         django_log = None
-                    env = os.environ.copy()
+                    env = _child_env(script_dir)
                     env["DJANGO_PORT"] = str(DJANGO_PORT)
                     if frozen and django_exe:
                         django_process = subprocess.Popen(
@@ -456,7 +754,8 @@ def start_servers():
                         [node_exe, '--version'],
                         capture_output=True,
                         timeout=2,
-                        cwd=script_dir
+                        cwd=script_dir,
+                        env=_child_env(script_dir),
                     )
                     if node_check.returncode != 0:
                         raise FileNotFoundError("Node.js not found")
@@ -482,6 +781,7 @@ def start_servers():
                         stdout=(whatsapp_log if whatsapp_log else subprocess.DEVNULL),
                         stderr=(whatsapp_log if whatsapp_log else subprocess.DEVNULL),
                         cwd=script_dir,
+                        env=_child_env(script_dir),
                         creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
                     )
                     whatsapp_node_process = wa_proc
@@ -534,7 +834,8 @@ def start_servers():
                             [node_exe, '--version'],
                             capture_output=True,
                             timeout=2,
-                            cwd=script_dir
+                            cwd=script_dir,
+                            env=_child_env(script_dir),
                         )
                         if node_check.returncode != 0:
                             raise FileNotFoundError("Node.js not found")
@@ -556,6 +857,7 @@ def start_servers():
                         stdout=(telegram_log if telegram_log else subprocess.DEVNULL),
                         stderr=(telegram_log if telegram_log else subprocess.DEVNULL),
                         cwd=script_dir,
+                        env=_child_env(script_dir),
                         creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
                     )
                     telegram_node_process = tg_proc
@@ -597,7 +899,8 @@ def start_servers():
                             [node_exe, '--version'],
                             capture_output=True,
                             timeout=2,
-                            cwd=script_dir
+                            cwd=script_dir,
+                            env=_child_env(script_dir),
                         )
                         if node_check.returncode != 0:
                             raise FileNotFoundError("Node.js not found")
@@ -619,6 +922,7 @@ def start_servers():
                         stdout=(slack_log if slack_log else subprocess.DEVNULL),
                         stderr=(slack_log if slack_log else subprocess.DEVNULL),
                         cwd=script_dir,
+                        env=_child_env(script_dir),
                         creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
                     )
                     slack_node_process = sl_proc
@@ -773,6 +1077,8 @@ def stop_servers(startup_cleanup=False):
     global backend_process, chat_process, django_process, whatsapp_node_process, telegram_node_process, slack_node_process, servers_running
     global backend_log, chat_log, django_log, whatsapp_log, telegram_log, slack_log
     
+    script_dir = _get_script_dir()
+
     if not servers_running:
         # Even if servers_running is False, try to kill processes by port
         if startup_cleanup:
@@ -785,6 +1091,7 @@ def stop_servers(startup_cleanup=False):
         kill_process_by_port(3001)  # Telegram Node.js
         kill_process_by_port(3002)  # Slack Node.js
         kill_process_by_port(DJANGO_PORT)  # Django
+        _maybe_stop_bundled_postgres(script_dir)
         return
     
     print("[*] Stopping servers...")
@@ -902,6 +1209,7 @@ def stop_servers(startup_cleanup=False):
     kill_process_by_port(3001)  # Telegram Node.js
     kill_process_by_port(3002)  # Slack Node.js
     kill_process_by_port(DJANGO_PORT)  # Django
+    _maybe_stop_bundled_postgres(script_dir)
     
     # Reset process variables
     backend_process = None

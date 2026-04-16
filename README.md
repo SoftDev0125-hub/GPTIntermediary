@@ -194,6 +194,95 @@ python backend/python/init_tables.py
 python backend/python/connect_database.py
 ```
 
+## 📦 Build Portable Windows App (No Python/Node install on target PC)
+
+You can create a portable Windows bundle that runs on other PCs without installing Python or Node.js.
+
+### Build on your development machine
+
+```bash
+python build.py
+```
+
+If the project has a `venv` folder, `build.py` automatically switches to `venv\Scripts\python.exe` so PyInstaller bundles the same libraries you installed with `pip install -r requirements.txt`. If you see `ModuleNotFoundError` inside `backend.exe` after copying the app, rebuild from a venv that has all requirements installed (or run `.\venv\Scripts\python.exe build.py` explicitly).
+
+This runs `tools/build_exe.py` and creates:
+
+- `dist/GPTIntermediary/GPTIntermediary.exe` (desktop launcher)
+- `dist/GPTIntermediary/backend.exe`
+- `dist/GPTIntermediary/chat.exe`
+- `dist/GPTIntermediary/django.exe` (optional; see smaller builds below)
+- bundled Node runtime in `dist/GPTIntermediary/node_runtime`
+- `frontend`, `backend/node`, and `node_modules` (production-only npm install; pruned copy)
+
+### Smaller portable builds (optional)
+
+The portable folder is large mainly because of **multiple PyInstaller exes**, **`node_modules`**, and optionally **Puppeteer’s Chromium** and **PostgreSQL**. To shrink the bundle while keeping the chat + API stack working:
+
+| Environment variable | Effect |
+|----------------------|--------|
+| `PORTABLE_INCLUDE_PUPPETEER_CHROME=1` | **Include** Puppeteer’s downloaded Chromium (large). **Default:** omitted — target PC should have **Google Chrome** (or Edge) for WhatsApp Web, or set `PUPPETEER_EXECUTABLE_PATH`. |
+| `PORTABLE_SKIP_DJANGO_EXE=1` | Do not build or ship `django.exe` if you do not use the Django service. |
+| `PORTABLE_SKIP_GMAIL_EXE=1` | Do not build or ship `get_gmail_token.exe` if OAuth was done on another machine. |
+
+Example (PowerShell) before `python build.py`:
+
+```powershell
+$env:PORTABLE_SKIP_DJANGO_EXE="1"
+$env:PORTABLE_SKIP_GMAIL_EXE="1"
+python build.py
+```
+
+Do **not** set `POSTGRES_RUNTIME_DIR` if you want the smallest layout and are fine with **SQLite** on the target PC.
+
+`python build.py` runs **`npm ci --omit=dev`** when `package-lock.json` exists, so your root `node_modules` is production-only after a build. Run `npm install` again locally if you still need dev-only packages for development.
+
+### Optional: bundle PostgreSQL runtime too
+
+If you want PostgreSQL included (portable, no install required on target PC), set an environment variable before build:
+
+```powershell
+$env:POSTGRES_RUNTIME_DIR="C:\path\to\portable-postgres"
+python build.py
+```
+
+`POSTGRES_RUNTIME_DIR` must point to a folder containing `bin\pg_ctl.exe`.
+
+When present, the app auto-starts bundled PostgreSQL on launch (default `127.0.0.1:5433`) and stops it when app closes.
+
+#### Quick helper (auto-download portable PostgreSQL)
+
+Use the included script to download and extract portable PostgreSQL binaries, then copy/paste the printed path:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\setup_portable_postgres.ps1
+```
+
+Then run:
+
+```powershell
+$env:POSTGRES_RUNTIME_DIR="C:\full\path\printed\by\script"
+python build.py
+```
+
+Optional parameters:
+
+```powershell
+# Different PostgreSQL binary package version
+powershell -ExecutionPolicy Bypass -File .\tools\setup_portable_postgres.ps1 -Version "16.8-1"
+
+# Custom output folder
+powershell -ExecutionPolicy Bypass -File .\tools\setup_portable_postgres.ps1 -OutputRoot "D:\portable-deps"
+```
+
+### Deploy to another computer
+
+1. Copy the whole `dist/GPTIntermediary` folder (not only `.exe`)
+2. Put `.env` in that same folder (next to `GPTIntermediary.exe`)
+3. Run `GPTIntermediary.exe`
+
+If PostgreSQL runtime is not bundled or fails to start, the backend automatically falls back to SQLite (`data/gptintermediary.sqlite3`).
+
 ## 🎯 Quick Start
 
 ### Option 1: All-in-One Launcher (Recommended)

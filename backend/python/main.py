@@ -24,9 +24,17 @@ import requests
 from pathlib import Path
 from dotenv import load_dotenv
 
-# Load project root .env only (GPTIntermediary/.env)
-_load_env_root = Path(__file__).resolve().parent.parent.parent
-load_dotenv(_load_env_root / '.env')
+
+def _get_project_root():
+    """Project root: when frozen (PyInstaller exe), use exe directory; otherwise backend/python/../.."""
+    if getattr(sys, 'frozen', False):
+        return os.path.dirname(os.path.abspath(sys.executable))
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+
+
+# Load project root .env only (GPTIntermediary/.env). Must use _get_project_root(): one-file PyInstaller
+# sets __file__ under _MEI*, so Path(__file__).parents is not the install directory when frozen.
+load_dotenv(Path(_get_project_root()) / '.env')
 
 # Early logging so helper functions can safely log before full app init
 logging.basicConfig(
@@ -34,13 +42,6 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
-
-
-def _get_project_root():
-    """Project root: when frozen (PyInstaller exe), use exe directory; otherwise backend/python/../.."""
-    if getattr(sys, 'frozen', False):
-        return os.path.dirname(sys.executable)
-    return os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 
 
 # Robust env loader (fallback to manual .env parsing) to handle .env lines with spaces

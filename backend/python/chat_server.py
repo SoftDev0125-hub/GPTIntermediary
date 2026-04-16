@@ -29,7 +29,7 @@ from services.google_cse import (
 def _get_project_root():
     """Project root: when frozen (PyInstaller exe), use exe directory; otherwise backend/python/../.."""
     if getattr(sys, 'frozen', False):
-        return os.path.dirname(sys.executable)
+        return os.path.dirname(os.path.abspath(sys.executable))
     return os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 
 
