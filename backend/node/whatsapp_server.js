@@ -60,6 +60,8 @@ let readyFallbackTimeout = null;
 // Warmup delay: wait this many ms after 'ready' before allowing getChats/getChatById (WhatsApp Web needs time to initialize).
 // Large accounts (5k–10k+ contacts) need more time; set WHATSAPP_CHATS_WARMUP_MS=45000 if you see getChats retries/failures.
 const CHATS_WARMUP_MS = process.env.WHATSAPP_CHATS_WARMUP_MS ? Math.max(5000, parseInt(process.env.WHATSAPP_CHATS_WARMUP_MS, 10)) : 20000; // default 20s
+/** When to start background getChats() after `ready` (runs in parallel with warmup; was equal to CHATS_WARMUP_MS). */
+const CHATS_PREFETCH_MS = process.env.WHATSAPP_CHATS_PREFETCH_MS ? Math.max(1000, parseInt(process.env.WHATSAPP_CHATS_PREFETCH_MS, 10)) : 3000; // default 3s
 /**
  * Optional ms to wait after `ready` before the first message fetch (WhatsApp Web race mitigation).
  * Default 0 restores immediate fetches like earlier builds; set e.g. WHATSAPP_MESSAGES_MIN_READY_MS=5000 if you see empty first loads.
@@ -76,8 +78,14 @@ const MESSAGES_MIN_READY_MS = (() => {
 const CHATS_CACHE_MS = 300000; // 5 minutes (large accounts may scroll 10k+ contacts)
 let chatsCache = null;
 let chatsCacheAt = 0;
+/** Serialized sidebar rows built once per chatsCache refresh (mapping 10k+ chats per HTTP request was freezing the UI) */
+let chatsListRowsCache = null;
 /** True while getChats() is running in the background; clients get loading: true until cache is ready */
 let chatsCacheLoading = false;
+/** Stop spinning getChats after repeated failures until next ready or client sends reset_chat_list_retry */
+let chatListBackgroundDisabled = false;
+let chatsCacheConsecutiveFailures = 0;
+let chatsCacheLastLoadError = null;
 // Cache messages so media can be fetched later even when whatsapp-web.js can't resolve by id (common for older messages)
 const messageCacheById = new Map(); // messageId -> Message
 
@@ -450,6 +458,45 @@ async function contactIdCandidatesWithLookup(rawContactId) {
     return out;
 }
 
+function chatToContactRow(chat) {
+    const last = chat.lastMessage || null;
+    const chatId = serializeChatId(chat);
+    const lastMsgId = serializeMessageId(last);
+    const idObj = chat && chat.id && typeof chat.id === 'object' ? chat.id : null;
+    return {
+        contact_id: chatId,
+        contact_user: idObj && idObj.user ? idObj.user : null,
+        contact_server: idObj && idObj.server ? idObj.server : null,
+        name: chat.name || (idObj && idObj.user) || 'Unknown',
+        is_group: !!chat.isGroup,
+        last_message_id: lastMsgId,
+        last_message: last && last.body ? String(last.body) : '',
+        last_message_time: last && typeof last.timestamp === 'number' ? last.timestamp : null,
+        last_message_from_me: last && typeof last.fromMe === 'boolean' ? last.fromMe : null,
+        last_message_type: last && last.type ? String(last.type) : null,
+        last_message_has_media: last && typeof last.hasMedia === 'boolean' ? last.hasMedia : null,
+        unread_count: chat.unreadCount || 0,
+        avatar_url: null
+    };
+}
+
+function rebuildChatsListRowsCacheFromChats(chats) {
+    if (!chats || !Array.isArray(chats)) {
+        chatsListRowsCache = null;
+        return;
+    }
+    const rows = [];
+    for (let i = 0; i < chats.length; i++) {
+        try {
+            const row = chatToContactRow(chats[i]);
+            if (row.contact_id) rows.push(row);
+        } catch (e) {
+            /* skip malformed chat */
+        }
+    }
+    chatsListRowsCache = rows;
+}
+
 /** Resolve a Chat instance from the getChats() cache (same object fetchMessages needs when getChatById(id) fails). */
 function findCachedChatByContactId(rawContactId) {
     const primary = String(rawContactId || '').trim();
@@ -534,6 +581,7 @@ async function checkAndResetIfSessionDeleted() {
         client = null;
         chatsCache = null;
         chatsCacheAt = 0;
+        chatsListRowsCache = null;
         isAuthenticated = false;
         isReady = false;
         lastAuthenticatedAt = 0;
@@ -635,6 +683,17 @@ function initializeWhatsApp() {
             '--disable-gpu'
         ]
     };
+    // Default Puppeteer CDP timeout (~180s) aborts client.getChats() on very large accounts mid-call.
+    const protoTimeoutRaw = process.env.WHATSAPP_PUPPETEER_PROTOCOL_TIMEOUT_MS;
+    let protocolTimeoutMs = 600000;
+    if (protoTimeoutRaw != null && String(protoTimeoutRaw).trim() !== '') {
+        const n = parseInt(String(protoTimeoutRaw).trim(), 10);
+        if (Number.isFinite(n) && n >= 0) protocolTimeoutMs = n;
+    }
+    puppeteerOpts.protocolTimeout = protocolTimeoutMs;
+    if (protocolTimeoutMs > 0) {
+        console.log('[WhatsApp] Puppeteer protocolTimeout ms:', protocolTimeoutMs);
+    }
 
     /**
      * Puppeteer 24+ does not ship Chromium inside node_modules; it must be downloaded (`npx puppeteer browsers install chrome`)
@@ -774,6 +833,9 @@ function initializeWhatsApp() {
         console.log('[WhatsApp] Client is ready!');
         wwebDegradedBannerLogged = false;
         wwebDegradedAvatarBulkWarned = false;
+        chatListBackgroundDisabled = false;
+        chatsCacheConsecutiveFailures = 0;
+        chatsCacheLastLoadError = null;
         isAuthenticated = true;
         isReady = true;
         lastAuthenticatedAt = Date.now();
@@ -784,8 +846,9 @@ function initializeWhatsApp() {
         } catch (e) {
             console.error('[WhatsApp] Could not write auth flag:', e);
         }
-        // Preload all chats in background after warmup (enables accurate display for 10k+ contacts without blocking)
-        setTimeout(() => startBackgroundGetChats(), CHATS_WARMUP_MS);
+        // Preload chats soon after ready (parallel with warmup; sidebar can show as soon as getChats() fills cache)
+        setTimeout(() => startBackgroundGetChats(), CHATS_PREFETCH_MS);
+        console.log('[WhatsApp] Chat list prefetch in', CHATS_PREFETCH_MS, 'ms (warmup gate', CHATS_WARMUP_MS, 'ms unless cache ready)');
 
         // Emit ready event to all connected clients
         const readyPayload = {
@@ -967,6 +1030,10 @@ function initializeWhatsApp() {
                 console.log('[WhatsApp] Using authenticated fallback (ready event did not fire)');
                 isReady = true;
                 readyAt = Date.now();
+                chatListBackgroundDisabled = false;
+                chatsCacheConsecutiveFailures = 0;
+                chatsCacheLastLoadError = null;
+                setTimeout(() => startBackgroundGetChats(), CHATS_PREFETCH_MS);
                 const fallbackPayload = {
                     is_connected: true,
                     is_authenticated: true,
@@ -1014,7 +1081,8 @@ function initializeWhatsApp() {
             client = null;
             chatsCache = null;
             chatsCacheAt = 0;
-            initializeWhatsApp();
+            chatsListRowsCache = null;
+                initializeWhatsApp();
         }
     });
 
@@ -1079,6 +1147,7 @@ app.get('/api/whatsapp/qr-code', async (req, res) => {
                     client = null;
                     chatsCache = null;
                     chatsCacheAt = 0;
+                    chatsListRowsCache = null;
                 }
                 isAuthenticated = false;
                 isReady = false;
@@ -1286,7 +1355,13 @@ app.post('/api/whatsapp/contacts', async (req, res) => {
     try {
         // Check if session folder was deleted and reset if needed
         await checkAndResetIfSessionDeleted();
-        
+
+        if (req.body && req.body.reset_chat_list_retry) {
+            chatListBackgroundDisabled = false;
+            chatsCacheConsecutiveFailures = 0;
+            chatsCacheLastLoadError = null;
+        }
+
         if (!isReady || !client) {
             return res.status(400).json({
                 success: false,
@@ -1294,10 +1369,10 @@ app.post('/api/whatsapp/contacts', async (req, res) => {
             });
         }
 
-        // During warmup after 'ready', respond immediately with loading: true so the proxy does not timeout.
-        // The client polls when loading is true; warmup and background getChats are already scheduled on 'ready'.
+        // During warmup, return loading unless getChats() already finished — then return contacts immediately.
         const timeSinceReady = readyAt ? (Date.now() - readyAt) : 0;
-        if (timeSinceReady < CHATS_WARMUP_MS) {
+        const chatListReadyForUi = chatsCache && chatsCache.length > 0 && !chatsCacheLoading;
+        if (timeSinceReady < CHATS_WARMUP_MS && !chatListReadyForUi) {
             const waitMs = CHATS_WARMUP_MS - timeSinceReady;
             const waitSeconds = Math.max(2, Math.ceil(waitMs / 1000));
             console.log(`[WhatsApp] Still in warmup (${waitMs}ms remaining) - returning loading so client can poll`);
@@ -1309,7 +1384,22 @@ app.post('/api/whatsapp/contacts', async (req, res) => {
                 loading: true,
                 wait_seconds: waitSeconds,
                 contacts: [],
-                message: `WhatsApp is initializing. Chats will load in about ${waitSeconds}s.`
+                message: `WhatsApp is initializing. Chats appear as soon as the list is ready (up to ~${waitSeconds}s).`
+            });
+        }
+
+        if (chatListBackgroundDisabled && !chatsCache) {
+            const hint =
+                (chatsCacheLastLoadError ? `Could not load chats: ${chatsCacheLastLoadError}. ` : '') +
+                'See logs/whatsapp_server.log. For very large accounts try WHATSAPP_PUPPETEER_PROTOCOL_TIMEOUT_MS=900000 and WHATSAPP_CHATS_WARMUP_MS=45000, then click Refresh.';
+            return res.json({
+                success: true,
+                count: 0,
+                total_count: 0,
+                has_more: false,
+                loading: false,
+                contacts: [],
+                chat_list_error: hint
             });
         }
 
@@ -1336,33 +1426,20 @@ app.post('/api/whatsapp/contacts', async (req, res) => {
         }
 
         const chats = chatsCache;
-        const allContacts = (chats || []).map(chat => {
-            const last = chat.lastMessage || null;
-            const chatId = serializeChatId(chat);
-            const lastMsgId = serializeMessageId(last);
-            const idObj = chat && chat.id && typeof chat.id === 'object' ? chat.id : null;
-            return ({
-                contact_id: chatId,
-                contact_user: idObj && idObj.user ? idObj.user : null,
-                contact_server: idObj && idObj.server ? idObj.server : null,
-                name: chat.name || (idObj && idObj.user) || 'Unknown',
-                is_group: !!chat.isGroup,
-                last_message_id: lastMsgId,
-                last_message: (last && last.body) ? String(last.body) : '',
-                last_message_time: (last && typeof last.timestamp === 'number') ? last.timestamp : null,
-                last_message_from_me: (last && typeof last.fromMe === 'boolean') ? last.fromMe : null,
-                last_message_type: (last && last.type) ? String(last.type) : null,
-                last_message_has_media: (last && typeof last.hasMedia === 'boolean') ? last.hasMedia : null,
-                unread_count: chat.unreadCount || 0,
-                avatar_url: null
-            });
-        }).filter(c => c.contact_id); // omit chats with no extractable ID (e.g. malformed from library)
+        if (!chatsListRowsCache && chats && chats.length) {
+            try {
+                rebuildChatsListRowsCacheFromChats(chats);
+            } catch (e) {
+                console.error('[WhatsApp] contacts: rebuild rows cache failed:', e.message);
+            }
+        }
+        const allContacts = chatsListRowsCache || [];
         const contacts = allContacts.slice(offset, offset + limit);
         const totalCount = allContacts.length;
         const has_more = offset + contacts.length < totalCount;
 
         // If we had chats but all were filtered out (unexpected id format), tell the user to retry
-        const rawCount = (chats || []).length;
+        const rawCount = chats && chats.length ? chats.length : 0;
         if (rawCount > 0 && totalCount === 0) {
             console.warn('[WhatsApp] All', rawCount, 'chats were filtered out (contact_id could not be extracted). Returning loading so client can retry.');
             return res.json({
@@ -1437,6 +1514,12 @@ async function getChatsWithRetryAndCache() {
             if (chats && chats.length > 0) {
                 chatsCache = chats;
                 chatsCacheAt = Date.now();
+                try {
+                    rebuildChatsListRowsCacheFromChats(chats);
+                } catch (e) {
+                    console.error('[WhatsApp] rebuildChatsListRowsCacheFromChats:', e.message);
+                    chatsListRowsCache = null;
+                }
             }
             return chats || [];
         } catch (err) {
@@ -1458,7 +1541,7 @@ async function getChatsWithRetryAndCache() {
  * Call after warmup. Safe to call when already loading (no-op).
  */
 function startBackgroundGetChats() {
-    if (chatsCacheLoading || !client) return;
+    if (chatListBackgroundDisabled || chatsCacheLoading || !client) return;
     const now = Date.now();
     if (chatsCache && (now - chatsCacheAt) < CHATS_CACHE_MS) return;
     chatsCacheLoading = true;
@@ -1466,9 +1549,20 @@ function startBackgroundGetChats() {
     getChatsWithRetryAndCache()
         .then((chats) => {
             console.log('[WhatsApp] Background getChats completed:', (chats || []).length, 'chats');
+            chatsCacheConsecutiveFailures = 0;
+            chatListBackgroundDisabled = false;
+            chatsCacheLastLoadError = null;
         })
         .catch((err) => {
             console.error('[WhatsApp] Background getChats failed:', err.message);
+            chatsCacheLastLoadError = err.message || String(err);
+            chatsCacheConsecutiveFailures += 1;
+            if (chatsCacheConsecutiveFailures >= 3) {
+                chatListBackgroundDisabled = true;
+                console.error(
+                    '[WhatsApp] Chat list loading paused after repeated failures. Fix the underlying error (see log), adjust WHATSAPP_PUPPETEER_PROTOCOL_TIMEOUT_MS if needed, then click Refresh.'
+                );
+            }
         })
         .finally(() => {
             chatsCacheLoading = false;

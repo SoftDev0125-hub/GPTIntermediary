@@ -1200,14 +1200,28 @@
         /**
          * Voice Mode (intended behavior):
          * - User speaks → after 5s with no new recognition, send transcript and reply with TTS.
-         * - While assistant TTS is playing, user speech cancels TTS and is processed (same 5s rule).
-         * - Within ~1.5s after TTS ends, recognition may be ignored (speaker echo).
+         * - While the assistant is fetching a reply or playing spoken output, browser recognition is aborted/stopped,
+         *   onresult ignores input, and the mic is not started until idle (voiceChatRequestPending + pipeline turn + TTS/audio,
+         *   including speechSynthesis.pending so there is no pre-speaking gap).
+         * - Listening resumes only after spoken output has fully finished, then after TTS_POST_ECHO_TAIL_MS ring-down
+         *   (isVoiceCaptureBlockedForAssistant includes that ring-down so recognition cannot restart early).
+         * - No voice barge-in: the mic does not accept commands or questions until the assistant finishes speaking.
          * - 5s after TTS finishes with no recognition activity → exit Voice Mode (mic off).
          * - Starting a new voice send cancels that exit timer (follow-up questions stay in Voice Mode).
-         * - "Stop" / "stop voice" (and related phrases) during TTS → exit Voice Mode immediately.
-         * - Same stop phrases when not speaking → cancel TTS if any, do not send to chat, stay in Voice Mode.
+         * - "Stop" / "stop voice" when the assistant is not speaking → cancel TTS if any, do not send to chat, stay in Voice Mode.
+         * - Exception: clicking the mic while assistant audio is playing stops playback immediately (browser TTS,
+         *   pipeline reply audio, or Realtime). Browser voice mode stays on and listening resumes after ring-down;
+         *   pipeline push-to-talk does not start a new recording on that same click.
          */
         let ttsPlaying = false;
+        /** True from a voice-initiated /chat send until that reply's TTS finishes (or errors). Stays true through fetch + playback so mic/STT never treats assistant audio as input. */
+        let voiceChatRequestPending = false;
+        /** True from OpenAI pipeline /voice/process request until reply audio ends (or error / stop). Covers fetch + playback so push-to-talk cannot record over the assistant. */
+        let voicePipelineTurnPending = false;
+        /** Incremented when assistant TTS is cancelled or when a new assistant utterance starts; stale utterance onend/onerror handlers no-op. */
+        let assistantVoiceUtteranceToken = 0;
+        /** Mic click interrupted TTS: next utterance finish skips long post-TTS echo cooldown for faster resume. */
+        let skipAssistantTtsEchoCooldownOnce = false;
         let ttsCooldownUntil = 0;
         let silenceTimer = null;
         let postTtsSilenceExitTimer = null;
@@ -1320,6 +1334,9 @@
             return getVoiceEngine() === 'openai_pipeline';
         }
 
+        /** Ignore recognition briefly after browser TTS ends (speaker → mic ring-down). */
+        const TTS_POST_ECHO_TAIL_MS = 2200;
+
         function isPipelineOrRealtimeAudioPlaying() {
             try {
                 if (pipelineAudioEl && !pipelineAudioEl.paused && !pipelineAudioEl.ended) return true;
@@ -1334,8 +1351,67 @@
 
         function isTtsActive() {
             if (ttsPlaying) return true;
-            if ('speechSynthesis' in window && window.speechSynthesis.speaking) return true;
+            if ('speechSynthesis' in window && window.speechSynthesis) {
+                try {
+                    if (window.speechSynthesis.speaking) return true;
+                    // True while an utterance is queued but not yet speaking (avoids a gap where capture was unblocked).
+                    if (window.speechSynthesis.pending) return true;
+                } catch (e) { /* ignore */ }
+            }
             return isPipelineOrRealtimeAudioPlaying();
+        }
+
+        function isVoiceAssistantBusy() {
+            return voiceChatRequestPending || voicePipelineTurnPending || isTtsActive();
+        }
+
+        /** When true, do not run or accept browser speech recognition (assistant work, playback, or post-TTS echo tail). */
+        function isVoiceCaptureBlockedForAssistant() {
+            return isVoiceAssistantBusy() || Date.now() < ttsCooldownUntil;
+        }
+
+        /** Browser voice only: end recognition session while assistant responds (abort drops buffered audio; UI stays in voice mode via onend). */
+        function pauseBrowserVoiceRecognitionForAssistantBusy() {
+            if (!hasBrowserSpeech || !recognition) return;
+            try {
+                if (typeof recognition.abort === 'function') {
+                    recognition.abort();
+                } else {
+                    recognition.stop();
+                }
+            } catch (e) { /* ignore */ }
+        }
+
+        /** Bumped on each schedule so a newer schedule supersedes in-flight poll timeouts. */
+        let resumeBrowserVoiceRecognitionToken = 0;
+
+        function scheduleResumeBrowserVoiceRecognitionAfterAssistant() {
+            if (!hasBrowserSpeech || !recognition || !listeningActive) return;
+            if (isOpenAiRealtimeEngineSelected() || isOpenAiPipelineSelected()) return;
+            const token = ++resumeBrowserVoiceRecognitionToken;
+            const pollMs = 200;
+
+            function step() {
+                if (token !== resumeBrowserVoiceRecognitionToken) return;
+                if (!listeningActive) return;
+                if (isVoiceCaptureBlockedForAssistant()) {
+                    setTimeout(step, pollMs);
+                    return;
+                }
+                const waitMs = Math.max(150, ttsCooldownUntil - Date.now());
+                setTimeout(function () {
+                    if (token !== resumeBrowserVoiceRecognitionToken) return;
+                    if (!listeningActive || isVoiceCaptureBlockedForAssistant()) return;
+                    if (isListening) return;
+                    try {
+                        recognition.start();
+                        console.log('[VOICE] Resuming recognition after assistant reply');
+                    } catch (err) {
+                        console.warn('[VOICE] Could not resume recognition:', err);
+                    }
+                }, waitMs);
+            }
+            step();
         }
 
         function clearPostTtsSilenceExitTimer() {
@@ -1367,6 +1443,8 @@
             if (!listeningActive) return;
             teardownOpenAiRealtimeSession();
             postTtsSilenceExitPending = false;
+            voiceChatRequestPending = false;
+            voicePipelineTurnPending = false;
             listeningActive = false;
             try {
                 if (recognition) recognition.stop();
@@ -1395,7 +1473,7 @@
         }
 
         function bumpPostTtsSilenceExit() {
-            if (!postTtsSilenceExitPending || !listeningActive || isTtsActive()) return;
+            if (!postTtsSilenceExitPending || !listeningActive || isVoiceAssistantBusy()) return;
             schedulePostTtsSilenceExit();
         }
 
@@ -1405,7 +1483,7 @@
             if (!postTtsSilenceExitPending || !listeningActive) return;
             postTtsSilenceExitTimer = setTimeout(() => {
                 postTtsSilenceExitTimer = null;
-                if (!listeningActive || isTtsActive()) return;
+                if (!listeningActive || isVoiceAssistantBusy()) return;
                 if (messageInput.value.trim()) return;
                 postTtsSilenceExitPending = false;
                 exitVoiceModeAfterResponseSilence();
@@ -1419,8 +1497,7 @@
             silenceTimer = setTimeout(() => {
                 silenceTimer = null;
                 if (!listeningActive) return;
-                if (isTtsActive()) return;
-                if (Date.now() < ttsCooldownUntil) return;
+                if (isVoiceCaptureBlockedForAssistant()) return;
                 const text = messageInput.value.trim();
                 if (!text) return;
                 console.log('[VOICE] 5s since recognition ceased — sending (voice)');
@@ -1450,7 +1527,12 @@
                 return;
             }
 
-            stopVoiceResponseIfPlaying();
+            if (speak) {
+                voiceChatRequestPending = true;
+                pauseBrowserVoiceRecognitionForAssistantBusy();
+            }
+
+            stopVoiceResponseIfPlaying({ retainVoiceChatPending: !!speak });
 
             if (speak) {
                 postTtsSilenceExitPending = false;
@@ -1538,6 +1620,10 @@
                 // Check if response is ok before trying to parse JSON
                 if (!response.ok) {
                     typingIndicator.classList.remove('active');
+                    if (speak) {
+                        voiceChatRequestPending = false;
+                        scheduleResumeBrowserVoiceRecognitionAfterAssistant();
+                    }
                     let errorData;
                     try {
                         errorData = await response.json();
@@ -1569,35 +1655,48 @@
                     // If this message was sent from voice input, speak the response
                     if (speak && 'speechSynthesis' in window) {
                         try {
+                            skipAssistantTtsEchoCooldownOnce = false;
                             postTtsSilenceExitPending = false;
                             clearPostTtsSilenceExitTimer();
-                            ttsPlaying = true;
+                            assistantVoiceUtteranceToken++;
+                            const utteranceCompletionToken = assistantVoiceUtteranceToken;
                             window.speechSynthesis.cancel();
+                            ttsPlaying = true;
+                            pauseBrowserVoiceRecognitionForAssistantBusy();
                             const utter = new SpeechSynthesisUtterance(data.response);
                             try { utter.lang = (recognition && recognition.lang) ? recognition.lang : 'en-US'; } catch (e) {}
                             const chosenVoice = getSelectedVoice();
                             if (chosenVoice) utter.voice = chosenVoice;
-                            utter.onend = () => {
+                            const onAssistantUtteranceFinished = () => {
+                                if (utteranceCompletionToken !== assistantVoiceUtteranceToken) return;
                                 ttsPlaying = false;
-                                const echoMs = 1500;
-                                // Cooldown: ignore speech recognition for echoMs after TTS ends to avoid echo from speaker
-                                ttsCooldownUntil = Date.now() + echoMs;
-                                console.log('[VOICE] TTS finished (cooldown until no-echo)');
+                                voiceChatRequestPending = false;
+                                if (skipAssistantTtsEchoCooldownOnce) {
+                                    skipAssistantTtsEchoCooldownOnce = false;
+                                    ttsCooldownUntil = 0;
+                                } else {
+                                    ttsCooldownUntil = Date.now() + TTS_POST_ECHO_TAIL_MS;
+                                }
+                                console.log('[VOICE] TTS finished (echo tail for recognition)');
+                                scheduleResumeBrowserVoiceRecognitionAfterAssistant();
                                 if (listeningActive) {
                                     postTtsSilenceExitPending = true;
                                     clearPostTtsSilenceExitTimer();
-                                    // Arm exit timer only after echo window so it is not racing ignored recognition.
                                     setTimeout(() => {
                                         if (!listeningActive || !postTtsSilenceExitPending) return;
                                         if (postTtsSilenceExitTimer !== null) return;
                                         schedulePostTtsSilenceExit();
-                                    }, echoMs);
+                                    }, TTS_POST_ECHO_TAIL_MS);
                                 }
                             };
+                            utter.onend = onAssistantUtteranceFinished;
+                            utter.onerror = onAssistantUtteranceFinished;
                             window.speechSynthesis.speak(utter);
                         } catch (e) {
                             ttsPlaying = false;
+                            voiceChatRequestPending = false;
                             console.warn('TTS playback failed:', e);
+                            scheduleResumeBrowserVoiceRecognitionAfterAssistant();
                             if (listeningActive) {
                                 postTtsSilenceExitPending = true;
                                 clearPostTtsSilenceExitTimer();
@@ -1608,8 +1707,15 @@
                                 }, 0);
                             }
                         }
+                    } else if (speak) {
+                        voiceChatRequestPending = false;
+                        scheduleResumeBrowserVoiceRecognitionAfterAssistant();
                     }
                 } else {
+                    if (speak) {
+                        voiceChatRequestPending = false;
+                        scheduleResumeBrowserVoiceRecognitionAfterAssistant();
+                    }
                     const errorMsg = (typeof data.response === 'string' && data.response) ? data.response : (data.detail || (typeof data.error === 'string' ? data.error : (data.error === true ? 'No response received' : data.error)) || 'No response received');
                     console.error('[CHAT] Error in response:', errorMsg);
                     addMessage(`ERROR: ${errorMsg}`, 'error');
@@ -1617,6 +1723,10 @@
             } catch (error) {
                 clearTimeout(timeoutId);
                 typingIndicator.classList.remove('active');
+                if (speak) {
+                    voiceChatRequestPending = false;
+                    scheduleResumeBrowserVoiceRecognitionAfterAssistant();
+                }
                 
                 if (error.name === 'AbortError') {
                     const timeoutSec = CHAT_REQUEST_TIMEOUT_MS / 1000;
@@ -1626,7 +1736,7 @@
                     console.error('[CHAT] Connection error:', error);
                     addMessage(`CONNECTION ERROR: ${error.message}. Make sure the chat server is running on port 5000.`, 'error');
                 }
-                } finally {
+            } finally {
                 sendButton.disabled = false;
                 messageInput.focus();
                 try { if (typeof updateTextareaSize === 'function') updateTextareaSize(); } catch (e) {}
@@ -1700,9 +1810,18 @@
         const hasBrowserSpeech = ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) && isSecureContext;
         const hasWebRtc = typeof RTCPeerConnection !== 'undefined';
 
-        function stopVoiceResponseIfPlaying() {
+        /**
+         * Stops browser TTS, OpenAI pipeline reply audio, or Realtime remote playback.
+         * @param {object} [opts]
+         * @param {boolean} [opts.retainVoiceChatPending] If true (e.g. starting a new voice-initiated send), do not clear
+         *   voiceChatRequestPending when stopping output so the in-flight voice turn stays "busy" until the new reply finishes.
+         */
+        function stopVoiceResponseIfPlaying(opts) {
+            opts = opts || {};
+            const retainVoiceChatPending = !!opts.retainVoiceChatPending;
             let didStop = false;
             if ('speechSynthesis' in window && window.speechSynthesis.speaking) {
+                assistantVoiceUtteranceToken++;
                 window.speechSynthesis.cancel();
                 didStop = true;
             }
@@ -1716,6 +1835,7 @@
                         pipelineAudioEl.parentNode.removeChild(pipelineAudioEl);
                     }
                     pipelineAudioEl = null;
+                    voicePipelineTurnPending = false;
                 }
             } catch (e) { /* ignore */ }
             try {
@@ -1726,6 +1846,10 @@
                 }
             } catch (e) { /* ignore */ }
             if (didStop) console.log('[VOICE] Assistant voice output stopped');
+            if (didStop && !retainVoiceChatPending) {
+                voiceChatRequestPending = false;
+                scheduleResumeBrowserVoiceRecognitionAfterAssistant();
+            }
         }
 
         async function startOpenAiRealtimeVoice() {
@@ -1752,7 +1876,13 @@
                         realtimeRemoteAudio.srcObject = e.streams[0];
                     }
                 };
-                const ms = await navigator.mediaDevices.getUserMedia({ audio: true });
+                const ms = await navigator.mediaDevices.getUserMedia({
+                    audio: {
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        autoGainControl: true
+                    }
+                });
                 realtimeLocalStream = ms;
                 ms.getTracks().forEach(function (t) {
                     pc.addTrack(t, ms);
@@ -1807,6 +1937,7 @@
 
         async function uploadOpenAiVoicePipeline(blob) {
             typingIndicator.classList.add('active');
+            voicePipelineTurnPending = true;
             let userIdInt = null;
             try {
                 const uid = localStorage.getItem('user_id');
@@ -1878,8 +2009,8 @@
                 if (!data.response && (data.error || !res.ok)) {
                     const errMsg = (typeof data.error === 'string' && data.error) ? data.error : (typeof data.response === 'string' ? data.response : 'Voice processing failed');
                     addMessage('ERROR: ' + errMsg, 'error');
-                }
-                if (data.audio_base64 && data.audio_mime) {
+                    voicePipelineTurnPending = false;
+                } else if (data.audio_base64 && data.audio_mime) {
                     try {
                         if (pipelineAudioEl) {
                             pipelineAudioEl.pause();
@@ -1892,16 +2023,24 @@
                     au.src = 'data:' + data.audio_mime + ';base64,' + data.audio_base64;
                     pipelineAudioEl = au;
                     document.body.appendChild(au);
-                    au.onended = function () {
+                    const finishPipelineAudio = function () {
                         try {
                             if (au.parentNode) au.parentNode.removeChild(au);
                         } catch (e) { /* ignore */ }
-                        if (pipelineAudioEl === au) pipelineAudioEl = null;
+                        if (pipelineAudioEl === au) {
+                            pipelineAudioEl = null;
+                            voicePipelineTurnPending = false;
+                        }
                     };
+                    au.onended = finishPipelineAudio;
+                    au.onerror = finishPipelineAudio;
+                } else {
+                    voicePipelineTurnPending = false;
                 }
             } catch (e) {
                 clearTimeout(timeoutId);
                 typingIndicator.classList.remove('active');
+                voicePipelineTurnPending = false;
                 if (e.name === 'AbortError') {
                     addMessage('Voice request timed out.', 'error');
                 } else {
@@ -1939,9 +2078,14 @@
                         return;
                     }
                     if (isOpenAiPipelineSelected()) {
+                        const assistantVoiceOutputWasPlaying = isTtsActive();
                         stopVoiceResponseIfPlaying();
                         if (typeof MediaRecorder === 'undefined') {
                             addMessage('Audio recording is not supported in this browser.', 'error');
+                            return;
+                        }
+                        if (voicePipelineTurnPending && !pipelineRecording) {
+                            voiceRecognitionButton.title = 'Getting response…';
                             return;
                         }
                         if (pipelineRecording) {
@@ -1957,12 +2101,21 @@
                             }
                             return;
                         }
+                        if (assistantVoiceOutputWasPlaying && !pipelineRecording) {
+                            return;
+                        }
                         pipelineSkipNextUpload = false;
                         pipelineRecording = true;
                         pipelineChunks = [];
                         voiceRecognitionButton.classList.add('listening');
                         voiceRecognitionButton.title = 'Recording… click again to send';
-                        navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
+                        navigator.mediaDevices.getUserMedia({
+                            audio: {
+                                echoCancellation: true,
+                                noiseSuppression: true,
+                                autoGainControl: true
+                            }
+                        }).then(function (stream) {
                             pipelineStream = stream;
                             var mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : (MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : '');
                             var mr = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
@@ -2016,7 +2169,14 @@
                         addMessage('Voice input is not available in this browser. Ensure OPENAI_API_KEY is set on the server for OpenAI voice, or try Chrome or Edge.', 'error');
                         return;
                     }
+                    const assistantVoiceOutputWasPlaying = isTtsActive();
+                    if (listeningActive && assistantVoiceOutputWasPlaying) {
+                        skipAssistantTtsEchoCooldownOnce = true;
+                    }
                     stopVoiceResponseIfPlaying();
+                    if (listeningActive && assistantVoiceOutputWasPlaying) {
+                        return;
+                    }
                     if (listeningActive) {
                         listeningActive = false;
                         postTtsSilenceExitPending = false;
@@ -2040,20 +2200,29 @@
                         postTtsSilenceExitPending = false;
                         clearPostTtsSilenceExitTimer();
                         bumpVoiceSessionIdleTimer();
-                        try {
-                            recognition.start();
-                            console.log('[VOICE] Microphone toggled ON');
-                        } catch (error) {
-                            console.error('[VOICE] Error starting recognition:', error);
-                            listeningActive = false;
-                            clearVoiceSessionIdleTimer();
-                            if (error.message && error.message.includes('already started')) {
-                                try { recognition.stop(); } catch (e) {}
-                            } else {
-                                const msg = (error.name === 'SecurityError' || error.message.includes('secure'))
-                                    ? 'Voice recognition requires a secure connection. Open this app via https:// or http://localhost.'
-                                    : 'Error starting voice recognition. Check microphone permission and try again.';
-                                addMessage(msg, 'error');
+                        if (isVoiceCaptureBlockedForAssistant()) {
+                            voiceRecognitionButton.classList.add('listening');
+                            voiceRecognitionButton.title = isTtsActive()
+                                ? 'Assistant speaking… click mic to stop'
+                                : 'Getting response… click mic to stop voice';
+                            scheduleResumeBrowserVoiceRecognitionAfterAssistant();
+                            console.log('[VOICE] Mic armed; listening starts after assistant finishes');
+                        } else {
+                            try {
+                                recognition.start();
+                                console.log('[VOICE] Microphone toggled ON');
+                            } catch (error) {
+                                console.error('[VOICE] Error starting recognition:', error);
+                                listeningActive = false;
+                                clearVoiceSessionIdleTimer();
+                                if (error.message && error.message.includes('already started')) {
+                                    try { recognition.stop(); } catch (e) {}
+                                } else {
+                                    const msg = (error.name === 'SecurityError' || error.message.includes('secure'))
+                                        ? 'Voice recognition requires a secure connection. Open this app via https:// or http://localhost.'
+                                        : 'Error starting voice recognition. Check microphone permission and try again.';
+                                    addMessage(msg, 'error');
+                                }
                             }
                         }
                     }
@@ -2080,6 +2249,21 @@
 
             // When recognition starts
             recognition.onstart = () => {
+                if (isVoiceCaptureBlockedForAssistant()) {
+                    try {
+                        if (typeof recognition.abort === 'function') {
+                            recognition.abort();
+                        } else {
+                            recognition.stop();
+                        }
+                    } catch (e) { /* ignore */ }
+                    voiceRecognitionButton.classList.add('listening');
+                    voiceRecognitionButton.title = isTtsActive()
+                        ? 'Assistant speaking… click mic to stop'
+                        : 'Getting response… click mic to stop voice';
+                    console.log('[VOICE] Recognition start suppressed — assistant busy or echo tail');
+                    return;
+                }
                 console.log('[VOICE] Voice recognition started');
                 isListening = true;
                 voiceRecognitionButton.classList.add('listening');
@@ -2088,6 +2272,7 @@
 
             // Final results from speech recognition
             recognition.onresult = (event) => {
+                if (isVoiceCaptureBlockedForAssistant()) return;
                 let suppressRecognitionSilenceBump = false;
                 try {
                     let hadInterimTextThisEvent = false;
@@ -2105,40 +2290,6 @@
                         bumpVoiceSessionIdleTimer();
                     }
 
-                    // While TTS is speaking, process fresh interim/final chunks immediately
-                    // so short barge-in commands like "stop" are not missed.
-                    if (isTtsActive()) {
-                        const liveChunks = [];
-                        for (let i = event.resultIndex; i < event.results.length; i++) {
-                            const r = event.results[i];
-                            if (!r || !r[0]) continue;
-                            const chunk = (r[0].transcript || '').trim();
-                            if (chunk) liveChunks.push(chunk);
-                        }
-                        const liveTranscript = liveChunks.join(' ').trim();
-                        if (liveTranscript) {
-                            bumpVoiceSessionIdleTimer();
-                            if ('speechSynthesis' in window && window.speechSynthesis.speaking) {
-                                window.speechSynthesis.cancel();
-                            }
-                            ttsPlaying = false;
-                            // Do not apply cooldown here: this is intentional user interruption.
-                            ttsCooldownUntil = 0;
-                            const liveLower = liveTranscript.toLowerCase().trim();
-                            if (isStandaloneStopVoiceInput(liveLower)) {
-                                suppressRecognitionSilenceBump = true;
-                                postTtsSilenceExitPending = false;
-                                clearPostTtsSilenceExitTimer();
-                                console.log('[VOICE] Stop during TTS — exiting voice mode');
-                                exitVoiceModeAfterResponseSilence();
-                                return;
-                            }
-                            postTtsSilenceExitPending = true;
-                            bumpPostTtsSilenceExit();
-                            console.log('[VOICE] Voice response interrupted by new voice query');
-                        }
-                    }
-
                     const chunks = [];
                     for (let i = event.resultIndex; i < event.results.length; i++) {
                         const r = event.results[i];
@@ -2153,11 +2304,11 @@
 
                     // Whole utterance is only a stop phrase: never put in input or send to chat.
                     if (isStandaloneStopVoiceInput(transcript)) {
-                        const wasSpeaking = ('speechSynthesis' in window && window.speechSynthesis.speaking) || ttsPlaying;
-                        if ('speechSynthesis' in window && window.speechSynthesis.speaking) {
-                            window.speechSynthesis.cancel();
+                        if (isTtsActive()) {
+                            suppressRecognitionSilenceBump = true;
+                            return;
                         }
-                        ttsPlaying = false;
+                        stopVoiceResponseIfPlaying();
                         ttsCooldownUntil = 0;
                         if (silenceTimer) {
                             clearTimeout(silenceTimer);
@@ -2166,40 +2317,8 @@
                         currentTranscript = '';
                         bumpVoiceSessionIdleTimer();
                         suppressRecognitionSilenceBump = true;
-                        if (wasSpeaking) {
-                            postTtsSilenceExitPending = false;
-                            clearPostTtsSilenceExitTimer();
-                            console.log('[VOICE] Stop while assistant was speaking — exiting voice mode');
-                            exitVoiceModeAfterResponseSilence();
-                        } else {
-                            console.log('[VOICE] Standalone stop phrase — not sending, staying in voice mode');
-                        }
+                        console.log('[VOICE] Standalone stop phrase — not sending, staying in voice mode');
                         return;
-                    }
-
-                    // While TTS is playing, interrupt immediately on any user speech.
-                    if (isTtsActive()) {
-                        if ('speechSynthesis' in window && window.speechSynthesis.speaking) {
-                            window.speechSynthesis.cancel();
-                        }
-                        ttsPlaying = false;
-                        // Do not apply cooldown here: this is intentional user interruption.
-                        ttsCooldownUntil = 0;
-                        if (isStandaloneStopVoiceInput(transcript)) {
-                            if (silenceTimer) {
-                                clearTimeout(silenceTimer);
-                                silenceTimer = null;
-                            }
-                            currentTranscript = '';
-                            bumpVoiceSessionIdleTimer();
-                            suppressRecognitionSilenceBump = true;
-                            postTtsSilenceExitPending = false;
-                            clearPostTtsSilenceExitTimer();
-                            console.log('[VOICE] Stop during TTS — exiting voice mode');
-                            exitVoiceModeAfterResponseSilence();
-                            return;
-                        }
-                        console.log('[VOICE] Voice response interrupted by new voice query');
                     }
 
                     // After TTS just ended, cooldown period to avoid laptop mic picking up residual speaker output
@@ -2233,10 +2352,10 @@
                         }
                     }
                     // Always defer auto-exit while the engine is still producing text (even during echo cooldown).
-                    if (hasRecognitionText && listeningActive && postTtsSilenceExitPending && !isTtsActive()) {
+                    if (hasRecognitionText && listeningActive && postTtsSilenceExitPending && !isVoiceCaptureBlockedForAssistant()) {
                         bumpPostTtsSilenceExit();
                     }
-                    if (!suppressRecognitionSilenceBump && hasRecognitionText && listeningActive && !isTtsActive() && Date.now() >= ttsCooldownUntil) {
+                    if (!suppressRecognitionSilenceBump && hasRecognitionText && listeningActive && !isVoiceCaptureBlockedForAssistant()) {
                         bumpRecognitionSilenceSend();
                     }
                 }
@@ -2279,6 +2398,13 @@
             recognition.onend = () => {
                 console.log('[VOICE] Voice recognition ended');
                 isListening = false;
+                if (listeningActive && isVoiceCaptureBlockedForAssistant()) {
+                    voiceRecognitionButton.classList.add('listening');
+                    voiceRecognitionButton.title = isTtsActive()
+                        ? 'Assistant speaking… click mic to stop'
+                        : 'Getting response… click mic to stop voice';
+                    return;
+                }
                 voiceRecognitionButton.classList.remove('listening');
                 voiceRecognitionButton.title = 'Voice / microphone';
 
@@ -2288,6 +2414,7 @@
                         if (!listeningActive) return;
                         if (isOpenAiRealtimeEngineSelected()) return;
                         if (isOpenAiPipelineSelected()) return;
+                        if (isVoiceCaptureBlockedForAssistant()) return;
                         try {
                             recognition.start();
                             console.log('[VOICE] Restarting voice recognition (mic still ON)');
@@ -4306,7 +4433,7 @@
         let whatsappMessagesRetryCount = 0;
         const WHATSAPP_MESSAGES_AUTO_RETRY_MAX = 6;
         const WHATSAPP_MESSAGES_AUTO_RETRY_DELAY_MS = 12000;
-        const WHATSAPP_FIRST_LOAD_DELAY_MS = 3000;  // Start loading chats soon after ready (was 15s)
+        const WHATSAPP_FIRST_LOAD_DELAY_MS = 800;  // After WA ready, start /contacts soon (backend prefetches getChats in parallel)
         let whatsappJustScannedQR = false; // Track if QR was just scanned (vs. existing session on launch)
         let whatsappSocket = null;
         let whatsappRealtimePollTimer = null; // Fallback polling when WebSocket is not connected
@@ -4936,7 +5063,7 @@
                 const contactsResponse = await intFetch(`${WHATSAPP_API_URL}/api/whatsapp/contacts`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ offset: 0, limit: WHATSAPP_CONTACTS_PAGE_SIZE }),
+                    body: JSON.stringify({ offset: 0, limit: WHATSAPP_CONTACTS_PAGE_SIZE, reset_chat_list_retry: true }),
                     signal: AbortSignal.timeout(WHATSAPP_CONTACTS_FIRST_LOAD_TIMEOUT_MS)
                 });
 
@@ -4952,6 +5079,18 @@
                 const contactsData = await contactsResponse.json();
                 console.log('[*] WhatsApp contacts (first page):', contactsData);
 
+                if (contactsData.success && contactsData.chat_list_error) {
+                    if (whatsappChatsList) {
+                        const esc = String(contactsData.chat_list_error).replace(/</g, '&lt;').replace(/\n/g, '<br>');
+                        whatsappChatsList.innerHTML = '<div class="whatsapp-sidebar-empty">' + esc + '<br><br>Click <strong>Refresh</strong> to try again after adjusting settings (see logs).</div>';
+                    }
+                    if (whatsappShowButton) {
+                        whatsappShowButton.disabled = false;
+                        whatsappShowButton.textContent = 'Refresh';
+                    }
+                    return;
+                }
+
                 if (contactsData.success && contactsData.loading) {
                     if (whatsappContactsPollTimer) clearTimeout(whatsappContactsPollTimer);
                     if (whatsappChatsList) {
@@ -4966,6 +5105,14 @@
                             signal: AbortSignal.timeout(WHATSAPP_CONTACTS_FIRST_LOAD_TIMEOUT_MS)
                         }).then(r => r.ok ? r.json() : r.json().then(j => { throw new Error(j.error || r.statusText); }))
                             .then(async (data) => {
+                                if (data.chat_list_error) {
+                                    whatsappContactsPollTimer = null;
+                                    if (whatsappChatsList) {
+                                        const esc = String(data.chat_list_error).replace(/</g, '&lt;').replace(/\n/g, '<br>');
+                                        whatsappChatsList.innerHTML = '<div class="whatsapp-sidebar-empty">' + esc + '<br><br>Click <strong>Refresh</strong> to try again.</div>';
+                                    }
+                                    return;
+                                }
                                 if (data.loading) {
                                     // Use server's wait_seconds so we poll at the right time (no need to refresh multiple times)
                                     const waitMs = (data.wait_seconds != null && data.wait_seconds > 0)
