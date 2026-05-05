@@ -402,6 +402,23 @@ def _resolve_node_executable(script_dir):
     return "node"
 
 
+# First `node --version` spawn on Windows is often slowed by AV scanning; 2s caused false timeouts.
+NODE_VERSION_PROBE_TIMEOUT_SEC = 30
+
+
+def _probe_node_version(node_exe, script_dir):
+    """Run `node --version` to verify Node is runnable (generous timeout for slow first launch)."""
+    creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+    return subprocess.run(
+        [node_exe, "--version"],
+        capture_output=True,
+        timeout=NODE_VERSION_PROBE_TIMEOUT_SEC,
+        cwd=script_dir,
+        env=_child_env(script_dir),
+        creationflags=creationflags,
+    )
+
+
 def _print_log_tail(log_path, max_lines=35):
     """Print last max_lines of a log file so user sees why a server exited."""
     if not log_path or not os.path.isfile(log_path):
@@ -750,13 +767,7 @@ def start_servers():
                 
                 # Check if Node.js is available (use bundled node_exe when frozen)
                 try:
-                    node_check = subprocess.run(
-                        [node_exe, '--version'],
-                        capture_output=True,
-                        timeout=2,
-                        cwd=script_dir,
-                        env=_child_env(script_dir),
-                    )
+                    node_check = _probe_node_version(node_exe, script_dir)
                     if node_check.returncode != 0:
                         raise FileNotFoundError("Node.js not found")
                     print(f"[*] Node.js version: {node_check.stdout.decode('utf-8', errors='ignore').strip()}")
@@ -830,13 +841,7 @@ def start_servers():
                 # Check if Node.js is available (reuse check from WhatsApp or check again)
                 try:
                     if 'node_check' not in locals() or node_check is None or node_check.returncode != 0:
-                        node_check = subprocess.run(
-                            [node_exe, '--version'],
-                            capture_output=True,
-                            timeout=2,
-                            cwd=script_dir,
-                            env=_child_env(script_dir),
-                        )
+                        node_check = _probe_node_version(node_exe, script_dir)
                         if node_check.returncode != 0:
                             raise FileNotFoundError("Node.js not found")
                 except FileNotFoundError:
@@ -895,13 +900,7 @@ def start_servers():
                 # Check if Node.js is available (reuse check from WhatsApp/Telegram or check again)
                 try:
                     if 'node_check' not in locals() or node_check is None or node_check.returncode != 0:
-                        node_check = subprocess.run(
-                            [node_exe, '--version'],
-                            capture_output=True,
-                            timeout=2,
-                            cwd=script_dir,
-                            env=_child_env(script_dir),
-                        )
+                        node_check = _probe_node_version(node_exe, script_dir)
                         if node_check.returncode != 0:
                             raise FileNotFoundError("Node.js not found")
                 except FileNotFoundError:
@@ -1327,6 +1326,18 @@ def open_windows_chromium_app_window(url, width=1200, height=800, x=None, y=None
     ]
     if x is not None and y is not None:
         common.append(f"--window-position={int(x)},{int(y)}")
+    # Microphone / getUserMedia in Edge/Chrome `--app` windows often never completes permission UI.
+    # This flag auto-accepts media prompts (kiosk-style). Off by default in dev; on by default when frozen
+    # unless CHROMIUM_AUTO_GRANT_MIC=0. Set CHROMIUM_AUTO_GRANT_MIC=1 to force on when not frozen.
+    mic_env = os.environ.get("CHROMIUM_AUTO_GRANT_MIC", "").strip().lower()
+    if mic_env in ("0", "false", "no"):
+        grant_mic = False
+    elif mic_env in ("1", "true", "yes"):
+        grant_mic = True
+    else:
+        grant_mic = bool(getattr(sys, "frozen", False))
+    if grant_mic:
+        common.append("--use-fake-ui-for-media-stream")
     for exe in _windows_chromium_exe_paths():
         try:
             return subprocess.Popen([exe] + common)
@@ -1598,7 +1609,10 @@ def main():
                 pass
 
             shell_pref = os.environ.get("DESKTOP_SHELL", "").strip().lower()
-            prefer_webview_first = shell_pref == "webview"
+            # Voice (mic + MediaRecorder + WebRTC) is unreliable in Edge/Chrome `--app` windows on some PCs.
+            # pywebview uses WebView2 and generally handles microphone permissions better, so prefer it unless
+            # the user explicitly opts into the Chromium app window (DESKTOP_SHELL=chromium|edge|chrome|msedge).
+            prefer_chromium_first = shell_pref in ("chromium", "edge", "chrome", "msedge")
 
             def _run_pywebview():
                 import webview
@@ -1621,22 +1635,7 @@ def main():
                 print("[*] All servers stopped. Goodbye!")
 
             if sys.platform == "win32":
-                if prefer_webview_first:
-                    try:
-                        _run_pywebview()
-                    except ImportError:
-                        if not _try_windows_chromium_app_shell(
-                            app_url, window_width, window_height, x, y
-                        ):
-                            _windows_desktop_shell_unavailable(app_url)
-                    except Exception as e:
-                        print(f"[!] pywebview failed: {e}")
-                        print("[*] Trying Edge/Chrome application window...")
-                        if not _try_windows_chromium_app_shell(
-                            app_url, window_width, window_height, x, y
-                        ):
-                            _windows_desktop_shell_unavailable(app_url)
-                else:
+                if prefer_chromium_first:
                     if _try_windows_chromium_app_shell(
                         app_url, window_width, window_height, x, y
                     ):
@@ -1648,6 +1647,26 @@ def main():
                             _windows_desktop_shell_unavailable(app_url)
                         except Exception as e:
                             print(f"[!] pywebview failed: {e}")
+                            _windows_desktop_shell_unavailable(app_url)
+                else:
+                    try:
+                        _run_pywebview()
+                    except ImportError:
+                        print(
+                            "[!] Embedded window (pywebview) is not available in this build. "
+                            "Voice/mic often fails in Edge/Chrome --app mode; rebuild GPTIntermediary.exe "
+                            "with pywebview bundled, or install Python deps and run from source."
+                        )
+                        if not _try_windows_chromium_app_shell(
+                            app_url, window_width, window_height, x, y
+                        ):
+                            _windows_desktop_shell_unavailable(app_url)
+                    except Exception as e:
+                        print(f"[!] pywebview failed: {e}")
+                        print("[*] Trying Edge/Chrome application window...")
+                        if not _try_windows_chromium_app_shell(
+                            app_url, window_width, window_height, x, y
+                        ):
                             _windows_desktop_shell_unavailable(app_url)
             else:
                 try:

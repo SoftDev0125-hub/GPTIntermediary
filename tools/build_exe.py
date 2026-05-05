@@ -294,6 +294,7 @@ Notes:
 - If no valid DATABASE_URL is set, app uses SQLite at data/gptintermediary.sqlite3.
 - Do NOT run from OneDrive, Dropbox, iCloud, or a network folder: sync breaks PostgreSQL and can corrupt DLLs (error 0xc000012f). Use a local path like C:\\Apps\\GPTIntermediary.
 - If you still see missing vcruntime140.dll / MSVCP140, install "VC++ 2015-2022 x64" from Microsoft.
+- Voice/microphone: the portable app opens http://localhost:5000 in a desktop window. The launcher prefers `pywebview` (WebView2) when that package was bundled at build time (`pip install pywebview` on the build machine). Otherwise it uses Edge/Chrome `--app` mode; for that path the frozen exe passes `--use-fake-ui-for-media-stream` by default so the mic permission prompt does not block voice. Set `CHROMIUM_AUTO_GRANT_MIC=0` in `.env` to disable auto-grant, or `DESKTOP_SHELL=chromium` to force the Chromium app window even when pywebview is available.
 
 Smaller portable folder (optional build-time env vars):
 - PORTABLE_INCLUDE_PUPPETEER_CHROME=1 — include Puppeteer's downloaded Chromium (large). Default OFF; without it, install Google Chrome on the target PC for WhatsApp Web, or set PUPPETEER_EXECUTABLE_PATH.
@@ -329,8 +330,20 @@ def main() -> int:
     backend_py = ROOT / "backend" / "python"
     django_app = ROOT / "backend" / "django_app"
 
-    # Launcher: subprocess orchestration + dotenv + tkinter hooks
-    pyinstaller_build(ROOT / "app.py", "GPTIntermediary")
+    # Launcher: subprocess orchestration + dotenv + tkinter hooks; optional pywebview (WebView2) for desktop UI.
+    # If `pip install pywebview` works in this venv, bundle it so the launcher prefers WebView2 over Edge --app.
+    launcher_extras: list[str] = []
+    if importlib.util.find_spec("webview") is not None:
+        launcher_extras.extend(_collect_all_args(("webview",)))
+        if importlib.util.find_spec("clr") is not None:
+            launcher_extras.extend(_collect_all_args(("pythonnet",)))
+    else:
+        print(
+            "[!] pywebview not installed in this Python (pip install pywebview). "
+            "The portable launcher will use Edge/Chrome --app; microphone is auto-granted when frozen "
+            "(see CHROMIUM_AUTO_GRANT_MIC in PORTABLE_README.txt)."
+        )
+    pyinstaller_build(ROOT / "app.py", "GPTIntermediary", launcher_extras or None)
 
     # FastAPI backend — static analysis often omits parts of the web stack in one-file builds
     backend_extras: list[str] = [

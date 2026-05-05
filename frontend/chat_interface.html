@@ -498,6 +498,96 @@
                             </div>
                             <small class="field-description">Required for ChatGPT functionality</small>
                         </div>
+                        <div class="settings-field-group" style="margin-top: 0.75rem;">
+                            <div class="settings-field">
+                                <label for="openai_organization">Organization (optional)</label>
+                                <div class="input-with-edit">
+                                    <input type="text" id="openai_organization" name="openai_organization" placeholder="org_..." readonly>
+                                    <button type="button" class="edit-button" onclick="toggleEdit('openai_organization')" title="Edit">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                                            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                                        </svg>
+                                    </button>
+                                </div>
+                                <small class="field-description">If you’re in multiple orgs, this can select the right billing context.</small>
+                            </div>
+                            <div class="settings-field">
+                                <label for="openai_project">Project (optional)</label>
+                                <div class="input-with-edit">
+                                    <input type="text" id="openai_project" name="openai_project" placeholder="proj_..." readonly>
+                                    <button type="button" class="edit-button" onclick="toggleEdit('openai_project')" title="Edit">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                                            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                                        </svg>
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="settings-field">
+                                <label for="openai_base_url">Base URL (optional)</label>
+                                <div class="input-with-edit">
+                                    <input type="text" id="openai_base_url" name="openai_base_url" placeholder="https://api.openai.com/v1" readonly>
+                                    <button type="button" class="edit-button" onclick="toggleEdit('openai_base_url')" title="Edit">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                                            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                                        </svg>
+                                    </button>
+                                </div>
+                                <small class="field-description">Use only if you run an OpenAI-compatible proxy.</small>
+                            </div>
+                        </div>
+                        <div class="settings-field-group" style="margin-top: 0.75rem;">
+                            <div class="settings-field">
+                                <label for="openai_chat_model">Chat model (optional)</label>
+                                <div class="input-with-edit">
+                                    <input type="text" id="openai_chat_model" name="openai_chat_model" placeholder="gpt-4o-mini" readonly>
+                                    <button type="button" class="edit-button" onclick="toggleEdit('openai_chat_model')" title="Edit">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                                            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                                        </svg>
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="settings-field">
+                                <label for="openai_intent_model">Intent model (optional)</label>
+                                <div class="input-with-edit">
+                                    <input type="text" id="openai_intent_model" name="openai_intent_model" placeholder="gpt-4o-mini" readonly>
+                                    <button type="button" class="edit-button" onclick="toggleEdit('openai_intent_model')" title="Edit">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                                            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                                        </svg>
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="settings-field">
+                                <label for="openai_email_summary_model">Email summary model (optional)</label>
+                                <div class="input-with-edit">
+                                    <input type="text" id="openai_email_summary_model" name="openai_email_summary_model" placeholder="gpt-4o-mini" readonly>
+                                    <button type="button" class="edit-button" onclick="toggleEdit('openai_email_summary_model')" title="Edit">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                                            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                                        </svg>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="settings-subsection" style="margin-top: 1rem;">
+                            <h3 class="settings-subsection-title">Chat tab: Voice</h3>
+                            <div class="settings-field">
+                                <label for="voice_engine_select">Voice engine</label>
+                                <select id="voice_engine_select" name="voice_engine_select" style="width: 100%; max-width: 520px; padding: 8px; border-radius: 6px;">
+                                    <option value="openai_pipeline">OpenAI pipeline (Whisper + TTS — default; 5s quiet or Send ends capture)</option>
+                                    <option value="browser">Browser (Web Speech API — cloud; often blocked offline/VPN/firewall)</option>
+                                    <option value="openai_realtime">OpenAI Realtime (WebRTC)</option>
+                                </select>
+                                <small class="field-description">Default is server-side speech so voice works without the browser’s cloud recognition service.</small>
+                            </div>
+                        </div>
                     </div>
 
                     <div class="settings-divider"></div>
@@ -959,6 +1049,9 @@
                         setTimeout(() => messageInput.focus(), 100);
                     }
                 }
+                if (tabName === 'settings' && typeof syncVoiceEngineSelectFromStorage === 'function') {
+                    syncVoiceEngineSelectFromStorage();
+                }
             } catch (error) {
                 console.error('Error in switchTab:', error);
             }
@@ -1010,10 +1103,12 @@
         if (document.readyState === 'loading') {
             document.addEventListener('DOMContentLoaded', function() {
                 setTimeout(initTabSwitching, 50);
+                setTimeout(initVoiceEngineSettings, 60);
             });
         } else {
             // DOM is already loaded
             setTimeout(initTabSwitching, 50);
+            setTimeout(initVoiceEngineSettings, 60);
         }
 
         const chatContainer = document.getElementById('chatContainer');
@@ -1210,13 +1305,15 @@
          * - Starting a new voice send cancels that exit timer (follow-up questions stay in Voice Mode).
          * - "Stop" / "stop voice" when the assistant is not speaking → cancel TTS if any, do not send to chat, stay in Voice Mode.
          * - Exception: clicking the mic while assistant audio is playing stops playback immediately (browser TTS,
-         *   pipeline reply audio, or Realtime). Browser voice mode stays on and listening resumes after ring-down;
-         *   pipeline push-to-talk does not start a new recording on that same click.
+         *   pipeline reply audio, or Realtime). Browser voice mode stays on and listening resumes after ring-down.
+         * - OpenAI pipeline: first mic click starts a voice session and capture; 5s silence after speech, Send, or mic
+         *   while recording finalizes one utterance. After the spoken reply finishes, capture restarts automatically
+         *   until the user clicks the mic while idle (not recording, not waiting) to end the session.
          */
         let ttsPlaying = false;
         /** True from a voice-initiated /chat send until that reply's TTS finishes (or errors). Stays true through fetch + playback so mic/STT never treats assistant audio as input. */
         let voiceChatRequestPending = false;
-        /** True from OpenAI pipeline /voice/process request until reply audio ends (or error / stop). Covers fetch + playback so push-to-talk cannot record over the assistant. */
+        /** True from OpenAI pipeline /voice/process request until reply audio ends (or error / stop). */
         let voicePipelineTurnPending = false;
         /** Incremented when assistant TTS is cancelled or when a new assistant utterance starts; stale utterance onend/onerror handlers no-op. */
         let assistantVoiceUtteranceToken = 0;
@@ -1282,14 +1379,63 @@
             realtimeRemoteAudio = null;
         }
 
-        /** No UI: optional override via localStorage key `voice_engine`: browser | openai_realtime | openai_pipeline */
-        const DEFAULT_VOICE_ENGINE = 'browser';
+        /** localStorage key `voice_engine`: browser | openai_realtime | openai_pipeline — default pipeline (server Whisper). */
+        const DEFAULT_VOICE_ENGINE = 'openai_pipeline';
         function getVoiceEngine() {
             try {
                 const v = localStorage.getItem('voice_engine');
                 if (v === 'openai_realtime' || v === 'browser' || v === 'openai_pipeline') return v;
             } catch (e) { /* ignore */ }
             return DEFAULT_VOICE_ENGINE;
+        }
+
+        function syncVoiceEngineSelectFromStorage() {
+            const sel = document.getElementById('voice_engine_select');
+            if (!sel) return;
+            sel.value = getVoiceEngine();
+        }
+
+        function applyVoiceEngineFromSelect() {
+            const sel = document.getElementById('voice_engine_select');
+            if (!sel) return;
+            const v = sel.value;
+            if (v !== 'openai_realtime' && v !== 'browser' && v !== 'openai_pipeline') return;
+            try {
+                localStorage.setItem('voice_engine', v);
+            } catch (e) {
+                console.warn('[VOICE] Could not save voice_engine', e);
+                return;
+            }
+            try {
+                teardownOpenAiRealtimeSession();
+            } catch (e) { /* ignore */ }
+            try {
+                teardownOpenAiPipelineRecording();
+            } catch (e) { /* ignore */ }
+            try {
+                listeningActive = false;
+                if (typeof recognition !== 'undefined' && recognition) {
+                    try {
+                        if (typeof recognition.abort === 'function') recognition.abort();
+                        else recognition.stop();
+                    } catch (e) { /* ignore */ }
+                }
+            } catch (e) { /* ignore */ }
+            try {
+                const vb = document.getElementById('voiceRecognitionButton');
+                if (vb) {
+                    vb.classList.remove('listening');
+                    vb.title = 'Voice / microphone';
+                }
+            } catch (e) { /* ignore */ }
+        }
+
+        function initVoiceEngineSettings() {
+            syncVoiceEngineSelectFromStorage();
+            const sel = document.getElementById('voice_engine_select');
+            if (!sel || sel.dataset.bound === '1') return;
+            sel.dataset.bound = '1';
+            sel.addEventListener('change', applyVoiceEngineFromSelect);
         }
 
         function isOpenAiRealtimeEngineSelected() {
@@ -1304,8 +1450,96 @@
         let pipelineAudioEl = null;
         /** When true, MediaRecorder onstop discards upload (engine switch / cancel). */
         let pipelineSkipNextUpload = false;
+        /** RMS threshold (0–1) for treating incoming audio as “speech” for pipeline silence detection. */
+        const PIPELINE_VOICE_RMS_THRESHOLD = 0.028;
+        let pipelineAudioCtx = null;
+        let pipelineAnalyser = null;
+        let pipelineSilenceTimer = null;
+        let pipelineTimeDomainBuf = null;
+        let pipelineLastVoiceMs = 0;
+        let pipelineRecordingStartMs = 0;
+        let pipelineHadVoiceActivity = false;
+        /** User turned pipeline voice on; keep re-arming capture after each reply until they click mic while idle. */
+        let pipelineVoiceSessionActive = false;
+        let pipelineRearmTimer = null;
+
+        function stopPipelineSilenceMonitor() {
+            if (pipelineSilenceTimer) {
+                clearInterval(pipelineSilenceTimer);
+                pipelineSilenceTimer = null;
+            }
+            if (pipelineAudioCtx) {
+                try {
+                    if (pipelineAudioCtx.state !== 'closed') {
+                        pipelineAudioCtx.close();
+                    }
+                } catch (e) { /* ignore */ }
+                pipelineAudioCtx = null;
+            }
+            pipelineAnalyser = null;
+            pipelineTimeDomainBuf = null;
+        }
+
+        /** While pipeline MediaRecorder runs, detect ~SILENCE_WINDOW_MS of quiet after speech and stop the recorder. */
+        function startPipelineSilenceMonitor(stream) {
+            stopPipelineSilenceMonitor();
+            try {
+                const Ctx = window.AudioContext || window.webkitAudioContext;
+                if (!Ctx) return;
+                pipelineAudioCtx = new Ctx();
+                const src = pipelineAudioCtx.createMediaStreamSource(stream);
+                pipelineAnalyser = pipelineAudioCtx.createAnalyser();
+                pipelineAnalyser.fftSize = 512;
+                src.connect(pipelineAnalyser);
+                pipelineTimeDomainBuf = new Uint8Array(pipelineAnalyser.fftSize);
+            } catch (e) {
+                console.warn('[VOICE] Pipeline silence monitor failed:', e);
+                return;
+            }
+            pipelineSilenceTimer = setInterval(function () {
+                if (!pipelineRecording || !pipelineMediaRecorder || pipelineMediaRecorder.state !== 'recording') {
+                    return;
+                }
+                if (!pipelineAnalyser || !pipelineTimeDomainBuf) return;
+                try {
+                    pipelineAnalyser.getByteTimeDomainData(pipelineTimeDomainBuf);
+                } catch (e) {
+                    return;
+                }
+                let sum = 0;
+                for (let i = 0; i < pipelineTimeDomainBuf.length; i++) {
+                    const x = (pipelineTimeDomainBuf[i] - 128) / 128;
+                    sum += x * x;
+                }
+                const rms = Math.sqrt(sum / pipelineTimeDomainBuf.length);
+                const now = Date.now();
+                if (rms > PIPELINE_VOICE_RMS_THRESHOLD) {
+                    pipelineHadVoiceActivity = true;
+                    pipelineLastVoiceMs = now;
+                }
+                if (
+                    pipelineHadVoiceActivity
+                    && (now - pipelineLastVoiceMs >= SILENCE_WINDOW_MS)
+                    && (now - pipelineRecordingStartMs > 400)
+                ) {
+                    try {
+                        if (pipelineMediaRecorder && pipelineMediaRecorder.state === 'recording') {
+                            pipelineMediaRecorder.stop();
+                        }
+                    } catch (e) { /* ignore */ }
+                }
+            }, 120);
+        }
 
         function teardownOpenAiPipelineRecording() {
+            stopPipelineSilenceMonitor();
+            if (pipelineRearmTimer) {
+                try {
+                    clearTimeout(pipelineRearmTimer);
+                } catch (e) { /* ignore */ }
+                pipelineRearmTimer = null;
+            }
+            pipelineVoiceSessionActive = false;
             pipelineRecording = false;
             pipelineSkipNextUpload = true;
             try {
@@ -1507,6 +1741,14 @@
         }
 
         async function sendMessage(speak = false) {
+            // OpenAI pipeline: Send (or Enter) finalizes streaming capture — same as 5s silence after speech.
+            if (isOpenAiPipelineSelected() && pipelineRecording && pipelineMediaRecorder && pipelineMediaRecorder.state === 'recording') {
+                stopPipelineSilenceMonitor();
+                try {
+                    pipelineMediaRecorder.stop();
+                } catch (e) { /* ignore */ }
+                return;
+            }
             const message = messageInput.value.trim();
             if (!message) return;
 
@@ -2010,6 +2252,7 @@
                     const errMsg = (typeof data.error === 'string' && data.error) ? data.error : (typeof data.response === 'string' ? data.response : 'Voice processing failed');
                     addMessage('ERROR: ' + errMsg, 'error');
                     voicePipelineTurnPending = false;
+                    maybeRestartPipelineVoiceCapture();
                 } else if (data.audio_base64 && data.audio_mime) {
                     try {
                         if (pipelineAudioEl) {
@@ -2030,12 +2273,14 @@
                         if (pipelineAudioEl === au) {
                             pipelineAudioEl = null;
                             voicePipelineTurnPending = false;
+                            maybeRestartPipelineVoiceCapture();
                         }
                     };
                     au.onended = finishPipelineAudio;
                     au.onerror = finishPipelineAudio;
                 } else {
                     voicePipelineTurnPending = false;
+                    maybeRestartPipelineVoiceCapture();
                 }
             } catch (e) {
                 clearTimeout(timeoutId);
@@ -2046,7 +2291,130 @@
                 } else {
                     addMessage('Voice request failed: ' + (e.message || String(e)), 'error');
                 }
+                maybeRestartPipelineVoiceCapture();
             }
+        }
+
+        /** After assistant audio (or reply with no audio), start listening for the next utterance if voice session is still on. */
+        function maybeRestartPipelineVoiceCapture() {
+            if (!isOpenAiPipelineSelected() || !pipelineVoiceSessionActive) return;
+            if (pipelineRecording || voicePipelineTurnPending) return;
+            if (pipelineRearmTimer) {
+                try {
+                    clearTimeout(pipelineRearmTimer);
+                } catch (e) { /* ignore */ }
+                pipelineRearmTimer = null;
+            }
+            const tryStart = function () {
+                pipelineRearmTimer = null;
+                if (!isOpenAiPipelineSelected() || !pipelineVoiceSessionActive) return;
+                if (pipelineRecording || voicePipelineTurnPending) return;
+                if (isVoiceAssistantBusy()) {
+                    pipelineRearmTimer = setTimeout(tryStart, 280);
+                    return;
+                }
+                const vb = document.getElementById('voiceRecognitionButton');
+                if (vb && pipelineVoiceSessionActive) {
+                    vb.classList.add('listening');
+                    vb.title = 'Listening… auto-sends after 5s quiet, or press Send';
+                }
+                bumpVoiceSessionIdleTimer();
+                startOpenAiPipelineUtterance().catch(function (err) {
+                    console.warn('[VOICE] pipeline utterance restart failed:', err);
+                });
+            };
+            pipelineRearmTimer = setTimeout(tryStart, TTS_POST_ECHO_TAIL_MS + 80);
+        }
+
+        /** One pipeline capture cycle (getUserMedia → MediaRecorder → onstop → upload). */
+        function startOpenAiPipelineUtterance() {
+            if (typeof MediaRecorder === 'undefined') {
+                return Promise.reject(new Error('MediaRecorder unavailable'));
+            }
+            pipelineSkipNextUpload = false;
+            pipelineRecording = true;
+            pipelineChunks = [];
+            pipelineRecordingStartMs = Date.now();
+            pipelineHadVoiceActivity = false;
+            pipelineLastVoiceMs = Date.now();
+            return navigator.mediaDevices.getUserMedia({
+                audio: {
+                    echoCancellation: true,
+                    noiseSuppression: true,
+                    autoGainControl: true
+                }
+            }).then(function (stream) {
+                pipelineStream = stream;
+                const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+                    ? 'audio/webm;codecs=opus'
+                    : (MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : '');
+                const mr = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+                pipelineMediaRecorder = mr;
+                mr.ondataavailable = function (e) {
+                    if (e.data && e.data.size) pipelineChunks.push(e.data);
+                };
+                mr.onstop = function () {
+                    stopPipelineSilenceMonitor();
+                    const chunks = pipelineChunks ? pipelineChunks.slice() : [];
+                    const mimeType = mr.mimeType || 'audio/webm';
+                    pipelineRecording = false;
+                    const vb = document.getElementById('voiceRecognitionButton');
+                    if (pipelineSkipNextUpload) {
+                        pipelineSkipNextUpload = false;
+                        try {
+                            if (pipelineStream) {
+                                pipelineStream.getTracks().forEach(function (t) { t.stop(); });
+                            }
+                        } catch (e) { /* ignore */ }
+                        pipelineStream = null;
+                        pipelineMediaRecorder = null;
+                        pipelineChunks = null;
+                        if (!pipelineVoiceSessionActive) {
+                            listeningActive = false;
+                            clearVoiceSessionIdleTimer();
+                            if (vb) {
+                                vb.classList.remove('listening');
+                                vb.title = 'Voice / microphone';
+                            }
+                        } else if (vb) {
+                            vb.classList.add('listening');
+                            vb.title = 'Listening… auto-sends after 5s quiet, or press Send';
+                        }
+                        return;
+                    }
+                    try {
+                        if (pipelineStream) {
+                            pipelineStream.getTracks().forEach(function (t) { t.stop(); });
+                        }
+                    } catch (e) { /* ignore */ }
+                    pipelineStream = null;
+                    pipelineMediaRecorder = null;
+                    pipelineChunks = null;
+                    if (vb && pipelineVoiceSessionActive) {
+                        vb.classList.add('listening');
+                        vb.title = 'Listening… auto-sends after 5s quiet, or press Send';
+                    } else if (vb) {
+                        vb.classList.remove('listening');
+                        vb.title = 'Voice / microphone';
+                    }
+                    if (!pipelineVoiceSessionActive) {
+                        listeningActive = false;
+                        clearVoiceSessionIdleTimer();
+                    }
+                    const blob = new Blob(chunks, { type: mimeType });
+                    if (blob.size < 200) {
+                        addMessage('Recording was too short.', 'error');
+                        maybeRestartPipelineVoiceCapture();
+                        return;
+                    }
+                    uploadOpenAiVoicePipeline(blob);
+                };
+                startPipelineSilenceMonitor(stream);
+                mr.start(100);
+            }).catch(function (err) {
+                pipelineRecording = false;
+                return Promise.reject(err);
+            });
         }
 
         if (voiceRecognitionButton) {
@@ -2088,77 +2456,41 @@
                             voiceRecognitionButton.title = 'Getting response…';
                             return;
                         }
-                        if (pipelineRecording) {
-                            pipelineRecording = false;
-                            voiceRecognitionButton.title = 'Voice / microphone';
-                            voiceRecognitionButton.classList.remove('listening');
+                        // Mic while capturing: finalize this utterance (session stays on until idle mic-off below).
+                        if (pipelineRecording && pipelineMediaRecorder && pipelineMediaRecorder.state === 'recording') {
+                            stopPipelineSilenceMonitor();
                             try {
-                                if (pipelineMediaRecorder && pipelineMediaRecorder.state !== 'inactive') {
-                                    pipelineMediaRecorder.stop();
-                                }
+                                pipelineMediaRecorder.stop();
                             } catch (e) {
                                 teardownOpenAiPipelineRecording();
                             }
+                            voiceRecognitionButton.title = 'Getting response…';
+                            return;
+                        }
+                        // Mic while idle: turn pipeline voice session off (stops auto re-arm after replies).
+                        if (pipelineVoiceSessionActive && !pipelineRecording && !voicePipelineTurnPending && !pipelineRearmTimer) {
+                            pipelineVoiceSessionActive = false;
+                            listeningActive = false;
+                            teardownOpenAiPipelineRecording();
+                            clearVoiceSessionIdleTimer();
+                            voiceRecognitionButton.classList.remove('listening');
+                            voiceRecognitionButton.title = 'Voice / microphone';
                             return;
                         }
                         if (assistantVoiceOutputWasPlaying && !pipelineRecording) {
                             return;
                         }
-                        pipelineSkipNextUpload = false;
-                        pipelineRecording = true;
-                        pipelineChunks = [];
+                        pipelineVoiceSessionActive = true;
+                        listeningActive = true;
+                        bumpVoiceSessionIdleTimer();
                         voiceRecognitionButton.classList.add('listening');
-                        voiceRecognitionButton.title = 'Recording… click again to send';
-                        navigator.mediaDevices.getUserMedia({
-                            audio: {
-                                echoCancellation: true,
-                                noiseSuppression: true,
-                                autoGainControl: true
-                            }
-                        }).then(function (stream) {
-                            pipelineStream = stream;
-                            var mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : (MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : '');
-                            var mr = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
-                            pipelineMediaRecorder = mr;
-                            mr.ondataavailable = function (e) {
-                                if (e.data && e.data.size) pipelineChunks.push(e.data);
-                            };
-                            mr.onstop = function () {
-                                var chunks = pipelineChunks ? pipelineChunks.slice() : [];
-                                var mimeType = mr.mimeType || 'audio/webm';
-                                pipelineRecording = false;
-                                if (pipelineSkipNextUpload) {
-                                    pipelineSkipNextUpload = false;
-                                    try {
-                                        if (pipelineStream) {
-                                            pipelineStream.getTracks().forEach(function (t) { t.stop(); });
-                                        }
-                                    } catch (e) { /* ignore */ }
-                                    pipelineStream = null;
-                                    pipelineMediaRecorder = null;
-                                    pipelineChunks = null;
-                                    return;
-                                }
-                                try {
-                                    if (pipelineStream) {
-                                        pipelineStream.getTracks().forEach(function (t) { t.stop(); });
-                                    }
-                                } catch (e) { /* ignore */ }
-                                pipelineStream = null;
-                                pipelineMediaRecorder = null;
-                                pipelineChunks = null;
-                                voiceRecognitionButton.classList.remove('listening');
-                                voiceRecognitionButton.title = 'Voice / microphone';
-                                var blob = new Blob(chunks, { type: mimeType });
-                                if (blob.size < 200) {
-                                    addMessage('Recording was too short.', 'error');
-                                    return;
-                                }
-                                uploadOpenAiVoicePipeline(blob);
-                            };
-                            mr.start(100);
-                        }).catch(function (err) {
+                        voiceRecognitionButton.title = 'Listening… auto-sends after 5s quiet, or press Send';
+                        startOpenAiPipelineUtterance().catch(function (err) {
                             pipelineRecording = false;
+                            pipelineVoiceSessionActive = false;
+                            listeningActive = false;
+                            stopPipelineSilenceMonitor();
+                            clearVoiceSessionIdleTimer();
                             voiceRecognitionButton.classList.remove('listening');
                             voiceRecognitionButton.title = 'Voice / microphone';
                             addMessage('Microphone error: ' + (err && err.message ? err.message : String(err)), 'error');
@@ -2365,6 +2697,31 @@
                 // Silence timeout (~5s) — normal; keep voice mode and let onend restart.
                 // 'aborted' — e.g. recognition.stop() on mic off; not a user-facing failure.
                 if (event.error === 'no-speech' || event.error === 'aborted') {
+                    return;
+                }
+
+                // Browser Web Speech depends on a vendor cloud; "network" / "service-not-allowed" are common.
+                // Switch to server-side Whisper (OpenAI pipeline) with no chat error line.
+                if (
+                    (event.error === 'network' || event.error === 'service-not-allowed')
+                    && getVoiceEngine() === 'browser'
+                ) {
+                    try {
+                        localStorage.setItem('voice_engine', 'openai_pipeline');
+                    } catch (e) { /* ignore */ }
+                    try {
+                        syncVoiceEngineSelectFromStorage();
+                    } catch (e) { /* ignore */ }
+                    console.warn('[VOICE] Browser speech unavailable (' + event.error + '); using OpenAI pipeline');
+                    isListening = false;
+                    listeningActive = false;
+                    postTtsSilenceExitPending = false;
+                    clearPostTtsSilenceExitTimer();
+                    clearVoiceSessionIdleTimer();
+                    try {
+                        voiceRecognitionButton.classList.remove('listening');
+                        voiceRecognitionButton.title = 'Voice / microphone';
+                    } catch (e) { /* ignore */ }
                     return;
                 }
 
@@ -7578,6 +7935,13 @@ Used with company/domain to find professional email addresses. Works best when y
                     // Populate all fields - use nullish coalescing to preserve empty strings
                     const vars = data.variables;
                     document.getElementById('openai_api_key').value = vars.OPENAI_API_KEY ?? '';
+                    // OpenAI advanced routing / overrides (optional)
+                    document.getElementById('openai_organization').value = (vars.OPENAI_ORGANIZATION ?? vars.OPENAI_ORG ?? '');
+                    document.getElementById('openai_project').value = vars.OPENAI_PROJECT ?? '';
+                    document.getElementById('openai_base_url').value = vars.OPENAI_BASE_URL ?? '';
+                    document.getElementById('openai_chat_model').value = vars.OPENAI_CHAT_MODEL ?? '';
+                    document.getElementById('openai_intent_model').value = vars.OPENAI_INTENT_MODEL ?? '';
+                    document.getElementById('openai_email_summary_model').value = vars.OPENAI_EMAIL_SUMMARY_MODEL ?? '';
                     document.getElementById('google_client_id').value = vars.GOOGLE_CLIENT_ID ?? '';
                     document.getElementById('google_client_secret').value = vars.GOOGLE_CLIENT_SECRET ?? '';
                     document.getElementById('google_client_id_2').value = vars.GOOGLE_CLIENT_ID_2 ?? '';
@@ -7634,6 +7998,12 @@ Used with company/domain to find professional email addresses. Works best when y
             
             const formData = {
                 openai_api_key: document.getElementById('openai_api_key').value.trim(),
+                openai_organization: document.getElementById('openai_organization').value.trim(),
+                openai_project: document.getElementById('openai_project').value.trim(),
+                openai_base_url: document.getElementById('openai_base_url').value.trim(),
+                openai_chat_model: document.getElementById('openai_chat_model').value.trim(),
+                openai_intent_model: document.getElementById('openai_intent_model').value.trim(),
+                openai_email_summary_model: document.getElementById('openai_email_summary_model').value.trim(),
                 google_client_id: document.getElementById('google_client_id').value.trim(),
                 google_client_secret: document.getElementById('google_client_secret').value.trim(),
                 google_client_id_2: document.getElementById('google_client_id_2').value.trim(),

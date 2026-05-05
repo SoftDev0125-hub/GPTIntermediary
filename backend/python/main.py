@@ -3266,6 +3266,12 @@ class EnvVariablesRequest(BaseModel):
     google_client_id_2: Optional[str] = None
     google_client_secret_2: Optional[str] = None
     openai_api_key: Optional[str] = None
+    openai_organization: Optional[str] = None
+    openai_project: Optional[str] = None
+    openai_base_url: Optional[str] = None
+    openai_chat_model: Optional[str] = None
+    openai_intent_model: Optional[str] = None
+    openai_email_summary_model: Optional[str] = None
     user_email: Optional[str] = None
     user_email_2: Optional[str] = None
     user_access_token_2: Optional[str] = None
@@ -3282,6 +3288,8 @@ class EnvVariablesRequest(BaseModel):
 # Bing: we accept BING_API_KEY or BING_SEARCH_API_KEY; Settings uses BING_API_KEY for read/write
 SETTINGS_ENV_KEYS = [
     "OPENAI_API_KEY", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET",
+    "OPENAI_ORGANIZATION", "OPENAI_ORG", "OPENAI_PROJECT", "OPENAI_BASE_URL",
+    "OPENAI_CHAT_MODEL", "OPENAI_INTENT_MODEL", "OPENAI_EMAIL_SUMMARY_MODEL",
     "GOOGLE_CLIENT_ID_2", "GOOGLE_CLIENT_SECRET_2",
     "USER_EMAIL", "USER_EMAIL_2",
     "USER_ACCESS_TOKEN_2", "USER_REFRESH_TOKEN_2",
@@ -3329,6 +3337,12 @@ async def get_env_variables(
 # Bing: write to both BING_API_KEY and BING_SEARCH_API_KEY so contact_resolver and Settings stay in sync
 _REQUEST_TO_ENV_KEY = {
     "openai_api_key": "OPENAI_API_KEY",
+    "openai_organization": "OPENAI_ORGANIZATION",
+    "openai_project": "OPENAI_PROJECT",
+    "openai_base_url": "OPENAI_BASE_URL",
+    "openai_chat_model": "OPENAI_CHAT_MODEL",
+    "openai_intent_model": "OPENAI_INTENT_MODEL",
+    "openai_email_summary_model": "OPENAI_EMAIL_SUMMARY_MODEL",
     "google_client_id": "GOOGLE_CLIENT_ID",
     "google_client_secret": "GOOGLE_CLIENT_SECRET",
     "google_client_id_2": "GOOGLE_CLIENT_ID_2",

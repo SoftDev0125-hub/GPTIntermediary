@@ -50,63 +50,35 @@ from pathlib import Path
 _load_env_root = Path(__file__).resolve().parent.parent.parent
 load_dotenv(_load_env_root / '.env')
 
-# Robust env loader: handle cases where .env has spaces around '=' or nonstandard formatting
+# Robust env loader: prefer project .env on disk over os.environ (see chat_server.py).
 def _read_env_key_from_dotenv(key_name):
-    # First try os.environ
-    val = os.getenv(key_name)
-    if val:
-        return val.strip()
-
-    # Fallback: manually parse .env in repo root
+    file_val = None
     try:
-        # Try repo root relative to this file (two levels up)
         base = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
         env_path = os.path.join(base, '.env')
-        if not os.path.exists(env_path):
-            return None
-        with open(env_path, 'r', encoding='utf-8') as f:
-            for line in f:
-                if '=' not in line or line.strip().startswith('#'):
-                    continue
-                k, v = line.split('=', 1)
-                if k.strip() == key_name:
-                    return v.strip().strip('"').strip("'")
+        if os.path.isfile(env_path):
+            with open(env_path, 'r', encoding='utf-8') as f:
+                for line in f:
+                    if '=' not in line or line.strip().startswith('#'):
+                        continue
+                    k, v = line.split('=', 1)
+                    if k.strip() == key_name:
+                        file_val = v.strip().strip('"').strip("'")
+                        break
     except Exception as e:
-        logger.warning(f"Failed to read .env fallback for {key_name}: {e}")
-    return None
+        logger.warning(f"Failed to read .env for {key_name}: {e}")
+    if file_val is not None:
+        return file_val.strip()
+    val = os.getenv(key_name)
+    return val.strip() if val else None
 
 # OpenAI Configuration
 # Read from .env robustly (fallback parsing handles spacing/formatting)
-OPENAI_API_KEY = os.getenv('OPENAI_API_KEY') or _read_env_key_from_dotenv('OPENAI_API_KEY') or ''
+OPENAI_API_KEY = _read_env_key_from_dotenv('OPENAI_API_KEY') or ''
 openai.api_key = OPENAI_API_KEY
 USE_OPENAI = bool(OPENAI_API_KEY) and OPENAI_API_KEY != 'your_openai_api_key_here'
 
 BACKEND_URL = os.getenv('BACKEND_URL') or "http://localhost:8000"
-
-# Robust env loader: handle cases where .env has spaces around '=' or nonstandard formatting
-def _read_env_key_from_dotenv(key_name):
-    # First try os.environ
-    val = os.getenv(key_name)
-    if val:
-        return val.strip()
-
-    # Fallback: manually parse .env in repo root
-    try:
-        # Try repo root relative to this file (two levels up)
-        base = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-        env_path = os.path.join(base, '.env')
-        if not os.path.exists(env_path):
-            return None
-        with open(env_path, 'r', encoding='utf-8') as f:
-            for line in f:
-                if '=' not in line or line.strip().startswith('#'):
-                    continue
-                k, v = line.split('=', 1)
-                if k.strip() == key_name:
-                    return v.strip().strip('\"').strip("\'")
-    except Exception as e:
-        logger.warning(f"Failed to read .env fallback for {key_name}: {e}")
-    return None
 
 from services.google_cse import google_custom_search, is_google_cse_configured
 

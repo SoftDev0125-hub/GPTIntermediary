@@ -39,25 +39,31 @@ load_dotenv(_load_env_root / '.env')
 
 # Robust env loader (fallback) to handle .env formatting variations
 def _read_env_key_from_dotenv(key_name):
-    val = os.getenv(key_name)
-    if val:
-        return val.strip()
+    """
+    Read a key for Settings-driven config. Prefer the project .env file on disk over os.environ
+    so updates from the Settings tab (and manual .env edits) apply without restarting the chat
+    process. Child processes otherwise inherit a stale OPENAI_API_KEY from the parent shell.
+    """
+    file_val = None  # None = key not present in .env; '' = present but empty
     try:
         base = _get_project_root()
         env_path = os.path.join(base, '.env')
-        if not os.path.exists(env_path):
-            return ''
-        with open(env_path, 'r', encoding='utf-8') as f:
-            for line in f:
-                if '=' not in line or line.strip().startswith('#'):
-                    continue
-                k, v = line.split('=', 1)
-                if k.strip() == key_name:
-                    return v.strip().strip('"').strip("'")
+        if os.path.isfile(env_path):
+            with open(env_path, 'r', encoding='utf-8') as f:
+                for line in f:
+                    if '=' not in line or line.strip().startswith('#'):
+                        continue
+                    k, v = line.split('=', 1)
+                    if k.strip() == key_name:
+                        file_val = v.strip().strip('"').strip("'")
+                        break
     except Exception as e:
         logger = logging.getLogger(__name__)
-        logger.warning(f"Failed to read .env fallback for {key_name}: {e}")
-    return ''
+        logger.warning(f"Failed to read .env for {key_name}: {e}")
+    if file_val is not None:
+        return file_val.strip()
+    val = os.getenv(key_name)
+    return val.strip() if val else ''
 
 def _extract_news_topic_from_question(message):
     """Extract a short search topic from a user question for News API. Returns None if nothing useful."""
@@ -355,7 +361,7 @@ Entities to extract when relevant (use null if not present):
 User message: """
         full_prompt = prompt + user_message.strip()[:500]
         resp = client.chat.completions.create(
-            model="gpt-3.5-turbo",
+            model=(os.getenv("OPENAI_INTENT_MODEL") or os.getenv("OPENAI_CHAT_MODEL") or "gpt-4o-mini").strip(),
             messages=[
                 {"role": "system", "content": "You output only valid JSON. No markdown, no explanation. Keys: intent (string), entities (object with optional sender, recipient, message_content, account), confidence (string: high or low)."},
                 {"role": "user", "content": full_prompt},
@@ -526,6 +532,83 @@ BACKEND_URL = "http://localhost:8000"
 from openai import OpenAI
 _openai_client = None
 
+
+def _iter_openai_exception_chain(exc: BaseException, limit: int = 10):
+    """Walk __cause__ / __context__ so wrapped httpx/OpenAI errors still expose .code / .body."""
+    seen: set[int] = set()
+    depth = 0
+    cur: BaseException | None = exc
+    while cur is not None and depth < limit and id(cur) not in seen:
+        yield cur
+        seen.add(id(cur))
+        depth += 1
+        nxt = getattr(cur, "__cause__", None) or getattr(cur, "__context__", None)
+        cur = nxt if isinstance(nxt, BaseException) else None
+
+
+def _openai_api_error_code(exc: BaseException) -> str | None:
+    """Return OpenAI API error.code if present (e.g. insufficient_quota, rate_limit_exceeded)."""
+    for sub in _iter_openai_exception_chain(exc):
+        code = getattr(sub, "code", None)
+        if code:
+            return str(code)
+        body = getattr(sub, "body", None)
+        if isinstance(body, dict):
+            inner = body.get("error")
+            if isinstance(inner, dict) and inner.get("code"):
+                return str(inner.get("code"))
+            if body.get("code"):
+                return str(body.get("code"))
+    return None
+
+
+def _is_openai_auth_failure(exc: BaseException) -> bool:
+    """Invalid/revoked API key — must not be shown as billing quota exhausted (401 / invalid_api_key)."""
+    for sub in _iter_openai_exception_chain(exc):
+        if isinstance(sub, openai.AuthenticationError):
+            return True
+        c = getattr(sub, "code", None)
+        if c and str(c) in ("invalid_api_key", "incorrect_api_key"):
+            return True
+        st = getattr(sub, "status_code", None)
+        if st == 401:
+            return True
+    return False
+
+
+def _is_openai_insufficient_quota(exc: BaseException) -> bool:
+    """Billing / credit exhaustion — not RPM/TPM rate limits (also HTTP 429)."""
+    if _is_openai_auth_failure(exc):
+        return False
+    for sub in _iter_openai_exception_chain(exc):
+        c = getattr(sub, "code", None)
+        if c and str(c) == "insufficient_quota":
+            return True
+        typ = getattr(sub, "type", None)
+        if typ and str(typ) == "insufficient_quota":
+            return True
+    return False
+
+
+def _is_openai_throughput_rate_limit(exc: BaseException) -> bool:
+    """Throughput rate limit (retry/wait), excluding insufficient_quota."""
+    if _is_openai_insufficient_quota(exc):
+        return False
+    if _is_openai_auth_failure(exc):
+        return False
+    if _openai_api_error_code(exc) == "rate_limit_exceeded":
+        return True
+    for sub in _iter_openai_exception_chain(exc):
+        if isinstance(sub, openai.RateLimitError):
+            return True
+    msg = " ".join(str(x).lower() for x in _iter_openai_exception_chain(exc))
+    if "rate limit" in msg:
+        return True
+    if "429" in msg:
+        return True
+    return False
+
+
 def _current_openai_key():
     """Return current OpenAI API key (re-read from .env so Settings tab changes take effect)."""
     return (_read_env_key_from_dotenv('OPENAI_API_KEY') or os.getenv('OPENAI_API_KEY') or '').strip()
@@ -538,10 +621,16 @@ def get_openai_client():
         OPENAI_API_KEY = current_key
         _openai_client = None
     if _openai_client is None:
+        organization = (os.getenv("OPENAI_ORGANIZATION") or os.getenv("OPENAI_ORG") or "").strip() or None
+        project = (os.getenv("OPENAI_PROJECT") or "").strip() or None
+        base_url = (os.getenv("OPENAI_BASE_URL") or "").strip() or None
         _openai_client = OpenAI(
             api_key=OPENAI_API_KEY,
+            organization=organization,
+            project=project,
+            base_url=base_url,
             timeout=(10.0, 90.0),  # Connect: 10s, Read: 90s (allow full response on slower PCs/networks)
-            max_retries=0  # No retries - fail fast
+            max_retries=0,  # No retries - fail fast; we implement our own retry loop for /chat
         )
     return _openai_client
 
@@ -599,7 +688,7 @@ def analyze_emails_with_ai(emails, request_id=None, max_items=5):
         ]
 
         resp = client.chat.completions.create(
-            model="gpt-3.5-turbo",
+            model=(os.getenv("OPENAI_EMAIL_SUMMARY_MODEL") or os.getenv("OPENAI_CHAT_MODEL") or "gpt-4o-mini").strip(),
             messages=messages,
             max_tokens=600,
             temperature=0.2,
@@ -1262,6 +1351,96 @@ def get_user_credentials():
         "email": USER_CREDENTIALS.get("email")
     })
 
+@app.route('/openai/diagnose', methods=['GET'])
+def openai_diagnose():
+    """
+    Lightweight, safe diagnostics to prove which OpenAI config is in use.
+    Returns only redacted key hints (never the full secret).
+    """
+    try:
+        key = _current_openai_key()
+        key_hint = None
+        if key:
+            key_hint = (key[:12] + "…" + key[-4:]) if len(key) >= 20 else (key[:8] + "…")
+        org = (os.getenv("OPENAI_ORGANIZATION") or os.getenv("OPENAI_ORG") or "").strip() or None
+        proj = (os.getenv("OPENAI_PROJECT") or "").strip() or None
+        base_url = (os.getenv("OPENAI_BASE_URL") or "").strip() or None
+        chat_model = (os.getenv("OPENAI_CHAT_MODEL") or "gpt-4o-mini").strip() or "gpt-4o-mini"
+
+        if not key or key == "your_openai_api_key_here":
+            return jsonify({
+                "ok": False,
+                "error": "missing_api_key",
+                "key_hint": key_hint,
+                "organization": org,
+                "project": proj,
+                "base_url": base_url,
+            }), 503
+
+        client = get_openai_client()
+        # 1) Fast auth check: list models
+        models_ok = False
+        models_count = None
+        try:
+            m = client.models.list()
+            models_ok = True
+            models_count = len(getattr(m, "data", []) or [])
+        except Exception as e_models:
+            return jsonify({
+                "ok": False,
+                "key_hint": key_hint,
+                "organization": org,
+                "project": proj,
+                "base_url": base_url,
+                "models_ok": False,
+                "models_error": str(e_models),
+                "models_error_code": _openai_api_error_code(e_models),
+                "auth_failure": _is_openai_auth_failure(e_models),
+                "insufficient_quota": _is_openai_insufficient_quota(e_models),
+                "rate_limit": _is_openai_throughput_rate_limit(e_models),
+            }), 500
+
+        # 2) Minimal chat call (this is where insufficient_quota is usually triggered)
+        try:
+            r = client.chat.completions.create(
+                model=chat_model,
+                messages=[{"role": "user", "content": "ping"}],
+                max_tokens=5,
+                temperature=0,
+            )
+            text = (r.choices[0].message.content or "").strip() if r and getattr(r, "choices", None) else ""
+            return jsonify({
+                "ok": True,
+                "key_hint": key_hint,
+                "organization": org,
+                "project": proj,
+                "base_url": base_url,
+                "models_ok": models_ok,
+                "models_count": models_count,
+                "chat_ok": True,
+                "chat_model": chat_model,
+                "chat_sample": text[:50],
+            })
+        except Exception as e_chat:
+            return jsonify({
+                "ok": False,
+                "key_hint": key_hint,
+                "organization": org,
+                "project": proj,
+                "base_url": base_url,
+                "models_ok": models_ok,
+                "models_count": models_count,
+                "chat_ok": False,
+                "chat_model": chat_model,
+                "chat_error": str(e_chat),
+                "chat_error_code": _openai_api_error_code(e_chat),
+                "auth_failure": _is_openai_auth_failure(e_chat),
+                "insufficient_quota": _is_openai_insufficient_quota(e_chat),
+                "rate_limit": _is_openai_throughput_rate_limit(e_chat),
+            }), 502
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
 
 # Request counter for debugging
 _request_counter = 0
@@ -1296,6 +1475,12 @@ def chat():
     backend_auth_header = request.headers.get("Authorization")
     
     current_key = _current_openai_key()
+    try:
+        if current_key:
+            key_hint = (current_key[:12] + "…" + current_key[-4:]) if len(current_key) >= 20 else (current_key[:8] + "…")
+            logger.info(f"[CHAT-{request_id}] OpenAI key_hint={key_hint}")
+    except Exception:
+        pass
     if not current_key or current_key == 'your_openai_api_key_here':
         return jsonify({
             'response': '[WARNING] OpenAI API key not configured. Please set OPENAI_API_KEY in your .env file.',
@@ -2753,13 +2938,21 @@ Be conversational and helpful, like ChatGPT.
                 except Exception as api_error:
                     last_exception = api_error
                     err_str = str(api_error).lower()
-                    # If quota is insufficient, don't retry — fail fast with clear message
-                    if 'insufficient_quota' in err_str or ('quota' in err_str and 'exceed' in err_str):
-                        logger.error(f"[CHAT-{request_id}] OpenAI quota error (no retries): {err_str}", exc_info=True)
-                        # Raise a specific exception to be handled by outer except
-                        raise Exception(f"insufficient_quota: {err_str}")
+                    if _is_openai_auth_failure(api_error):
+                        logger.error(
+                            f"[CHAT-{request_id}] OpenAI authentication failed (no retries): {api_error}",
+                            exc_info=True,
+                        )
+                        raise
+                    # Billing exhausted (distinct from 429 RPM/TPM — do not use generic "quota"+"exceed" match)
+                    if _is_openai_insufficient_quota(api_error):
+                        logger.error(
+                            f"[CHAT-{request_id}] OpenAI billing quota exhausted (no retries): {api_error}",
+                            exc_info=True,
+                        )
+                        raise
 
-                    is_rate = 'rate limit' in err_str or '429' in err_str
+                    is_rate = _is_openai_throughput_rate_limit(api_error)
                     is_timeout = 'timeout' in err_str or 'timed out' in err_str or 'read timeout' in err_str
                     # Decide whether to retry on this error
                     if attempt < (max_retries - 1) and (is_rate or is_timeout or 'could not connect' in err_str or 'connection' in err_str):
@@ -2783,13 +2976,37 @@ Be conversational and helpful, like ChatGPT.
                     'function_called': None,
                     'error': 'timeout'
                 }), 500
-            elif 'insufficient_quota' in error_str or ('quota' in error_str and 'exceed' in error_str):
+            elif _is_openai_auth_failure(api_error):
                 return jsonify({
-                    'response': "I apologize, but your OpenAI quota appears to be exhausted. Please check your OpenAI plan and billing details.",
+                    'response': (
+                        "OpenAI rejected the API key (invalid, revoked, or for a different organization). "
+                        "Update OPENAI_API_KEY in Settings or your .env file to a valid secret from "
+                        "https://platform.openai.com/api-keys — then save and try again."
+                    ),
+                    'function_called': None,
+                    'error': 'auth_error'
+                }), 401
+            elif _is_openai_insufficient_quota(api_error):
+                k = _current_openai_key()
+                key_hint = (k[:12] + "…" + k[-4:]) if k and len(k) >= 20 else (k[:8] + "…") if k else "missing"
+                org = (os.getenv("OPENAI_ORGANIZATION") or os.getenv("OPENAI_ORG") or "").strip()
+                proj = (os.getenv("OPENAI_PROJECT") or "").strip()
+                return jsonify({
+                    'response': (
+                        "OpenAI reported **billing quota exhausted** for this API key (this is not a short RPM/TPM rate limit).\n\n"
+                        f"- Key in use: **{key_hint}**\n"
+                        + (f"- Organization header: **{org}**\n" if org else "")
+                        + (f"- Project header: **{proj}**\n" if proj else "")
+                        + "\nWhat to do:\n"
+                        "- Make sure your **API billing** is active (ChatGPT Plus/Pro is separate from API billing).\n"
+                        "- In `https://platform.openai.com/account/billing`, add credits / enable pay-as-you-go and raise the monthly spend limit.\n"
+                        "- If you're using a **project key** (`sk-proj-...`), ensure that project has budget and is under an org with an active plan.\n"
+                        "- Or paste a different key from an org with available credits into Settings → OpenAI Configuration."
+                    ),
                     'function_called': None,
                     'error': 'insufficient_quota'
                 }), 429
-            elif 'rate limit' in error_str or '429' in error_str:
+            elif _is_openai_throughput_rate_limit(api_error):
                 return jsonify({
                     'response': "I apologize, but I'm receiving too many requests. Please wait a moment and try again.",
                     'function_called': None,
