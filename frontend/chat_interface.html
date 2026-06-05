@@ -1379,20 +1379,89 @@
             realtimeRemoteAudio = null;
         }
 
-        /** localStorage key `voice_engine`: browser | openai_realtime | openai_pipeline — default pipeline (server Whisper). */
-        const DEFAULT_VOICE_ENGINE = 'openai_pipeline';
-        function getVoiceEngine() {
+        /** localStorage key `voice_engine`: browser | openai_realtime | openai_pipeline. */
+        function isSecureLikeContextEarly() {
             try {
-                const v = localStorage.getItem('voice_engine');
-                if (v === 'openai_realtime' || v === 'browser' || v === 'openai_pipeline') return v;
+                if (window.isSecureContext) return true;
             } catch (e) { /* ignore */ }
-            return DEFAULT_VOICE_ENGINE;
+            try {
+                const loc = window.location || {};
+                const host = (loc.hostname || '').toLowerCase();
+                const proto = (loc.protocol || '').toLowerCase();
+                return proto === 'https:' || host === 'localhost' || host === '127.0.0.1';
+            } catch (e) { /* ignore */ }
+            return false;
+        }
+
+        function isPipelineVoiceSupportedEarly() {
+            try {
+                return (
+                    typeof navigator !== 'undefined'
+                    && navigator.mediaDevices
+                    && typeof navigator.mediaDevices.getUserMedia === 'function'
+                    && typeof MediaRecorder !== 'undefined'
+                );
+            } catch (e) {
+                return false;
+            }
+        }
+
+        function isBrowserSpeechSupportedEarly() {
+            try {
+                return (
+                    isSecureLikeContextEarly()
+                    && (('webkitSpeechRecognition' in window) || ('SpeechRecognition' in window))
+                );
+            } catch (e) {
+                return false;
+            }
+        }
+
+        function isRealtimeVoiceSupportedEarly() {
+            try {
+                return isSecureLikeContextEarly() && (typeof RTCPeerConnection !== 'undefined');
+            } catch (e) {
+                return false;
+            }
+        }
+
+        function computeDefaultVoiceEngineEarly() {
+            // Prefer server-side Whisper pipeline when capture APIs exist (works offline / avoids browser cloud STT).
+            if (isPipelineVoiceSupportedEarly()) return 'openai_pipeline';
+            if (isBrowserSpeechSupportedEarly()) return 'browser';
+            if (isRealtimeVoiceSupportedEarly()) return 'openai_realtime';
+            return 'openai_pipeline';
+        }
+
+        function getVoiceEngine() {
+            let v = null;
+            try {
+                v = localStorage.getItem('voice_engine');
+            } catch (e) { /* ignore */ }
+            if (v === 'openai_realtime' || v === 'browser' || v === 'openai_pipeline') {
+                // If user picked an engine that isn't supported in this runtime, fall back gracefully.
+                if (v === 'openai_pipeline' && !isPipelineVoiceSupportedEarly()) return computeDefaultVoiceEngineEarly();
+                if (v === 'browser' && !isBrowserSpeechSupportedEarly()) return computeDefaultVoiceEngineEarly();
+                if (v === 'openai_realtime' && !isRealtimeVoiceSupportedEarly()) return computeDefaultVoiceEngineEarly();
+                return v;
+            }
+            return computeDefaultVoiceEngineEarly();
         }
 
         function syncVoiceEngineSelectFromStorage() {
             const sel = document.getElementById('voice_engine_select');
             if (!sel) return;
-            sel.value = getVoiceEngine();
+            const engine = getVoiceEngine();
+            sel.value = engine;
+            // Disable engines that are not supported in the current runtime (common in packaged WebView2 builds).
+            try {
+                const optPipeline = sel.querySelector('option[value="openai_pipeline"]');
+                const optBrowser = sel.querySelector('option[value="browser"]');
+                const optRealtime = sel.querySelector('option[value="openai_realtime"]');
+                if (optPipeline) optPipeline.disabled = !isPipelineVoiceSupportedEarly();
+                if (optBrowser) optBrowser.disabled = !isBrowserSpeechSupportedEarly();
+                if (optRealtime) optRealtime.disabled = !isRealtimeVoiceSupportedEarly();
+            } catch (e) { /* ignore */ }
         }
 
         function applyVoiceEngineFromSelect() {
